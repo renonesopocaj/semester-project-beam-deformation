@@ -1,25 +1,32 @@
-def preprocess_data(
-        data_dir: Path,
-        split: str,
-        dataset_size: str = "small",
-        noise_scale: float = 0.0,
-        dt: float = 0.08,
-        recalc_velocities: bool = False,
-        base_dir: Path = Path("./elastic-beam-3d"),
-):
+import torch
+import json
+import yaml
+from src.gnn.helpers.yamlobj import YamlObj
+from src.gnn.helpers.build_data.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
+                                                       build_valued_node_features)
+from src.gnn.helpers.build_data.stats import compute_stats, normalize, Stats
+from torch_geometric.data import Data, Batch
+
+def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_velocities, base_dir, seed):
     """Preprocess simulation data into graph format.
 
     Args:
-        data_dir: Directory containing raw simulation data (e.g., raw/single-direction-beam/small)
-        split: 'train', 'val', or 'test'
-        dataset_size: 'small', 'medium', or 'large'
-        noise_scale: Amount of noise to add during training
-        dt: Time step size
-        recalc_velocities: Whether to recalculate velocities from positions
-        base_dir: Base directory for elastic-beam-3d data
+        data_dir: Path
+            Directory containing raw simulation data (e.g., raw/single-direction-beam/small)
+        split: str
+            'train', 'val', or 'test'
+        dataset_size: str
+            'small', 'medium', or 'large'
+        noise_scale: float
+            Amount of noise to add during training
+        dt: float
+            Time step size
+        recalc_velocities: bool
+            Whether to recalculate velocities from positions
+        base_dir: Path
+            Base directory for elastic-beam-3d data
     """
-    SEED = 42
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
 
     # Input path: raw/single-direction-beam/{size}/{split}/graphs
     graphs_dir = data_dir / split / "graphs"
@@ -36,16 +43,14 @@ def preprocess_data(
     if split != "train":
         stats_path = base_dir / "processed" / dataset_size / "train" / "stats" / "stats.json"
         if not stats_path.exists():
-            raise FileNotFoundError(
-                f"Stats file not found at {stats_path}. "
-                f"Please preprocess the training data first."
-            )
+            raise FileNotFoundError(f"Stats file not found at {stats_path}. Preprocess the training data first.")
         with open(stats_path, "r") as f:
             stats = json.load(f)
         node_stats = Stats.from_dict(stats["node"])
         edge_stats = Stats.from_dict(stats["edge"])
         target_stats = Stats.from_dict(stats["target"])
 
+    # Main loop: process
     for idx, filename in enumerate(filenames):
         print(f"Processing file: {filename.name} ({idx + 1}/{len(filenames)})")
         dataloader = torch.load(filename, weights_only=False)
@@ -101,39 +106,17 @@ def preprocess_data(
                 )
 
                 out_graphs.append(
-                    Data(
-                        x=node_attr,
-                        edge_attr=edge_attr,
-                        edge_index=graph.edge_index,
-                        t=graph.time,
-                        x_pos_t=x[t],
-                        x_vel_t=v[t],
-                        node_force=all_node_force[t],
-                        node_force_next=all_node_force[t + 1],
-                        x_next=x_next[t],
-                        v_next=v_next[t],
-                        y_acc_t=a[t],
-                        y_von_mises=von_mises,
-                        x_element_connectivity=graph.x_element_connectivity,
-                        u=u,
-                    )
+                    Data(x=node_attr, edge_attr=edge_attr, edge_index=graph.edge_index, t=graph.time, x_pos_t=x[t],
+                         x_vel_t=v[t], node_force=all_node_force[t], node_force_next=all_node_force[t + 1],
+                         x_next=x_next[t], v_next=v_next[t], y_acc_t=a[t], y_von_mises=von_mises,
+                         x_element_connectivity=graph.x_element_connectivity, u=u)
                 )
             else:
                 # Accumulate for stats computation
                 categorical_node_features.append(boundary_condition)
-                valued_node_features.append(
-                    build_valued_node_features(_x, _v, u, _node_force)
-                )
+                valued_node_features.append(build_valued_node_features(_x, _v, u, _node_force))
                 edge_features.append(build_edge_features(_x, u, graph.edge_index))
-                out_graphs.append(
-                    Data(
-                        edge_index=graph.edge_index,
-                        t=graph.time,
-                        y_acc_t=_a,
-                        x_pos_t=_x,
-                        x_vel_t=_v,
-                    )
-                )
+                out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
                 targets.append(torch.concat([_a, von_mises], dim=1))
 
     if split == "train":
@@ -159,9 +142,7 @@ def preprocess_data(
             _valued_node_features = normalize(valued_node_features[t], node_stats)
             _edge_features = normalize(edge_features[t], edge_stats)
             _targets = normalize(targets[t], target_stats)
-            out_graphs[t].x = torch.concat(
-                [categorical_node_features[t], _valued_node_features], dim=1
-            )
+            out_graphs[t].x = torch.concat([categorical_node_features[t], _valued_node_features], dim=1)
             out_graphs[t].edge_attr = _edge_features
             out_graphs[t].y = _targets
 
@@ -181,44 +162,29 @@ def preprocess_data(
 if __name__ == "__main__":
     # Run preprocessing
     # Choose dataset size: 'small', 'medium', or 'large'
-    DATASET_SIZE = "small"
+    YAML_PATH = "yamls/preprocessing.yaml"
+    with open("config.yaml") as f:
+        cfg = yaml.safe_load(f)
+    cfg = YamlObj(cfg)
+    raw_data_dir = cfg.base_dir / "raw" / "single-direction-beam" / cfg.dataset_size
 
-    base_dir = Path("./elastic-beam-3d")
-    raw_data_dir = base_dir / "raw" / "single-direction-beam" / DATASET_SIZE
-
-    print(f"Preprocessing {DATASET_SIZE} dataset...")
+    print(f"Preprocessing {cfg.dataset_size} dataset...")
     print("=" * 60)
 
     # Preprocess training data
     print("\n1. Preprocessing training data...")
-    preprocess_data(
-        data_dir=raw_data_dir,
-        split="train",
-        dataset_size=DATASET_SIZE,
-        noise_scale=0.0003,
-        recalc_velocities=True,
-        base_dir=base_dir,
-    )
+    preprocess_data(data_dir=raw_data_dir, split="train", dataset_size=cfg.dataset_size, noise_scale=0.0003,
+                    recalc_velocities=True, base_dir=cfg.base_dir, dt=0.08, seed=cfg.seed)
 
     print("\n2. Preprocessing validation data...")
-    preprocess_data(
-        data_dir=raw_data_dir,
-        split="val",
-        dataset_size=DATASET_SIZE,
-        recalc_velocities=True,
-        base_dir=base_dir,
-    )
+    preprocess_data(data_dir=raw_data_dir, split="val", dataset_size=cfg.dataset_size, recalc_velocities=True,
+                    base_dir=cfg.base_dir, noise_scale=0.0, dt=0.08, seed=cfg.seed)
 
     print("\n3. Preprocessing test data (if available)...")
     test_graphs_dir = raw_data_dir / "test" / "graphs"
     if test_graphs_dir.exists():
-        preprocess_data(
-            data_dir=raw_data_dir,
-            split="test",
-            dataset_size=DATASET_SIZE,
-            recalc_velocities=True,
-            base_dir=base_dir,
-        )
+        preprocess_data(data_dir=raw_data_dir, split="test", dataset_size=cfg.dataset_size, recalc_velocities=True,
+                        base_dir=cfg.base_dir, noise_scale = 0.0, dt = 0.08, seed=cfg.seed)
     else:
         print("  No test data found, skipping...")
 

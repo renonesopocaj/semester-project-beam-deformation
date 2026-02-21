@@ -1,3 +1,6 @@
+import torch
+from dataclasses import dataclass
+
 @dataclass
 class Stats:
     """Statistics for data normalization."""

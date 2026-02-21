@@ -1,0 +1,3 @@
+base_dir: "./elastic-beam-3d"
+dataset_size: "small"
+seed: 43

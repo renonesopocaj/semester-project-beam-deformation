@@ -1,3 +1,7 @@
+from torch_geometric.data import Dataset
+import os
+import torch
+
 class InMemoryTimeStepDataset(Dataset):
     """In-memory dataset for graph data.
 
@@ -15,9 +19,7 @@ class InMemoryTimeStepDataset(Dataset):
         )
         print(f"Found {len(sample_files)} sample files")
         for sample_file in sample_files:
-            sample_data = torch.load(
-                sample_file, map_location="cpu", weights_only=False
-            )
+            sample_data = torch.load(sample_file, map_location="cpu", weights_only=False)
             self.data.extend(sample_data)  # Flatten all time steps into one list
         print(f"Loaded the dataset with {len(self.data)} samples")
 

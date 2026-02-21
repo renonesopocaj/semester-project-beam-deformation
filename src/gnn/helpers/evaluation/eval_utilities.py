@@ -1,24 +1,28 @@
-def do_rollout(
-        model: torch.nn.Module,
-        test_loader: DataLoader,
-        node_stats: Stats,
-        edge_stats: Stats,
-        target_stats: Stats,
-        dt: float,
-        device: torch.device,
-        skip_first: int = 0,
-        rollout_steps: int = 99999999,
-):
+import torch
+from torch_geometric.data import Data
+from src.gnn.helpers.build_data.stats import denormalize
+
+def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first = 0,
+               rollout_steps = 99999999):
     """Perform autoregressive rollout using the model.
 
     Args:
-        model: Trained MeshGraphNet
-        test_loader: DataLoader for test data
-        node_stats, edge_stats, target_stats: Normalization statistics
-        dt: Time step size
-        device: Computation device
-        skip_first: Number of initial steps to skip
-        rollout_steps: Maximum number of steps to rollout
+        model: torch.nn.Module
+            Trained MeshGraphNet
+        test_loader: DataLoader
+            for test data
+        node_stats: Stats
+        edge_stats: Stats
+        target_stats: Stats
+            Normalization statistics
+        dt: float
+            Time step size
+        device: torch.device
+            Computation device
+        skip_first: int
+            Number of initial steps to skip
+        rollout_steps: int
+            Maximum number of steps to rollout
 
     Returns:
         true_rollout: List of ground truth graphs

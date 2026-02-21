@@ -1,11 +1,16 @@
-def calculate_kinematics(x: Tensor, dt: float) -> tuple[Tensor, Tensor]:
-    """Calculate velocities and accelerations from positions.
+import torch
+
+def calculate_kinematics(x, dt):
+    """
+    Calculate velocities and accelerations from positions.
 
     Args:
-        x: Positions over time (T, N, 3)
-        dt: Time step size
+        x: Tensor
+            Positions over time (T, N, 3)
+        dt: float
+            Time step size
 
-    Returns:
+    Returns: Tuple (v, a) of two tensors
         v: Velocities (T, N, 3)
         a: Accelerations (T-1, N, 3)
     """
@@ -18,18 +23,31 @@ def calculate_kinematics(x: Tensor, dt: float) -> tuple[Tensor, Tensor]:
     return v, a
 
 
-def build_valued_node_features(
-        x: Tensor, v: Tensor, u: Tensor, node_force: Tensor
-) -> Tensor:
-    """Build valued node features: [position, velocity, rest_position, node_force]"""
+def build_valued_node_features(x, v, u, node_force):
+    """
+    Build valued node features: [position, velocity, rest_position, node_force]
+
+    Args:
+        x: Tensor
+        v: Tensor
+        u: Tensor
+        node_force: Tensor
+    :return Tensor
+        concatenated features
+    """
     return torch.concat([x, v, u, node_force], dim=1)
 
 
-def build_edge_features(x: Tensor, u: Tensor, edge_index: Tensor) -> Tensor:
-    """Build edge features from node positions and rest positions.
-
+def build_edge_features(x, u, edge_index):
+    """
+    Build edge features from node positions and rest positions.
     Features: [relative_position, relative_position_norm,
                rest_relative_position, rest_relative_position_norm]
+    Args:
+        x: Tensor
+        u: Tensor
+        edge_index: Tensor
+    :return Tensor
     """
     src, dst = edge_index
     xij = x[dst] - x[src]
@@ -40,7 +58,11 @@ def build_edge_features(x: Tensor, u: Tensor, edge_index: Tensor) -> Tensor:
 
 
 def compute_von_mises_3d(stress_9):
-    """Compute von Mises stress from 9-component stress tensor."""
+    """
+    Compute von Mises stress from 9-component stress tensor.
+    Args:
+        stress_9: full stress tensor
+    """
     sxx = stress_9[:, 0]
     sxy = stress_9[:, 1]
     sxz = stress_9[:, 2]
@@ -59,14 +81,16 @@ def compute_von_mises_3d(stress_9):
     return torch.sqrt(vm)
 
 
-def volume(V: torch.Tensor, T: torch.Tensor) -> torch.Tensor:
+def volume(V, T):
     """Calculate volumes of tetrahedra.
 
     Args:
-        V: Vertex positions (N, 3)
-        T: Tetrahedra connectivity (M, 4)
+        V: torch.Tensor
+            Vertex positions (N, 3)
+        T: torch.Tensor
+            Tetrahedra connectivity (M, 4)
 
-    Returns:
+    Returns: torch.Tensor
         Volumes for each tetrahedron (M,)
     """
     a = V[T[:, 0], :]
