@@ -1,4 +1,5 @@
 from IPython.display import Image, display
+import matplotlib.pyplot as plt
 
 # Display the training history plot
 display(Image(filename='training_history.png'))

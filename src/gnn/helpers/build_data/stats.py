@@ -3,7 +3,9 @@ from dataclasses import dataclass
 
 @dataclass
 class Stats:
-    """Statistics for data normalization."""
+    """
+    Statistics for data normalization.
+    """
     mean: torch.Tensor
     std: torch.Tensor
 
@@ -20,8 +22,11 @@ class Stats:
         return self
 
 
-def compute_stats(tensor_list) -> Stats:
-    """Compute mean and std statistics from a list of tensors."""
+def compute_stats(tensor_list):
+    """
+    Compute mean and std statistics from a list of tensors.
+    :return Stats
+    """
     sum_val = 0
     sum_sq = 0
     count = 0
@@ -35,11 +40,26 @@ def compute_stats(tensor_list) -> Stats:
     return Stats(mean=mean, std=std)
 
 
-def normalize(tensor: torch.Tensor, stats: Stats, eps: float = 1e-8) -> torch.Tensor:
-    """Normalize tensor using statistics."""
+def normalize(tensor, stats, eps = 1e-8):
+    """
+    Normalize tensor using statistics.
+
+    Args
+        tensor: torch.Tensor
+        stats: Stats,
+        eps: float = 1e-8
+    :return torch.Tensor
+    """
     return (tensor - stats.mean) / (stats.std + eps)
 
 
-def denormalize(tensor: torch.Tensor, stats: Stats, eps: float = 1e-8) -> torch.Tensor:
-    """Denormalize tensor using statistics."""
+def denormalize(tensor, stats, eps = 1e-8):
+    """
+    Denormalize tensor using statistics.
+    Args:
+       tensor: torch.Tensor
+       stats: Stats
+       eps: float
+   :return torch.Tensor
+    """
     return tensor * (stats.std + eps) + stats.mean

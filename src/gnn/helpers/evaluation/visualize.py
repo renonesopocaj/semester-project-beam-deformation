@@ -1,14 +1,12 @@
-def make_beam_comparison_gif(
-        pred_rollout: list,
-        true_rollout: list,
-        L: float = 1.0,
-        W: float = 0.1,
-        D: float = 0.04,
-        out_gif: str = "beam_comparison.gif",
-        fps: int = 4,
-        bbox_only_on_true: bool = True,
-        verbose=False,
-):
+import time
+import os
+import shutil
+import numpy as np
+import matplotlib.pyplot as plt
+
+def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 1.0, W: float = 0.1, D: float = 0.04,
+                             out_gif: str = "beam_comparison.gif", fps: int = 4, bbox_only_on_true: bool = True,
+                             verbose=False):
     """Create side-by-side comparison GIF of predicted vs ground truth.
 
     Args:
