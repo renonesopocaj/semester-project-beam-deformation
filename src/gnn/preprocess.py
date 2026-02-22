@@ -7,8 +7,11 @@ from src.gnn.helpers.build_data.build_features import (calculate_kinematics, com
 from src.gnn.helpers.build_data.stats import compute_stats, normalize, Stats
 from torch_geometric.data import Data, Batch
 
-def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_velocities, base_dir, seed):
-    """Preprocess simulation data into graph format.
+EPS = 1e-6
+
+def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_velocities, base_dir, seed, device):
+    """
+    Preprocess simulation data into graph format.
 
     Args:
         data_dir: Path
@@ -27,17 +30,12 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
             Base directory for elastic-beam-3d data
     """
     torch.manual_seed(seed)
-
     # Input path: raw/single-direction-beam/{size}/{split}/graphs
+    # FIXME: hardcoded
     graphs_dir = data_dir / split / "graphs"
     filenames = list(graphs_dir.glob("*.pt"))
-
-    out_graphs = []
-    categorical_node_features = []
-    valued_node_features = []
-    edge_features = []
-    traj_idx = []
-    targets = []
+    out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
+        [], [], [], [], [], [])
 
     # Load stats if not training
     if split != "train":
@@ -50,60 +48,56 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
         edge_stats = Stats.from_dict(stats["edge"])
         target_stats = Stats.from_dict(stats["target"])
 
-    # Main loop: process
-    for idx, filename in enumerate(filenames):
-        print(f"Processing file: {filename.name} ({idx + 1}/{len(filenames)})")
+    # Main loop: process all files, idx_file = idx_file of the file
+    for idx_file, filename in enumerate(filenames):
+        print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
         dataloader = torch.load(filename, weights_only=False)
         graphs = []
         for data in dataloader:
-            graph = data.to("cpu")
+            graph = data.to(device)
             graphs.append(graph)
         whole_trajectory_batch = Batch.from_data_list(graphs)
-        len_traj = len(graphs)
-
-        # Extract positions over time
-        x = whole_trajectory_batch.x.reshape(len_traj, -1, 3)
-        v, a = calculate_kinematics(x, dt)
+        # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps
+        # FIXME: assumption all graphs have same number of points? And where is .x attribute created?
+        x = whole_trajectory_batch.x.reshape(len(graphs), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
+        v, a = calculate_kinematics(x, dt) # v = (T, N, 3), a = (T-1, N, 3)
 
         # Add noise to training data
         if split == "train":
             noise = noise_scale * torch.randn_like(v)
             x = x + noise
             v = v - noise / dt  # adjust velocity accordingly
-
+        # Obtain the next time step
         v_next = v[1:]
         x_next = x[1:]
+        u = x[0] # Rest (first) mesh position
+        # FIXME where is .x_node_force attribute created? and .x_bc?
+        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs), -1, 3) # (#graphs, #points, 3)
+        boundary_condition = graphs[0].x_bc  # 1 = fixed, 0 = free FIXME: WHERE IS THIS 1,0 ENCODED?
 
-        u = x[0]  # Rest mesh position
-        all_node_force = whole_trajectory_batch.x_node_force.reshape(len_traj, -1, 3)
-        boundary_condition = graphs[0].x_bc  # 1 = fixed, 0 = free
-
+        # Inside loop: for each graph build its features
         for t, graph in enumerate(graphs):
+            # FIXME: WHY?
             if t > 48:  # Limit trajectory length
                 break
-            traj_idx.append(idx)
+            traj_idx.append(idx_file) # idx_file of the traj (of the file process)
+            # create
             _node_force = all_node_force[t]
             _x = x[t]
             _v = v[t]
             _a = a[t]
-
             _categorical_node_attr = boundary_condition
             _node_attr = build_valued_node_features(_x, _v, u, _node_force)
             _edge_attr = build_edge_features(_x, u, graph.edge_index)
-
-            # Compute von Mises stress
-            von_mises = torch.log(
-                compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + 1e-6
-            )
+            # Compute von Mises stress FIXME: WHERE IS .edge_index, .y_sig_t FIXME: what is torch.log
+            von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
 
             if split != "train":
                 # Use precomputed stats for validation
                 edge_attr = normalize(_edge_attr, edge_stats)
                 vector_node_attr = normalize(_node_attr, node_stats)
                 categorical_node_attr = _categorical_node_attr
-                node_attr = torch.concat(
-                    [categorical_node_attr, vector_node_attr], dim=1
-                )
+                node_attr = torch.concat([categorical_node_attr, vector_node_attr], dim=1)
 
                 out_graphs.append(
                     Data(x=node_attr, edge_attr=edge_attr, edge_index=graph.edge_index, t=graph.time, x_pos_t=x[t],

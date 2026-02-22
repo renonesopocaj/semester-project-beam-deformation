@@ -5,8 +5,8 @@ def calculate_kinematics(x, dt):
     Calculate velocities and accelerations from positions.
 
     Args:
-        x: Tensor
-            Positions over time (T, N, 3)
+        x: Tensor (T, N, 3)
+            Positions over time
         dt: float
             Time step size
 
@@ -82,7 +82,8 @@ def compute_von_mises_3d(stress_9):
 
 
 def volume(V, T):
-    """Calculate volumes of tetrahedra.
+    """
+    Calculate volumes of tetrahedra.
 
     Args:
         V: torch.Tensor
