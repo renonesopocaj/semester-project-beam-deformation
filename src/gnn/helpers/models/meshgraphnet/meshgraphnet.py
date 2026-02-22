@@ -1,3 +1,7 @@
+import torch
+from src.gnn.helpers.models.models_helpers import build_mlp_d
+import torch.nn as nn
+
 class Encoder(torch.nn.Module):
     """Encoder for node and edge features."""
 
@@ -17,7 +21,8 @@ class Encoder(torch.nn.Module):
 
 
 class GraphNetBlock(torch.nn.Module):
-    """Graph network block for message passing.
+    """
+    Graph network block for message passing.
 
     Performs one round of message passing:
     1. Update edge embeddings based on sender and receiver nodes
@@ -88,10 +93,10 @@ class Decoder(torch.nn.Module):
 
 
 class MeshGraphNet(nn.Module):
-    """MeshGraphNet Model.
+    """
+    MeshGraphNet Model.
 
-    Processes mesh data through encoding, message passing, and decoding
-    to predict node accelerations and stress.
+    Processes mesh data through encoding, message passing, and decoding to predict node accelerations and stress.
     """
 
     def __init__(
@@ -143,23 +148,3 @@ class MeshGraphNet(nn.Module):
         pred = self.decoder(node_embedding)
 
         return pred
-
-if __name__ == "__main__":
-    # Initialize model
-    node_channels = 13  # 1 (boundary) + 3 (position) + 3 (velocity) + 3 (rest position) + 3 (force)
-    edge_channels = 8  # 3 (relative position) + 1 (norm) + 3 (rest relative position) + 1 (norm)
-    num_messages = 8
-    latent_dim = 128
-
-    torch.manual_seed(42)
-    model = MeshGraphNet(
-        node_channels=node_channels,
-        edge_channels=edge_channels,
-        latent_size=latent_dim,
-        num_msgs=num_messages,
-    )
-    model = model.to(device)
-
-    # Count parameters
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total parameters: {total_params:,}")

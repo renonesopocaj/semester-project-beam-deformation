@@ -1,7 +1,18 @@
 import torch.nn as nn
 
 def build_mlp_d(in_size, hidden_size, out_size, num_layers=1, lay_norm=True, use_sigmoid=False, use_softmax=False):
-    """Build a multi-layer perceptron with optional layer normalization."""
+    """
+    Build a multi-layer perceptron with optional layer normalization.
+
+    Args:
+        in_size: int
+        hidden_size: int
+        out_size: int
+        num_layers: int
+        lay_norm: bool
+        use_sigmoid: bool
+        use_softmax: bool
+    """
     if use_sigmoid and use_softmax:
         raise ValueError("Only one of use_sigmoid or use_softmax can be true.")
 

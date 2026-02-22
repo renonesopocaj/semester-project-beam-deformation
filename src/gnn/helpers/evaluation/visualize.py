@@ -3,23 +3,68 @@ import os
 import shutil
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import imageio
+import torch
+from src.gnn.helpers.build_data.build_features import volume
+
+def plot_volume_change(pred_rollout, true_rollout, path):
+    """
+    Plot volume change over time for predicted vs ground truth.
+
+    Args:
+        pred_rollout
+        true_rollout
+        path
+    """
+    fig, ax = plt.subplots()
+    true_volumes_list = []
+    pred_volumes_list = []
+    for pred, true in zip(pred_rollout, true_rollout):
+        x_true = true.x_pos_t
+        x_pred = pred.x_pos_t
+        cells = torch.tensor(true.x_element_connectivity[0][0], dtype=torch.long)
+        true_volumes = volume(x_true, cells)
+        pred_volumes = volume(x_pred, cells)
+
+        V_true = np.abs(true_volumes).sum()
+        V_pred = np.abs(pred_volumes).sum()
+
+        true_volumes_list.append(V_true)
+        pred_volumes_list.append(V_pred)
+    ax.plot(true_volumes_list, label="True Volumes")
+    ax.plot(pred_volumes_list, label="Predicted Volumes")
+    plt.xlabel("Time Step")
+    plt.ylabel("Volume")
+    ax.legend()
+    plt.savefig(path)
+    plt.close()
 
 def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 1.0, W: float = 0.1, D: float = 0.04,
                              out_gif: str = "beam_comparison.gif", fps: int = 4, bbox_only_on_true: bool = True,
                              verbose=False):
-    """Create side-by-side comparison GIF of predicted vs ground truth.
+    """
+    Create side-by-side comparison GIF of predicted vs ground truth.
 
     Args:
-        pred_rollout: List of predicted graphs
-        true_rollout: List of ground truth graphs
-        L, W, D: Beam dimensions
-        out_gif: Output GIF filename
-        fps: Frames per second
-        bbox_only_on_true: Whether to base bounding box on ground truth only
+        pred_rollout: list
+            List of predicted graphs
+        true_rollout: list
+            List of ground truth graphs
+        L: float
+        W: float
+        D: float
+            Beam dimensions
+        out_gif: str
+            Output GIF filename
+        fps: int
+            Frames per second
+        bbox_only_on_true: bool
+            Whether to base bounding box on ground truth only
+        verbose: bool
+
     """
-    assert len(pred_rollout) == len(true_rollout), (
-        "Mismatch in predicted and ground truth frames."
-    )
+    assert len(pred_rollout) == len(true_rollout), ("Mismatch in predicted and ground truth frames.")
 
     time_start = time.time()
     temp_dir = "temp_frames_" + str(time_start)
@@ -139,28 +184,3 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
     shutil.rmtree(temp_dir)
     if verbose:
         print("Done.")
-
-# Create final comparison GIF
-gif_path = "final_beam_comparison.gif"
-volume_png_path = "final_volume_change.png"
-
-plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-make_beam_comparison_gif(
-    pred_rollout=pred_rollout,
-    true_rollout=true_rollout,
-    L=1.0,
-    W=0.1,
-    D=0.04,
-    out_gif=gif_path,
-    fps=4,
-    verbose=True,
-)
-
-print(f"\nFinal visualizations saved:")
-print(f"  - GIF: {gif_path}")
-print(f"  - Volume plot: {volume_png_path}")
-
-from IPython.display import Image, display
-
-# Display the final comparison GIF
-display(Image(filename=gif_path))

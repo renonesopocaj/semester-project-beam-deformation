@@ -1,6 +1,8 @@
 import torch
 from torch_geometric.data import Data
 from src.gnn.helpers.build_data.stats import denormalize
+from src.gnn.helpers.build_data.stats import normalize
+from src.gnn.helpers.build_data.stats import Stats
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first = 0,
                rollout_steps = 99999999):
@@ -72,31 +74,71 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             v_true = graph.v_next
 
             # Prepare input for next timestep
-            input_graph = build_mgn_graph_from_timestep(
-                simulation_graph=graph,
-                x_new=x_new,
-                v_new=v_new,
-                u=u,
-                node_stats=node_stats,
-                edge_stats=edge_stats,
-                target_stats=target_stats,
-            )
+            input_graph = build_mgn_graph_from_timestep(simulation_graph=graph, x_new=x_new, v_new=v_new, u=u,
+                                                        node_stats=node_stats, edge_stats=edge_stats,
+                                                        target_stats=target_stats)
 
             # Store rollouts
-            true_rollout.append(
-                Data(
-                    x_pos_t=x_true,
-                    x_vel_t=v_true,
-                    von_mises=von_mises_true,
-                    x_element_connectivity=graph.x_element_connectivity,
-                )
-            )
-            pred_rollout.append(
-                Data(
-                    x_pos_t=x_new,
-                    x_vel_t=v_new,
-                    von_mises=von_mises,
-                    x_element_connectivity=graph.x_element_connectivity,
-                )
-            )
+            true_rollout.append(Data(x_pos_t=x_true, x_vel_t=v_true, von_mises=von_mises_true,
+                                     x_element_connectivity=graph.x_element_connectivity))
+            pred_rollout.append(Data(x_pos_t=x_new, x_vel_t=v_new, von_mises=von_mises,
+                                     x_element_connectivity=graph.x_element_connectivity))
     return true_rollout, pred_rollout
+
+
+def mae(target, pred):
+    """
+    Mean absolute error.
+    Args:
+        target: float
+        pred: float
+    """
+    return torch.mean(torch.abs(target - pred))
+
+
+def build_mgn_graph_from_timestep(simulation_graph, x_new, v_new, u, node_stats, edge_stats, target_stats):
+    """
+    Build a graph for the next timestep from predicted state.
+
+    Args:
+        simulation_graph: Data
+        x_new: torch.Tensor
+        v_new: torch.Tensor
+        u: torch.Tensor
+        node_stats: Stats
+        edge_stats: Stats
+        target_stats: Stats
+
+    :return input_graph
+    """
+    input_graph = simulation_graph
+
+    boundary_condition = simulation_graph.x[:, 0]
+    node_force = simulation_graph.node_force_next
+
+    categorical_node_features = boundary_condition.unsqueeze(1)
+    valued_node_features = torch.concat([x_new, v_new, u, node_force], dim=1)
+
+    src, dst = simulation_graph.edge_index
+    xij = x_new[dst] - x_new[src]
+    xij_norm = torch.norm(xij, dim=1).unsqueeze(1)
+    uij = u[dst] - u[src]
+    uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
+
+    edge_features = torch.concat([xij, xij_norm, uij, uij_norm], dim=1)
+
+    _edge_attr = normalize(edge_features, edge_stats)
+    _x = torch.concat(
+        [
+            categorical_node_features,
+            normalize(valued_node_features, node_stats),
+        ],
+        dim=1,
+    )
+    _x[-1] = simulation_graph.x[-1]  # Keep force node features unchanged
+    input_graph.x = _x
+    input_graph.edge_attr = _edge_attr
+    input_graph.x_pos_t = x_new
+    input_graph.x_vel_t = v_new
+    input_graph.node_force = node_force
+    return input_graph
