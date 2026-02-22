@@ -1,7 +1,6 @@
 class YamlObj:
     """
-    Dynamically maps all leaf keys from a nested config dictionary
-    to instance attributes, ignoring nesting structure.
+    Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
     """
 
     def __init__(self, cfg):

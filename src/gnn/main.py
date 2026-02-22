@@ -7,11 +7,10 @@ from torch_geometric.loader import DataLoader
 import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from src.gnn.helpers.evaluation.visualize import make_beam_comparison_gif, plot_volume_change
-from src.gnn.helpers.evaluation.eval_utilities import do_rollout, mae
-from src.gnn.helpers.dataloader.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.helpers.trainer.trainer import Trainer
-from src.gnn.helpers.build_data.stats import Stats
+from src.gnn.helpers.eval_utilities import do_rollout, mae
+from src.gnn.helpers.data_utils.inmemorytimestepdataset import InMemoryTimeStepDataset
+from src.gnn.helpers.trainer import Trainer
+from src.gnn.helpers.data_utils.stats import Stats
 from src.gnn.helpers.models.meshgraphnet.meshgraphnet import MeshGraphNet
 
 # Set device

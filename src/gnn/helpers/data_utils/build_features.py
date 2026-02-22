@@ -2,10 +2,10 @@ import torch
 
 def calculate_kinematics(x, dt):
     """
-    Calculate velocities and accelerations from positions.
+    Calculate velocities and accelerations from positions. The idea is to fix t=0 velocity at 0.
 
     Args:
-        x: Tensor (T, N, 3)
+        x: Tensor (T, N, 3) = (#timesteps, #points in a graph, 3)
             Positions over time
         dt: float
             Time step size
@@ -14,11 +14,11 @@ def calculate_kinematics(x, dt):
         v: Velocities (T, N, 3)
         a: Accelerations (T-1, N, 3)
     """
-    v0 = torch.zeros(*x[0].shape, device=x.device, dtype=x.dtype).unsqueeze(0)
-    dx = x[1:] - x[:-1]
-    v_steps = dx / dt
-    v = torch.cat([v0, v_steps], dim=0)
-    dv = v[1:] - v[:-1]
+    v0 = torch.zeros(*x[0].shape, device=x.device, dtype=x.dtype).unsqueeze(0) # (1, N, 3)
+    dx = x[1:] - x[:-1]  # (T-1, N, 3) computes dx by shifting by 1, first excluding t=0 then excluding t=last
+    v_steps = dx / dt  # (T-1, N, 3)
+    v = torch.cat([v0, v_steps], dim=0) # (T, N, 3)
+    dv = v[1:] - v[:-1] # same as velocity  (T-1, N, 3): but why isn't it brought back to (T, N, 3)?
     a = dv / dt
     return v, a
 
@@ -66,11 +66,8 @@ def compute_von_mises_3d(stress_9):
     sxx = stress_9[:, 0]
     sxy = stress_9[:, 1]
     sxz = stress_9[:, 2]
-    syx = stress_9[:, 3]
     syy = stress_9[:, 4]
     syz = stress_9[:, 5]
-    szx = stress_9[:, 6]
-    szy = stress_9[:, 7]
     szz = stress_9[:, 8]
     vm = 0.5 * (
             (sxx - syy) ** 2
