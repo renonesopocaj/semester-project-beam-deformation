@@ -12,9 +12,20 @@ class YamlObj:
                 Creates attributes on self dynamically.
         """
         flattened_cfg = self._flatten_dict(cfg)
-
-        for key, value in flattened_cfg.items():
-            setattr(self, key, value)
+        self.dataset_size = flattened_cfg["dataset_size"]
+        self.split = flattened_cfg["split"]
+        self.device = flattened_cfg["device"]
+        self.noise_scale_train = flattened_cfg["noise_scale_train"]
+        self.dt = flattened_cfg["dt"]
+        self.noise_scale_test = flattened_cfg["noise_scale_test"]
+        self.seed = flattened_cfg["seed"]
+        self.graphs_dir = flattened_cfg["graphs_dir"]
+        self.raw_data_dir = flattened_cfg["raw_data_dir"]
+        self.base_dir = flattened_cfg["base_dir"]
+        self.test_graphs_dir = flattened_cfg["test_graphs_dir"]
+        self.save_dir = flattened_cfg["save_dir"]
+        # for key, value in flattened_cfg.items():
+        #     setattr(self, key, value)
 
     def _flatten_dict(self, data):
         """

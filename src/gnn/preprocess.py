@@ -6,12 +6,12 @@ from src.gnn.helpers.data_utils.build_features import (calculate_kinematics, com
                                                        build_valued_node_features)
 from src.gnn.helpers.data_utils.stats import compute_stats, normalize, Stats
 from torch_geometric.data import Data, Batch
+from pathlib import Path
 
 EPS = 1e-6
 
-def _save_preprocessed(split, traj_idx, out_graphs, base_dir, dataset_size):
-    # Save preprocessed graphs to: processed/{size}/{split}/graphs/graph_XX.pt FIXME:    hardcoded and make function
-    save_dir = base_dir / "processed" / dataset_size / split / "graphs"
+def _save_preprocessed(split, traj_idx, out_graphs, save_dir):
+    save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     for traj in set(traj_idx):
         print(f"Saving trajectory: {traj}")
@@ -20,13 +20,11 @@ def _save_preprocessed(split, traj_idx, out_graphs, base_dir, dataset_size):
         file_path = save_dir / f"graph_{traj:02d}.pt"
         torch.save(graphs, file_path)
 
-    print(f"Preprocessing complete for {split} split!")
-    print(f"Saved to: {save_dir}")
+    print(f"Preprocessing complete for {split} split! Saved to: {save_dir}")
 
-def _save_stats(node_stats, edge_stats, target_stats, base_dir, dataset_size):
+def _save_stats(node_stats, edge_stats, target_stats, save_dir):
     stats = {"node": node_stats.to_dict(), "edge": edge_stats.to_dict(), "target": target_stats.to_dict()}
-    # Save to: processed/{size}/train/stats/stats.json FIXME: hardcoded and make function
-    stats_dir = base_dir / "processed" / dataset_size / "train" / "stats"
+    stats_dir = Path(save_dir + "/stats")
     stats_dir.mkdir(parents=True, exist_ok=True)
     with open(stats_dir / "stats.json", "w") as f:
         json.dump(stats, f, indent=4)
@@ -52,7 +50,7 @@ def _load_stats(base_dir, dataset_size):
     target_stats = Stats.from_dict(stats["target"])
     return node_stats, edge_stats, target_stats
 
-def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_velocities, base_dir, seed, device):
+def preprocess_data(cfg, recalc_velocities):
     """
     Preprocess simulation data into graph format. Note one file = one trajectory
     One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
@@ -84,17 +82,14 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
         base_dir: Path
             Base directory for elastic-beam-3d data
     """
-    torch.manual_seed(seed)
-    # Input path: raw/single-direction-beam/{size}/{split}/graphs
-    # FIXME: hardcoded
-    graphs_dir = data_dir / split / "graphs"
-    filenames = list(graphs_dir.glob("*.pt"))
+    torch.manual_seed(cfg.seed)
+    filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
     out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
         [], [], [], [], [], [])
 
     # Load stats if validation
-    if split != "train":
-        node_stats, edge_stats, target_stats = _load_stats(base_dir, dataset_size)
+    if cfg.split != "train":
+        node_stats, edge_stats, target_stats = _load_stats(cfg.base_dir, cfg.dataset_size)
 
     # Main loop: process all files, one file = one trajectory, idx_file = idx_file of the file
     for idx_file, filename in enumerate(filenames):
@@ -102,15 +97,15 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
         dataloader = torch.load(filename, weights_only=False)
         graphs = []
         for data in dataloader:
-            graph = data.to(device)
+            graph = data.to(cfg.device)
             graphs.append(graph)
         whole_trajectory_batch = Batch.from_data_list(graphs)
         # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps
         # FIXME: assumption all graphs have same number of points? And where is .x attribute created?
         x = whole_trajectory_batch.x.reshape(len(graphs), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
-        v, a = calculate_kinematics(x, dt) # v = (T, N, 3), a = (T-1, N, 3)
-        if split == "train":
-            x, v = _add_noise_train(x, v, dt, noise_scale)
+        v, a = calculate_kinematics(x, cfg.dt) # v = (T, N, 3), a = (T-1, N, 3)
+        if cfg.split == "train":
+            x, v = _add_noise_train(x, v, cfg.dt, cfg.noise_scale_train)
         v_next = v[1:]
         x_next = x[1:]
         u = x[0] # Rest (first) mesh position
@@ -133,7 +128,7 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
             _von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS) # Compute von Mises stress FIXME: WHERE IS .edge_index, .y_sig_t FIXME: what is torch.log
 
             # Validation: normalize with stats already computed, and add to out_graphs as PyG data
-            if split != "train":
+            if cfg.split != "train":
                 # Use precomputed stats for validation
                 _edge_attr_norm = normalize(_edge_attr, edge_stats)
                 _vector_node_attr_norm = normalize(_node_attr, node_stats)
@@ -154,13 +149,13 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
                 targets.append(torch.concat([_a, _von_mises], dim=1))
 
     # Normalize data and save stats if it's in training preprocessing
-    if split == "train":
+    if cfg.split == "train":
         # Compute statistics
         node_stats = compute_stats(valued_node_features)
         edge_stats = compute_stats(edge_features)
         target_stats = compute_stats(targets)
         # Save statistics
-        _save_stats(node_stats, edge_stats, target_stats, base_dir, dataset_size)
+        _save_stats(node_stats, edge_stats, target_stats, cfg.save_dir)
         # Normalize and assign features
         for t in range(len(out_graphs)):
             _valued_node_features = normalize(valued_node_features[t], node_stats)
@@ -170,33 +165,24 @@ def preprocess_data(data_dir, split, dataset_size, noise_scale, dt, recalc_veloc
             out_graphs[t].edge_attr = _edge_features
             out_graphs[t].y = _targets
 
-    _save_preprocessed(split, traj_idx, out_graphs, base_dir, dataset_size) # Save all processed data (in all cases)
+    _save_preprocessed(cfg.split, traj_idx, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
 
 if __name__ == "__main__":
     # Run preprocessing
     # Choose dataset size: 'small', 'medium', or 'large'
-    YAML_PATH = "yamls/preprocessing.yaml"
-    with open("config.yaml") as f:
+    YAML_PATH = "conf/preprocess.yaml"
+    with open(YAML_PATH) as f:
         cfg = yaml.safe_load(f)
     cfg = YamlObj(cfg)
-    # raw_data_dir = cfg.base_dir / "raw" / "single-direction-beam" / cfg.dataset_size
-    print(f"Preprocessing {cfg.dataset_size} dataset..." + "=" * 60)
+    print(f"Preprocessing {cfg.dataset_size} dataset...\n" + "=" * 60)
     # Preprocess training data
     print("\n1. Preprocessing training data...")
-    preprocess_data(data_dir=raw_data_dir, split="train", dataset_size=cfg.dataset_size, noise_scale=0.0003,
-                    recalc_velocities=True, base_dir=cfg.base_dir, dt=0.08, seed=cfg.seed, device=device)
-
+    preprocess_data(cfg=cfg, recalc_velocities=True)
     print("\n2. Preprocessing validation data...")
-    preprocess_data(data_dir=raw_data_dir, split="val", dataset_size=cfg.dataset_size, recalc_velocities=True,
-                    base_dir=cfg.base_dir, noise_scale=0.0, dt=0.08, seed=cfg.seed, device=device)
-
+    preprocess_data(cfg=cfg, recalc_velocities=True)
     print("\n3. Preprocessing test data (if available)...")
-    # test_graphs_dir = raw_data_dir / "test" / "graphs"
-    if test_graphs_dir.exists():
-        preprocess_data(data_dir=raw_data_dir, split="test", dataset_size=cfg.dataset_size, recalc_velocities=True,
-                        base_dir=cfg.base_dir, noise_scale = 0.0, dt = 0.08, seed=cfg.seed, device=device)
+    if Path(cfg.test_graphs_dir).exists():
+        preprocess_data(cfg=cfg,recalc_velocities=True)
     else:
         print("  No test data found, skipping...")
-
-    print("\n" + "=" * 60)
-    print("Preprocessing complete!")
+    print("\n" + "=" * 60 + "\nPreprocessing complete!")

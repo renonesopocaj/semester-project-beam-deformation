@@ -80,6 +80,7 @@ def compute_von_mises_3d(stress_9):
 
 def volume(V, T):
     """
+    FIXME: take a look at it and understand it
     Calculate volumes of tetrahedra.
 
     Args:

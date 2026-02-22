@@ -20,7 +20,7 @@ class InMemoryTimeStepDataset(Dataset):
         print(f"Found {len(sample_files)} sample files")
         for sample_file in sample_files:
             sample_data = torch.load(sample_file, map_location="cpu", weights_only=False)
-            self.data.extend(sample_data)  # Flatten all time steps into one list
+            self.data.extend(sample_data)  # TODO: WHY? Flatten all time steps into one list
         print(f"Loaded the dataset with {len(self.data)} samples")
 
     def __getitem__(self, idx):

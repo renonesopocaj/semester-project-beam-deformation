@@ -171,7 +171,10 @@ if hasattr(trainer, 'rollout_all_step_error'):
 # Display the training history plot
 display(Image(filename='training_history.png'))
 
-# Final evaluation
+# ========================================================================================
+#                                   Final evaluation
+# ========================================================================================
+
 model.eval()
 target_stats.to("cpu")
 
