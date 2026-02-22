@@ -111,7 +111,7 @@ def preprocess_data(cfg, recalc_velocities):
         u = x[0] # Rest (first) mesh position
         # FIXME where is .x_node_force attribute created? and .x_bc?
         all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs), -1, 3) # (#graphs, #points, 3)
-        boundary_condition = graphs[0].x_bc  # 1 = fixed, 0 = free FIXME: WHERE IS THIS 1,0 ENCODED?
+        boundary_condition = graphs[0].x_bc  # 1 = fixed, 0 = free FIXME: WHERE IS THIS 1,0 ENCODED? HOW DOES IT WORK?
 
         # Inside loop: for each graph build its features
         for t, graph in enumerate(graphs):

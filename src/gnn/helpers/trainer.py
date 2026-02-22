@@ -29,17 +29,17 @@ class Trainer:
     - use_wandb: Whether to use Weights & Biases for logging
     """
 
-    def __init__(
-            self,
-            model,
-            optimizer,
-            device,
-            loss_type: Literal["mse", "mae"] = "mse",
-            use_wandb: bool = False,
-    ):
+    def __init__(self, model, optimizer, device, loss_type, use_wandb):
+        """
+        Args:
+            model:
+            optimizer:
+            device:
+            loss_type: Literal["mse", "mae"]
+            use_wandb: bool
+        """
         self.training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
         self.run = wandb.init(mode="disabled") if not use_wandb else wandb.init()
-
         self.model = model
         self.optimizer = optimizer
         self.device = device
@@ -55,21 +55,15 @@ class Trainer:
             self.loss_fn = F.mse_loss
 
         # Training history
-        self.train_history = []
-        self.train_acc_history = []
-        self.train_stress_history = []
-
+        self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
         # Create directory for saving models
         self.cur_dir = os.getcwd()
         self.model_dir = Path(self.cur_dir) / "saved_models" / self.training_id
         self.model_dir.mkdir(parents=True, exist_ok=True)
-
         # Initialize metrics
         self.loss = 0.0
         self.rollout_all_step_error = 0.0
-        self.epoch_losses = []
-        self.train_acc_loss = []
-        self.train_stress_loss = []
+        self.epoch_losses, self.train_acc_loss, self.train_stress_loss = [], [], []
 
     def train(
             self,
