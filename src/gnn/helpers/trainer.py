@@ -148,24 +148,27 @@ class Trainer:
         self.model.eval()
         target_stats.to("cpu") # FIXME: hardcoded, move to device
         # Perform model rollout testing
-        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=test_loader, device=self.device,
+        try:
+            true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=test_loader, device=self.device,
                                                 node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
                                                 dt=dt)
-        # Compute rollout error with MAE FIXME: hardcoded mae
-        rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
-        # Create visualizations
-        gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"
-        volume_png_path = self.model_dir / f"Epoch_{epoch}_volume_change.png"
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
-                                 out_gif=gif_path, fps=4)
-        # Log to wandb
-        data = {"val/gen_rollout_error": rollout_error,
-                "val/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                "val/volume_change_png": wandb.Image(str(volume_png_path))}
-        self.run.log(data, step=epoch)
-        # Store rollout error
-        self.rollout_all_step_error = rollout_error
+            # Compute rollout error with MAE FIXME: hardcoded mae
+            rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
+            # Create visualizations
+            gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"
+            volume_png_path = self.model_dir / f"Epoch_{epoch}_volume_change.png"
+            plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+            make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
+                                     out_gif=gif_path, fps=4)
+            # Log to wandb
+            data = {"val/gen_rollout_error": rollout_error,
+                    "val/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
+                    "val/volume_change_png": wandb.Image(str(volume_png_path))}
+            self.run.log(data, step=epoch)
+            # Store rollout error
+            self.rollout_all_step_error = rollout_error
+        except Exception as e:
+            print(e)
 
     def save_model(self, epochnum):
         """
@@ -217,12 +220,11 @@ class Trainer:
         original_training_id = checkpoint.get('training_id', 'unknown')
         notes_path = self.model_dir / "notes.txt"
         with open(notes_path, 'w') as f:
-            f.write(f"Resumed from checkpoint: {checkpoint_path}\nOriginal training ID: {original_training_id}\n"
-                    f"Resumed at epoch: {resume_epoch}\nNew training ID: {self.training_id}\n")
+            f.write(f"Resumed from checkpoint: {checkpoint_path}\n\tOriginal training ID: {original_training_id}\n"
+                    f"\tResumed at epoch: {resume_epoch}\n\tNew training ID: {self.training_id}\n")
 
         print(f"Checkpoint loaded successfully!\nResuming from epoch: {resume_epoch}\n\tLast loss: {self.loss:.6f}"
               f"\n\tLast rollout error: {self.rollout_all_step_error:.6f}\n\tNotes saved to: {notes_path}")
 
         return resume_epoch
 
-print("Trainer class defined!")

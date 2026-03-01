@@ -12,11 +12,11 @@ class InMemoryTimeStepDataset(Dataset):
         self.data = []
         sample_files = sorted([os.path.join(sample_dir, f) for f in os.listdir(sample_dir) if f.startswith("graph_")
                                and f.endswith(".pt")])
-        print(f"Found {len(sample_files)} sample files")
+        print(f"\tFound {len(sample_files)} sample files")
         for sample_file in sample_files:
             sample_data = torch.load(sample_file, map_location="cpu", weights_only=False)
             self.data.extend(sample_data)  # Flatten all time steps into one list
-        print(f"Loaded the dataset with {len(self.data)} samples")
+        print(f"\tLoaded the dataset with {len(self.data)} samples")
 
     def __getitem__(self, idx):
         return self.data[idx]

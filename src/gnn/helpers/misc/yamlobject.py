@@ -52,17 +52,19 @@ class TrainYaml:
         flattened_cfg = _flatten_dict(cfg)
         self.batch_size = flattened_cfg["batch_size"]
         self.num_workers = flattened_cfg["num_workers"]
-        self.path_val = flattened_cfg["path_val"]
-        self.path_train = flattened_cfg["path_train"]
+        self.val_dir = flattened_cfg["val_dir"]
+        self.train_dir = flattened_cfg["train_dir"]
         self.seed = flattened_cfg["seed"]
         self.name = flattened_cfg["name"]
         self.num_messages = flattened_cfg["num_messages"]
         self.latent_dim = flattened_cfg["latent_dim"]
-        self.lr = flattened_cfg["lr"]
+        self.lr = float(flattened_cfg["lr"])
         self.total_epochs = flattened_cfg["total_epochs"]
         self.validation_interval = flattened_cfg["validation_interval"]
         self.loss_type = flattened_cfg["loss_type"]
         self.use_wandb = flattened_cfg["use_wandb"]
+        self.stats_path = flattened_cfg["stats_path"]
+        self.enable_val = flattened_cfg["enable_val"]
 
 def _flatten_dict(data):
     """

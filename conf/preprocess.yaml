@@ -4,7 +4,7 @@ defaults:
   - paths: single_direction_beam
   - _self_
 
-split: train
+split: val
 
 hydra:
   run:

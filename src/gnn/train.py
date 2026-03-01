@@ -21,11 +21,14 @@ def train(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     # Allocating dataloader and datasets
-    train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_path)
-    test_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_path)
+    print("Train dataset:")
+    train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
-    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
-    print(f"Training samples: {len(train_dataset)} Test samples: {len(test_dataset)}")
+    if cfg.enable_val:
+        print("Test dataset:")
+        test_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir)
+        test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # Test samples: {len(test_dataset)}
 
     # Initialize model FIXME: questo spaccherebbe prenderli dalla cartella di generazione del dataset in automatico
     node_channels = 13  # 1 (boundary) + 3 (position) + 3 (velocity) + 3 (rest position) + 3 (force)
@@ -38,11 +41,7 @@ def train(cfg):
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
-
-    # Load normalization statistics from processed data
-    DATASET_SIZE = "small"  # Use same size as before
-    base_dir = Path("./elastic-beam-3d")
-    stats_path = base_dir / "processed" / DATASET_SIZE / "train" / "stats" / "stats.json"
+    stats_path = cfg.stats_path
 
     print(f"Loading stats from {stats_path}...")
     with open(stats_path, "r") as f:
@@ -53,9 +52,9 @@ def train(cfg):
     # FIXME: dt should probably be loaded from dataset
     dt = 0.08
 
-    print(f"Node features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
-    print(f"Edge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
-    print(f"Target features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
+    print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
+    print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
+    print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
     use_wandb = False # Set to False if you don't want to use wand
 
@@ -67,6 +66,7 @@ def train(cfg):
           f"{cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
 
     # Training loop using the Trainer class
+    idx = 0
     epoch_bar = tqdm(range(cfg.total_epochs), desc="Epochs")
     for epoch in epoch_bar:
         # Training phase
@@ -79,15 +79,19 @@ def train(cfg):
         trainer.epoch_end(numepoch=epoch)
 
         # Validation phase
-        if epoch % cfg.validation_interval == 0:
+        if epoch % cfg.validation_interval == 0 and cfg.enable_val:
             trainer.test(test_loader=test_dataloader, node_stats=node_stats, edge_stats=edge_stats,
                          target_stats=target_stats, dt=dt, epoch=epoch,)
-            trainer.save_model(epochnum=epoch)
+            # trainer.save_model(epochnum=epoch)
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
                                    "rollout_error": f"{trainer.rollout_all_step_error:.6f}"})
-            print(f"\nEpoch {epoch}: Train Loss = {trainer.loss:.6f}, Rollout Error = {trainer.rollout_all_step_error:.6f}")
+            print(f"\nEpoch {epoch}: Train Loss = {trainer.loss:.6f}, "
+                  f"Rollout Error = {trainer.rollout_all_step_error:.6f}")
         else:
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
+            if idx == cfg.total_epochs - 1:
+                trainer.save_model(epochnum=epoch)
+        idx += 1
 
     print("\nTraining complete!")
     print(f"Models saved to: {trainer.model_dir}")
@@ -104,7 +108,6 @@ def train(cfg):
 
     plt.tight_layout()
     plt.savefig("training_history.png")
-    plt.show()
 
     print(f"Total training steps: {len(trainer.train_history)}")
     print(f"Final training loss: {trainer.train_history[-1]:.6f}")

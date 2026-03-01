@@ -1,7 +1,9 @@
 batch_size: 16
 num_workers: 4
-val_dir:
-train_dir:
+# FIXME: these should be taken automatically once I selecte the desired folder
+val_dir: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/medium/train/"
+train_dir: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/medium/train/"
+stats_path: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/medium/train/stats/stats.json"
 seed: 42
 model: # architecture
   name: "MGN"
@@ -9,7 +11,9 @@ model: # architecture
   latent_dim: 128
 train:
   lr: 5e-5
-  total_epochs: 30
-  validation_interval: 2
+  total_epochs: 50
   loss_type: "mse"
   use_wandb: False
+val:
+  enable_val: False
+  validation_interval: 100

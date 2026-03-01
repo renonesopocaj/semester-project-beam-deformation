@@ -1,3 +1,25 @@
 .idea
 .venv
 __pycache__
+.pvd
+.vtu
+../.idea
+*.iml
+.idea/
+jitfailure*/
+src/nonlinear_stokes_runs_2.csv
+.csv
+config.yaml
+.png
+.jpg
+src/sanity_newton_seeds
+sanity.yaml
+temp.yaml
+*.yaml
+# Python cache directories
+__pycache__/
+
+# Compiled Python files
+*.pyc
+*.pyo
+*.pyd
