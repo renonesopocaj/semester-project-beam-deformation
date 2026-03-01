@@ -1,7 +1,7 @@
 import torch
 import json
 import yaml
-from src.gnn.helpers.misc.yamlobj import YamlObj
+from src.gnn.helpers.misc.yamlobject import PreprocessYaml
 from src.gnn.helpers.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
                                                        build_valued_node_features)
 from src.gnn.helpers.data_utils.stats import compute_stats, normalize, Stats
@@ -19,7 +19,6 @@ def _save_preprocessed(split, traj_idx, out_graphs, save_dir):
         print(f"  Length: {len(graphs)} timesteps")
         file_path = save_dir / f"graph_{traj:02d}.pt"
         torch.save(graphs, file_path)
-
     print(f"Preprocessing complete for {split} split! Saved to: {save_dir}")
 
 def _save_stats(node_stats, edge_stats, target_stats, save_dir):
@@ -50,7 +49,7 @@ def _load_stats(base_dir, dataset_size):
     target_stats = Stats.from_dict(stats["target"])
     return node_stats, edge_stats, target_stats
 
-def preprocess_data(cfg, recalc_velocities):
+def preprocess_data(cfg):
     """
     Preprocess simulation data into graph format. Note one file = one trajectory
     One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
@@ -63,24 +62,11 @@ def preprocess_data(cfg, recalc_velocities):
            2. for each file:
                 2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
                      and add noise
-                2.b. compute normalization stuff (mean + stddev) FIXME: CHECK IT'S ISOTROPIC
-            3. for each file: save
+                2.b. compute normalization stuff (mean + stddev)
+           3. for each file: save
 
     Args:
-        data_dir: Path
-            Directory containing raw simulation data (e.g., raw/single-direction-beam/small)
-        split: str
-            'train' | 'val' | 'test'
-        dataset_size: str
-            'small' | 'medium' | 'large'
-        noise_scale: float
-            Amount of noise to add during training
-        dt: float
-            Time step size
-        recalc_velocities: bool
-            Whether to recalculate velocities from positions
-        base_dir: Path
-            Base directory for elastic-beam-3d data
+        cfg: YamlObject
     """
     torch.manual_seed(cfg.seed)
     filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
@@ -100,8 +86,7 @@ def preprocess_data(cfg, recalc_velocities):
             graph = data.to(cfg.device)
             graphs.append(graph)
         whole_trajectory_batch = Batch.from_data_list(graphs)
-        # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps
-        # FIXME: assumption all graphs have same number of points? And where is .x attribute created?
+        # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
         x = whole_trajectory_batch.x.reshape(len(graphs), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
         v, a = calculate_kinematics(x, cfg.dt) # v = (T, N, 3), a = (T-1, N, 3)
         if cfg.split == "train":
@@ -109,36 +94,58 @@ def preprocess_data(cfg, recalc_velocities):
         v_next = v[1:]
         x_next = x[1:]
         u = x[0] # Rest (first) mesh position
-        # FIXME where is .x_node_force attribute created? and .x_bc?
-        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs), -1, 3) # (#graphs, #points, 3)
-        boundary_condition = graphs[0].x_bc  # 1 = fixed, 0 = free FIXME: WHERE IS THIS 1,0 ENCODED? HOW DOES IT WORK?
+        # x_node_force is the force (scalar) in every point (x,y,z) of the graph at time t
+        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs), -1, 3) # (T, N, 3)
+        # .x_bc contains 0,1 value with 1 = fixed, 0 = free
+        boundary_condition = graphs[0].x_bc
 
         # Inside loop: for each graph build its features
         for t, graph in enumerate(graphs):
-            # FIXME: WHY LIMIT?
-            if t > 48:  # Limit trajectory length
+            # limit trajectory length to compute acceleration
+            if t > cfg.limit_timesteps - 2:
                 break
             traj_idx.append(idx_file) # idx_file of the traj (of the file process)
             # create local (inside for) variables
             _node_force = all_node_force[t]
             _x, _v, _a = x[t], v[t], a[t]
             _categorical_node_attr = boundary_condition
+            # concatenate [position, velocity, rest_position, node_force]
             _node_attr = build_valued_node_features(_x, _v, u, _node_force)
+            # .edge_index contains mesh connectivity
             _edge_attr = build_edge_features(_x, u, graph.edge_index)
-            _von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS) # Compute von Mises stress FIXME: WHERE IS .edge_index, .y_sig_t FIXME: what is torch.log
+            # .y_sig_t contains the full stress tensor
+            # took the log because it helps making the distribution normal-like (symmetrical)
+            if cfg.mises_log:
+                _von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
+            else:
+                _von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
 
             # Validation: normalize with stats already computed, and add to out_graphs as PyG data
             if cfg.split != "train":
                 # Use precomputed stats for validation
-                _edge_attr_norm = normalize(_edge_attr, edge_stats)
-                _vector_node_attr_norm = normalize(_node_attr, node_stats)
+                # FIXME: not isotropic
+                if cfg.isotropic_norm:
+                    raise NotImplementedError
+                else:
+                    _edge_attr_norm = normalize(_edge_attr, edge_stats)
+                    _vector_node_attr_norm = normalize(_node_attr, node_stats)
                 node_attr = torch.concat([_categorical_node_attr, _vector_node_attr_norm], dim=1)
 
                 out_graphs.append(
-                    Data(x=node_attr, edge_attr=_edge_attr_norm, edge_index=graph.edge_index, t=graph.time, x_pos_t=x[t],
-                         x_vel_t=v[t], node_force=all_node_force[t], node_force_next=all_node_force[t + 1],
-                         x_next=x_next[t], v_next=v_next[t], y_acc_t=a[t], y_von_mises=_von_mises,
-                         x_element_connectivity=graph.x_element_connectivity, u=u)
+                    Data(x=node_attr,
+                         edge_attr=_edge_attr_norm,
+                         edge_index=graph.edge_index,
+                         t=graph.time, # FIXME: what is it? just one scalar probably
+                         x_pos_t=x[t],
+                         x_vel_t=v[t],
+                         node_force=all_node_force[t],
+                         node_force_next=all_node_force[t + 1], # FIXME: why giving next-time features in the data?
+                         x_next=x_next[t], # FIXME: why giving next-time features in the data?
+                         v_next=v_next[t], # FIXME: why giving next-time features in the data?
+                         y_acc_t=a[t],
+                         y_von_mises=_von_mises, # FIXME: no y_von_mises + 1?
+                         x_element_connectivity=graph.x_element_connectivity, # FIXME: edge_index vs x_element_connectivity?
+                         u=u) # FIXME: rest position?
                 )
             else:
                 # Train: accumulate to out_graphs for stats computation
@@ -168,21 +175,20 @@ def preprocess_data(cfg, recalc_velocities):
     _save_preprocessed(cfg.split, traj_idx, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
 
 if __name__ == "__main__":
-    # Run preprocessing
     # Choose dataset size: 'small', 'medium', or 'large'
     YAML_PATH = "conf/preprocess.yaml"
     with open(YAML_PATH) as f:
         cfg = yaml.safe_load(f)
-    cfg = YamlObj(cfg)
+    cfg = PreprocessYaml(cfg)
     print(f"Preprocessing {cfg.dataset_size} dataset...\n" + "=" * 60)
     # Preprocess training data
     print("\n1. Preprocessing training data...")
-    preprocess_data(cfg=cfg, recalc_velocities=True)
+    preprocess_data(cfg=cfg)
     print("\n2. Preprocessing validation data...")
-    preprocess_data(cfg=cfg, recalc_velocities=True)
+    preprocess_data(cfg=cfg)
     print("\n3. Preprocessing test data (if available)...")
     if Path(cfg.test_graphs_dir).exists():
-        preprocess_data(cfg=cfg,recalc_velocities=True)
+        preprocess_data(cfg=cfg)
     else:
         print("  No test data found, skipping...")
     print("\n" + "=" * 60 + "\nPreprocessing complete!")

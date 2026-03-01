@@ -1,6 +1,7 @@
 import torch
 from src.gnn.helpers.models.models_helpers import build_mlp_d
 import torch.nn as nn
+from torch_scatter import scatter_add
 
 class Encoder(torch.nn.Module):
     """
@@ -44,21 +45,29 @@ class GraphNetBlock(torch.nn.Module):
         """
         Args:
             edge_index:
+
             node_embedding:
+                node embedding (gave by the encoder)
             edge_embedding:
-        :return:
+                node embedding (gave by the encoder)
+
+        :return: (new_node_embedding, new_edge_embedding)
+            forward pass of node and edge embedding
         """
-        senders, receivers = edge_index
+        senders, receivers = edge_index # FIXME: understand what is this as object (2, @edges)?
         num_nodes = node_embedding.shape[0]
 
-        # Update edge embeddings
+        # Update edge embeddings: pass both node_embeddings
         edge_attr_ = self.edge_net(torch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))
-        # Aggregate received messages at each node
+        # For each node, aggregate its received messages FIXME: understand scatter_add
+        # For each node i, sum all edge_attr_[e] such that receivers[e] == i.
+        # agg = zeros([num_nodes, latent])
+        # for e in range(E):
+        #     agg[receivers[e]] += edge_attr_[e]
+        # FIXME: why it receives agg_received_edges
         agg_received_edges = scatter_add(edge_attr_, receivers.long(), dim=0, dim_size=num_nodes)
-
         # Update node embeddings
         node_attr_ = self.node_net(torch.hstack((agg_received_edges, node_embedding)))
-
         # Residual connections
         new_node_embedding = node_attr_ + node_embedding
         new_edge_embedding = edge_attr_ + edge_embedding
@@ -79,6 +88,15 @@ class Decoder(torch.nn.Module):
                                              use_sigmoid=False, use_softmax=False)
 
     def forward(self, node_embedding):
+        """
+        Given a node embedding, it returns the prediction for acceleration and for von mises stress.
+        Doesn't use edge embedding.
+
+        Args:
+            node_embedding: torch.Tensor
+                embedding of nodes
+        :return: pred
+        """
         decoded_acc = self.acc_decoder(node_embedding)
         decoded_von_mis = self.von_mises_decoder(node_embedding)
         pred = torch.hstack((decoded_acc, decoded_von_mis))

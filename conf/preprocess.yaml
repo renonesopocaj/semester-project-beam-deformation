@@ -1,4 +1,5 @@
 dataset:
+  limit_timesteps: 50
   dataset_size: "small"
   split: "train"
 numerical:
@@ -7,6 +8,8 @@ numerical:
   dt: 0.08
   noise_scale_test: 0.0
   seed: 42
+  mises_log: True
+  isotropic_norm: True
 paths:
   graphs_dir: "dataset/raw/raw/single-direction-beam/small/train/graphs"
   raw_data_dir: "dataset/raw/raw/single-direction-beam/small"
