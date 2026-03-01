@@ -18,6 +18,10 @@ temp.yaml
 *.yaml
 # Python cache directories
 __pycache__/
+dataset
+saved_models
+*.json
+*.pt
 
 # Compiled Python files
 *.pyc
