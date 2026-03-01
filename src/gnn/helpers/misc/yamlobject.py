@@ -1,16 +1,23 @@
 class PreprocessYaml:
     """
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
+    Accepts either a plain dict (legacy) or an OmegaConf DictConfig (Hydra).
     """
 
     def __init__(self, cfg):
         """
         Args:
-            cfg: dict
-                Configuration dictionary loaded from YAML.
+            cfg: dict or omegaconf.DictConfig
+                Configuration dictionary loaded from YAML or provided by Hydra.
             return: None
                 Creates attributes on self dynamically.
         """
+        try:
+            from omegaconf import OmegaConf, DictConfig
+            if isinstance(cfg, DictConfig):
+                cfg = OmegaConf.to_container(cfg, resolve=True)
+        except ImportError:
+            pass
         flattened_cfg = _flatten_dict(cfg)
         self.dataset_size = flattened_cfg["dataset_size"]
         self.split = flattened_cfg["split"]
@@ -24,6 +31,7 @@ class PreprocessYaml:
         self.base_dir = flattened_cfg["base_dir"]
         self.test_graphs_dir = flattened_cfg["test_graphs_dir"]
         self.save_dir = flattened_cfg["save_dir"]
+        self.train_save_dir = flattened_cfg["train_save_dir"]
         self.limit_timesteps = flattened_cfg["limit_timesteps"]
         self.mises_log = flattened_cfg["mises_log"]
         self.isotropic_norm = flattened_cfg["isotropic_norm"]

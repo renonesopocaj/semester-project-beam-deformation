@@ -1,6 +1,7 @@
 import torch
 import json
-import yaml
+import hydra
+from omegaconf import DictConfig, OmegaConf
 from src.gnn.helpers.misc.yamlobject import PreprocessYaml
 from src.gnn.helpers.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
                                                        build_valued_node_features)
@@ -38,8 +39,15 @@ def _add_noise_train(x, v, dt, noise_scale):
     # Obtain the next-time-step velocities and positions (same tensors but shifted of 1 timestep)
     return x, v
 
-def _load_stats(base_dir, dataset_size):
-    stats_path = base_dir / "processed" / dataset_size / "train" / "stats" / "stats.json"
+def _load_stats(train_save_dir):
+    """
+    Args:
+        train_save_dir: str or Path
+            Path to the directory where training data was saved (contains stats/ subfolder).
+        return: (Stats, Stats, Stats)
+            node_stats, edge_stats, target_stats loaded from stats.json.
+    """
+    stats_path = Path(train_save_dir) / "stats" / "stats.json"
     if not stats_path.exists():
         raise FileNotFoundError(f"Stats file not found at {stats_path}. Preprocess the training data first.")
     with open(stats_path, "r") as f:
@@ -75,7 +83,7 @@ def preprocess_data(cfg):
 
     # Load stats if validation
     if cfg.split != "train":
-        node_stats, edge_stats, target_stats = _load_stats(cfg.base_dir, cfg.dataset_size)
+        node_stats, edge_stats, target_stats = _load_stats(cfg.train_save_dir)
 
     # Main loop: process all files, one file = one trajectory, idx_file = idx_file of the file
     for idx_file, filename in enumerate(filenames):
@@ -174,21 +182,22 @@ def preprocess_data(cfg):
 
     _save_preprocessed(cfg.split, traj_idx, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
 
-if __name__ == "__main__":
-    # Choose dataset size: 'small', 'medium', or 'large'
-    YAML_PATH = "conf/preprocess.yaml"
-    with open(YAML_PATH) as f:
-        cfg = yaml.safe_load(f)
-    cfg = PreprocessYaml(cfg)
-    print(f"Preprocessing {cfg.dataset_size} dataset...\n" + "=" * 60)
-    # Preprocess training data
-    print("\n1. Preprocessing training data...")
-    preprocess_data(cfg=cfg)
-    print("\n2. Preprocessing validation data...")
-    preprocess_data(cfg=cfg)
-    print("\n3. Preprocessing test data (if available)...")
-    if Path(cfg.test_graphs_dir).exists():
-        preprocess_data(cfg=cfg)
-    else:
-        print("  No test data found, skipping...")
+@hydra.main(version_base=None, config_path="../../conf", config_name="preprocess")
+def main(cfg):
+    """
+    Args:
+        cfg: omegaconf.DictConfig
+            Hydra-composed configuration. Run with --multirun to sweep over multiple values,
+            e.g.: python -m src.gnn.preprocess --multirun split=train,val,test
+    """
+    cfg_obj = PreprocessYaml(cfg)
+    print(f"Preprocessing {cfg_obj.dataset_size} dataset, split={cfg_obj.split}...\n" + "=" * 60)
+    save_dir = Path(cfg_obj.save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, save_dir / "config.yaml")
+    preprocess_data(cfg=cfg_obj)
     print("\n" + "=" * 60 + "\nPreprocessing complete!")
+
+
+if __name__ == "__main__":
+    main()

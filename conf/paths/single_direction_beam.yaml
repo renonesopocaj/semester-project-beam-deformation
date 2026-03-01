@@ -1,0 +1,8 @@
+# @package paths
+mesh_type: single-direction-beam
+base_dir: dataset
+graphs_dir: ${paths.base_dir}/raw/raw/${paths.mesh_type}/${dataset.dataset_size}/${split}/graphs
+save_dir: ${paths.base_dir}/processed/${paths.mesh_type}/${dataset.dataset_size}/${split}
+train_save_dir: ${paths.base_dir}/processed/${paths.mesh_type}/${dataset.dataset_size}/train
+raw_data_dir: ${paths.base_dir}/raw/raw/${paths.mesh_type}/${dataset.dataset_size}
+test_graphs_dir: ${paths.base_dir}/raw/raw/${paths.mesh_type}/${dataset.dataset_size}/test/graphs
