@@ -27,6 +27,7 @@ def compute_stats(tensor_list):
     Compute mean and std statistics from a list of tensors.
     Args:
         tensor_list
+
     :return Stats object
     """
     sum_val = 0

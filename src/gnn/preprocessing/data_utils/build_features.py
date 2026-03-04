@@ -44,26 +44,35 @@ def build_edge_features(x, u, edge_index):
     Features: [relative_position, relative_position_norm,
                rest_relative_position, rest_relative_position_norm]
     Args:
-        x: Tensor
-        u: Tensor
-        edge_index: Tensor
-    :return Tensor
+        x: torch.Tensor
+            absolute position, from which I compute the relative one and the norm
+        u: torch.Tensor
+            rest absolute position
+        edge_index: torch.Tensor (2, #edges)
+            Pairwise graph edges `(i,j)` for message passing, so it's a tensor of  i.e. a matrix with two columns/vecs
+            of length #edges
+    :return torch.Tensor (N, 8, 1)
+        xij (N, 3), xij_norm (N, 3), uij (N, 1), uij_norm (N, 1)
     """
     src, dst = edge_index
-    xij = x[dst] - x[src]
-    uij = u[dst] - u[src]
-    xij_norm = torch.norm(xij, dim=1).unsqueeze(1)
-    uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
-    return torch.concat([xij, xij_norm, uij, uij_norm], dim=1)
+    xij = x[dst] - x[src] # (N, 3) relative position while not in rest, from which I compute the relative one
+    uij = u[dst] - u[src] # (N, 3) rest relative position
+    xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (N, 1) relative position in norm
+    uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (N, 1) rest_relative_position
+    return torch.concat([xij, xij_norm, uij, uij_norm], dim=1) # (N, 8, 1)
 
 
 def compute_von_mises_3d(stress_9):
     """
     Compute von Mises stress from 9-component stress tensor.
     Args:
-        stress_9: full stress tensor
+        stress_9: torch.Tensor (N, 9)
+            full stress tensor
+
+    :return
+        vm: torch.Tensor (N,)
     """
-    sxx = stress_9[:, 0]
+    sxx = stress_9[:, 0] # (N, 9)
     sxy = stress_9[:, 1]
     sxz = stress_9[:, 2]
     syy = stress_9[:, 4]
@@ -75,7 +84,7 @@ def compute_von_mises_3d(stress_9):
             + (szz - sxx) ** 2
             + 6.0 * (sxy ** 2 + syz ** 2 + sxz ** 2)
     )
-    return torch.sqrt(vm)
+    return torch.sqrt(vm) # (N,)
 
 
 def volume(V, T):

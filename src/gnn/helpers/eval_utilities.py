@@ -1,8 +1,8 @@
 import torch
 from torch_geometric.data import Data
-from src.gnn.helpers.data_utils.stats import denormalize
-from src.gnn.helpers.data_utils.stats import normalize
-from src.gnn.helpers.data_utils.stats import Stats
+from src.gnn.preprocessing.data_utils.stats import denormalize
+from src.gnn.preprocessing.data_utils.stats import normalize
+
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first = 0,
                rollout_steps = 99999999):

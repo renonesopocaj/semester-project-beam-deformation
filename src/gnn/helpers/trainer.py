@@ -1,8 +1,6 @@
 import os
 import time
-from src.gnn.helpers.data_utils.stats import Stats
 import torch
-from torch_geometric.data import Data
 from src.gnn.helpers.plots.visualize import make_beam_comparison_gif, plot_volume_change
 from src.gnn.helpers.eval_utilities import do_rollout, mae
 import numpy as np

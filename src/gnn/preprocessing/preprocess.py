@@ -1,11 +1,11 @@
 import torch
 import json
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 from src.gnn.helpers.misc.yamlobject import PreprocessYaml
-from src.gnn.helpers.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
-                                                       build_valued_node_features)
-from src.gnn.helpers.data_utils.stats import compute_stats, normalize, Stats
+from src.gnn.preprocessing.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
+                                                             build_valued_node_features)
+from src.gnn.preprocessing.data_utils.stats import compute_stats, normalize, Stats
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 
@@ -89,26 +89,32 @@ def preprocess_data(cfg):
     for idx_file, filename in enumerate(filenames):
         print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
         dataloader = torch.load(filename, weights_only=False)
-        graphs = []
+
+        # Create list graphs_list_batch with all graphs in the file
+        graphs_list_batch = []
         for data in dataloader:
             graph = data.to(cfg.device)
-            graphs.append(graph)
-        whole_trajectory_batch = Batch.from_data_list(graphs)
+            graphs_list_batch.append(graph)
+        # (For each file) From graphs_list (all graphs in batch), create a Batch object, and compute features
+        # If you do batch.node_feature, you are creating a tensor which contains a tensor
+        # (# graphs in batch, dim_feat_per_graph) where dim_feat_per_graph are the dimension of that node_feature for
+        # one graph
+        whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
         # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
-        x = whole_trajectory_batch.x.reshape(len(graphs), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
+        x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
         v, a = calculate_kinematics(x, cfg.dt) # v = (T, N, 3), a = (T-1, N, 3)
         if cfg.split == "train":
             x, v = _add_noise_train(x, v, cfg.dt, cfg.noise_scale_train)
-        v_next = v[1:]
-        x_next = x[1:]
-        u = x[0] # Rest (first) mesh position
+        v_next = v[1:] # (T-1, N, 3)
+        x_next = x[1:] # (T-1, N, 3)
+        u = x[0] # Rest (first) mesh position (N, 3)
         # x_node_force is the force (scalar) in every point (x,y,z) of the graph at time t
-        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs), -1, 3) # (T, N, 3)
+        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3) # (T, N, 3)
         # .x_bc contains 0,1 value with 1 = fixed, 0 = free
-        boundary_condition = graphs[0].x_bc
+        boundary_condition = graphs_list_batch[0].x_bc
 
         # Inside loop: for each graph build its features
-        for t, graph in enumerate(graphs):
+        for t, graph in enumerate(graphs_list_batch):
             # limit trajectory length to compute acceleration
             if t > cfg.limit_timesteps - 2:
                 break
@@ -119,11 +125,13 @@ def preprocess_data(cfg):
             _categorical_node_attr = boundary_condition
             # concatenate [position, velocity, rest_position, node_force]
             _node_attr = build_valued_node_features(_x, _v, u, _node_force)
+            # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
             # .edge_index contains mesh connectivity
             _edge_attr = build_edge_features(_x, u, graph.edge_index)
             # .y_sig_t contains the full stress tensor
             # took the log because it helps making the distribution normal-like (symmetrical)
             if cfg.mises_log:
+                # # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
                 _von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             else:
                 _von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
@@ -140,20 +148,36 @@ def preprocess_data(cfg):
                 node_attr = torch.concat([_categorical_node_attr, _vector_node_attr_norm], dim=1)
 
                 out_graphs.append(
-                    Data(x=node_attr,
-                         edge_attr=_edge_attr_norm,
-                         edge_index=graph.edge_index,
-                         t=graph.time, # FIXME: what is it? just one scalar probably
-                         x_pos_t=x[t],
-                         x_vel_t=v[t],
-                         node_force=all_node_force[t],
-                         node_force_next=all_node_force[t + 1], # FIXME: why giving next-time features in the data?
-                         x_next=x_next[t], # FIXME: why giving next-time features in the data?
-                         v_next=v_next[t], # FIXME: why giving next-time features in the data?
-                         y_acc_t=a[t],
-                         y_von_mises=_von_mises, # FIXME: no y_von_mises + 1?
-                         x_element_connectivity=graph.x_element_connectivity, # FIXME: edge_index vs x_element_connectivity?
-                         u=u) # FIXME: rest position?
+                    Data(
+                        # targets: current time acceleration and von mises stress
+                        y_acc_t=a[t],
+                        y_von_mises=_von_mises,
+                        # time step of current graph (it was a global attribute on the graph)
+                        t=graph.time,
+                        # ==================================================================
+                        #                       NODE features
+                        # ==================================================================
+                        # x = [is_bc, position, velocity, rest_position, node_force]
+                        x=node_attr,
+                        # FIXME: aren't all these they already in node_attr = [x, v, u, node_force]? why saving them twice?
+                        x_pos_t=x[t],
+                        x_vel_t=v[t],
+                        node_force=all_node_force[t],
+                        rest_x0=rest_x0,
+                        # note: the force is like the actuator: you need the next-step
+                        node_force_next=all_node_force[t + 1],
+                        # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed from
+                        # x, v at time t and acceleration of t - 1 (previous step prediction)
+                        x_next=x_next[t],
+                        v_next=v_next[t],
+                        # ==================================================================
+                        #                           EDGE features
+                        # ==================================================================
+                        edge_attr=_edge_attr,
+                        # features to encode mesh connectivity in two different ways
+                        edge_index=graph.edge_index,
+                        x_element_connectivity=graph.x_element_connectivity,
+                    )
                 )
             else:
                 # Train: accumulate to out_graphs for stats computation
@@ -182,7 +206,7 @@ def preprocess_data(cfg):
 
     _save_preprocessed(cfg.split, traj_idx, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
 
-@hydra.main(version_base=None, config_path="../../conf", config_name="preprocess")
+@hydra.main(version_base=None, config_path="../../../conf", config_name="preprocess")
 def main(cfg):
     """
     Args:
