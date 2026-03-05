@@ -26,6 +26,7 @@ def train(cfg):
     # Test samples: {len(test_dataset)}
 
     # Initialize model FIXME: questo spaccherebbe prenderli dalla cartella di generazione del dataset in automatico.
+    # se rest_minus_nonrest true, cambia
     node_channels = 13  # 1 (boundary) + 3 (position) + 3 (velocity) + 3 (rest position) + 3 (force)
     edge_channels = 8 # 3 (relative position) + 1 (norm) + 3 (rest relative position) + 1 (norm)
 
@@ -66,7 +67,7 @@ def train(cfg):
         for batch in tqdm(train_dataloader, desc="Batches", leave=False):
             batch = batch.to(device)
             # Train step
-            trainer.train(graph=batch, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats)
+            trainer.train(graph=batch)
 
         # End of epoch logging
         trainer.epoch_end(numepoch=epoch)

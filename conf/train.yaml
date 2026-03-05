@@ -1,9 +1,8 @@
 batch_size: 16
 num_workers: 4
 # FIXME: these should be taken automatically once I selecte the desired folder
-val_dir: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/small/train/"
-train_dir: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/small/train/"
-stats_path: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single-direction-beam/small/train/stats/stats.json"
+dataset_dir: "/" # FIXME: dir of dataset general, from there in the code deduce train vs val vs test and
+# FIXME: obtain the config.yaml to read it and use its attributes for train
 seed: 42
 model: # architecture
   name: "MGN"

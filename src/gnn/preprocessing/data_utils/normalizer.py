@@ -45,10 +45,6 @@ class Normalizer(ABC):
         """
         return tensor * (stats.std + EPS) + stats.mean
 
-    def load_stats_from_json(self):
-        pass
-        # TODO: filla
-
     @abstractmethod
     def compute_stats(self, tensor_list):
         raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
@@ -101,8 +97,7 @@ class ZAnisotropicZNormalizer(Normalizer):
         mean = sum_val / count
         var = (sum_sq / count) - (mean ** 2)
         std = torch.sqrt(var)
-        stats = Stats(mean=mean, std=std)
-        return stats
+        return Stats(mean=mean, std=std)
 
 class RobustIsotropicNormalizer(Normalizer):
     pass

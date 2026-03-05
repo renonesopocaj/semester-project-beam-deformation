@@ -42,6 +42,7 @@ class PreprocessYaml:
         self.mises_log = flattened_cfg["mises_log"]
         self.isotropic_normalizer = flattened_cfg["isotropic"]
         self.normalizer_method = flattened_cfg["normalizer_method"]
+        self.rest_minus_nonrest_pos = flattened_cfg["rest_minus_nonrest_pos"]
 
 class TrainYaml:
     """

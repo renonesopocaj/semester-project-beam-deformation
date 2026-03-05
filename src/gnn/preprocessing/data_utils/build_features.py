@@ -23,7 +23,7 @@ def calculate_kinematics(x, dt):
     return v, a
 
 
-def build_valued_node_features(x, v, u, node_force):
+def build_valued_node_features(x, v, u, node_force, rest_minus_nonrest_pos):
     """
     Build valued node features: [position, velocity, rest_position, node_force]
 
@@ -35,10 +35,15 @@ def build_valued_node_features(x, v, u, node_force):
     :return Tensor
         concatenated features
     """
-    return torch.concat([x, v, u, node_force], dim=1)
+    if rest_minus_nonrest_pos:
+        x_minus_u = x - u
+        node_attr = torch.concat([x, v, u, node_force, x_minus_u], dim=1)
+    else:
+        node_attr = torch.concat([x, v, u, node_force], dim=1)
+    return node_attr
 
 
-def build_edge_features(x, u, edge_index):
+def build_edge_features(x, u, edge_index, rest_minus_nonrest_pos_edge):
     """
     Build edge features from node positions and rest positions.
     Features: [relative_position, relative_position_norm,
@@ -59,7 +64,14 @@ def build_edge_features(x, u, edge_index):
     uij = u[dst] - u[src] # (N, 3) rest relative position
     xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (N, 1) relative position in norm
     uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (N, 1) rest_relative_position
-    return torch.concat([xij, xij_norm, uij, uij_norm], dim=1) # (N, 8, 1)
+    if rest_minus_nonrest_pos_edge:
+        xij_minus_uij = xij - uij
+        xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
+        # (N, 12, 1)
+        edge_attr = torch.concat([xij, xij_norm, uij, uij_norm, xij_minus_uij, xij_minus_uij_norm], dim=1)
+    else:
+        edge_attr = torch.concat([xij, xij_norm, uij, uij_norm], dim=1) # (N, 8, 1)
+    return edge_attr
 
 
 def compute_von_mises_3d(stress_9):

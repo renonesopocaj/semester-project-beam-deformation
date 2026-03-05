@@ -84,8 +84,7 @@ class Preprocessor(ABC):
             # one graph
             whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
-            x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1,
-                                                 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
+            x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
             v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
             x, v = self.noiser.add_noise_train(x, v, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
@@ -107,11 +106,11 @@ class Preprocessor(ABC):
                 # All are (N, 3)
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
-                # concatenate [position, velocity, rest_position, node_force]
-                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force)
+                # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
+                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force, cfg.rest_minus_nonrest_pos)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index)
+                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, cfg.rest_minus_nonrest_pos)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 if cfg.mises_log:
@@ -122,8 +121,11 @@ class Preprocessor(ABC):
 
                 # accumulate all graphs to out_graphs for stats computation
                 self.categorical_node_features.append(boundary_condition)
-                self.valued_node_features.append(build_valued_node_features(_x, _v, rest_pos_x, _node_force))
-                self.edge_features.append(build_edge_features(_x, rest_pos_x, graph.edge_index))
+                # concatenate _x, _v, rest_pos_x, _node_force and optionally x_minus_u
+                self.valued_node_features.append(build_valued_node_features(_x, _v, rest_pos_x, _node_force,
+                                                                            cfg.x_minus_u))
+                self.edge_features.append(build_edge_features(_x, rest_pos_x, graph.edge_index,
+                                                              cfg.rest_minus_nonrest_pos))
                 # Appends and creates PyG data object for both val and train
                 # For val it's already normalized
                 self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,

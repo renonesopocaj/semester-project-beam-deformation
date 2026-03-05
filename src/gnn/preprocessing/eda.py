@@ -65,8 +65,7 @@ def _eda(cfg):
             _numerical_node_attr = build_valued_node_features(_x, _v, rest_x0, _node_force)
             # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
             # .edge_index contains mesh connectivity
-            # TODO: give also directly the difference rest_pos (equilibrium) - norm_pos? might make sense
-            _edge_attr = build_edge_features(_x, rest_x0, graph.edge_index)
+            _edge_attr = build_edge_features(_x, rest_x0, graph.edge_index, True)
             # .y_sig_t contains the full stress tensor
             # took the log because it helps making the distribution normal-like (symmetrical)
             # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
@@ -134,7 +133,7 @@ def _eda(cfg):
             categorical_node_features.append(is_bc)
             # (4, N, 3)
             valued_node_features.append(build_valued_node_features(_x, _v, rest_x0, _node_force))
-            edge_features.append(build_edge_features(_x, rest_x0, graph.edge_index))
+            edge_features.append(build_edge_features(_x, rest_x0, graph.edge_index, True))
             out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
             targets.append(torch.concat([_a, _von_mises], dim=1))
 

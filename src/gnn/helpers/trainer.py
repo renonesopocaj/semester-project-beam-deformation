@@ -77,18 +77,15 @@ class Trainer:
         # Initialize metrics
         self.loss = 0.0
         self.rollout_all_step_error = 0.0
+        # Training history for 1 epoch
         self.epoch_losses, self.train_acc_loss, self.train_stress_loss = [], [], []
 
-    def train(self, graph, node_stats, edge_stats, target_stats):
+    def train(self, graph):
         """
         Perform one training step.
         Args:
             graph: Data
                 graph object
-            node_stats: Stats
-            edge_stats: Stats
-            target_stats: Stats
-                statistics about node
         """
         self.model.train()
 
