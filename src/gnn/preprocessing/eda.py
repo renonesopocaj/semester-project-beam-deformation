@@ -1,70 +1,24 @@
 import torch
 import hydra
 from omegaconf import OmegaConf
-from src.gnn.helpers.misc.yamlobject import PreprocessYaml
+import numpy as np
+import yaml
+from src.gnn.helpers.misc.yamlobject import EdaYaml
 from src.gnn.preprocessing.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
                                                              build_valued_node_features)
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 import matplotlib.pyplot as plt
-from src.gnn.helpers.misc.pyg_inspector import PyGInspector
+from src.gnn.helpers.misc.pyg_inspector import print_all_pyg_fields, print_pyg_fields
 
 EPS = 1e-6
-
-def print_all_pyg_fields(dataloader, graph):
-    inspector = PyGInspector(140, 4)
-    print("\n\n\n\t\t\t Inspector\n\n\n")
-    inspector.scan_graphs(dataloader, 50)
-    print("\n\n\n\t\t\tPrint pyg fields\n\n\n")
-    print_pyg_fields(graph, 50, 6)
-    print("\n\n\n\t\t\tOther\n\n\n")
-    # and show the core features if present:
-    keys_attr = graph.keys
-    keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
-
-    if "x" in keys:
-        print("x:", graph["x"].shape)
-    if "edge_index" in keys:
-        print("edge_index:", graph["edge_index"].shape)
-    if "edge_attr" in keys:
-        print("edge_attr:", graph["edge_attr"].shape)
-
-    # show first actual graph:
-    dl = graph.to_data_list()
-    print("num_graphs_in_batch:", len(dl))
-    print("first graph keys:", list(dl[0].keys()) if not callable(dl[0].keys) else list(dl[0].keys()))
-
-def print_pyg_fields(data, max_keys, max_preview):
-    """
-    Args:
-        data: object
-            PyG Data or Batch-like object
-        max_keys: int
-            Maximum number of keys to print
-        max_preview: int
-            How many values to preview for tensors
-    return: None
-        Prints available keys and tensor metadata
-    """
-    keys_attr = data.keys
-    keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
-
-    print(f"type = {type(data)}")
-    print(f"keys ({len(keys)}): {keys[:max_keys]}{' ...' if len(keys) > max_keys else ''}\n")
-
-    for k in keys[:max_keys]:
-        v = data[k]
-        if torch.is_tensor(v):
-            preview = v.reshape(-1)[:max_preview].detach()
-            if preview.is_cuda:
-                preview = preview.to("cpu")
-            print(f"{k}:\n\t Tensor shape={tuple(v.shape)} dtype={v.dtype} device={v.device} preview={preview.tolist()}")
-        else:
-            print(f"{k}:\n\t {type(v)}")
+DT = 0.08
+LIMIT_TIMESTEPS = 50
+DEVICE = "cpu"
 
 def _eda(cfg):
     torch.manual_seed(42)
-    filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
+    filenames = list(Path(cfg.raw_data_dir).glob("*.pt"))
     eda_obj = EdaObj()
     out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
         [], [], [], [], [], [])
@@ -76,10 +30,10 @@ def _eda(cfg):
 
         # Create list graphs_list_batch with all graphs in the file
         graphs_list_batch = []
-        for idx_data, data in enumerate(dataloader):
-            graph = data.to(cfg.device)
+        for idx_data, data_idk in enumerate(dataloader):
+            graph = data_idk.to(DEVICE)
             graphs_list_batch.append(graph)
-            if idx_data == 0: print_all_pyg_fields(dataloader, graph)
+            # if idx_data == 0: print_all_pyg_fields(dataloader, graph)
 
         # (For each file) From graphs_list (all graphs in batch), create a Batch object, and compute features
         # If you do batch.node_feature, you are creating a tensor which contains a tensor
@@ -88,7 +42,7 @@ def _eda(cfg):
         whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
         # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
         x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3) # (#graphs, #points, 3) where 3 is (x,y,z)
-        v, a = calculate_kinematics(x, cfg.dt) # v = (T, N, 3), a = (T-1, N, 3)
+        v, a = calculate_kinematics(x, DT) # v = (T, N, 3), a = (T-1, N, 3)
         v_next = v[1:] # (T-1, N, 3)
         x_next = x[1:] # (T-1, N, 3)
         rest_x0 = x[0] # Rest (first) mesh position (N, 3)
@@ -100,7 +54,7 @@ def _eda(cfg):
         # Inside loop: for each graph (time step) build its features
         for t, graph in enumerate(graphs_list_batch):
             # limit trajectory length to compute acceleration
-            if t > cfg.limit_timesteps - 2:
+            if t > LIMIT_TIMESTEPS - 2:
                 break
             traj_idx.append(idx_file) # idx_file of the traj (of the file process)
             # create local (inside for) variables
@@ -157,7 +111,6 @@ def _eda(cfg):
                     # ==================================================================
                     # x = [is_bc, position, velocity, rest_position, node_force]
                     x=node_attr,
-                    # FIXME: aren't all these they already in node_attr = [x, v, u, node_force]? why saving them twice?
                     x_pos_t=x[t],
                     x_vel_t=v[t],
                     node_force=all_node_force[t],
@@ -182,7 +135,6 @@ def _eda(cfg):
             # (4, N, 3)
             valued_node_features.append(build_valued_node_features(_x, _v, rest_x0, _node_force))
             edge_features.append(build_edge_features(_x, rest_x0, graph.edge_index))
-            # FIXME: why a also in features?
             out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
             targets.append(torch.concat([_a, _von_mises], dim=1))
 
@@ -267,10 +219,16 @@ def plot_distribution_compare(name, val, mean, std, title):
     x_norm_anis = (x - mean_anisotropic) / (std_anisotropic + EPS)
     x_norm_anis = x_norm_anis.reshape(-1).detach().to("cpu").numpy()
 
+    bins = 200
+    hist_iso, edges = np.histogram(x_norm_isotropic, bins=bins, density=True)
+    hist_anis, _ = np.histogram(x_norm_anis, bins=edges, density=True)
+    hist_raw, _ = np.histogram(x, bins=edges, density=True)
+    ymax = max(hist_iso.max(), hist_anis.max(), hist_raw.max())
     plt.figure()
-    plt.hist(x_norm_isotropic, label="Isotropic", color="r", bins=200, density=True)
-    plt.hist(x_norm_anis, label="Anisotropic", color="b", bins=200, density=True)
-    plt.hist(x, label="Not normalized", color="g", bins=200, density=True)
+    plt.hist(x_norm_isotropic, label="Isotropic", color="r", bins=edges, density=True)
+    plt.hist(x_norm_anis, label="Anisotropic", color="b", bins=edges, density=True)
+    plt.hist(x, label="Not normalized", color="g", bins=edges, density=True)
+    plt.ylim(0, ymax * 1.05)
     plt.title(f"{title} {name} distribution (normalized)")
     plt.xlabel(f"{title} {name} (z-score)")
     plt.ylabel(f"{name} Density")
@@ -332,22 +290,10 @@ class EdaObj:
          self.von_mises_log, self.stress_tensor_sum) = ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
                                                         [], [], [], [], [], [], [], [])
 
-@hydra.main(version_base=None, config_path="../../../conf", config_name="preprocess")
-def main(cfg):
-    # FIXME: uncouple from preprocess, get eda
-    """
-    Args:
-        cfg: omegaconf.DictConfig
-            Hydra-composed configuration. Run with --multirun to sweep over multiple values,
-            e.g.: python -m src.gnn.preprocess --multirun split=train,val,test
-    """
-    cfg_obj = PreprocessYaml(cfg)
-    print(f"Preprocessing {cfg_obj.dataset_size} dataset, split={cfg_obj.split}...\n" + "=" * 60)
-    save_dir = Path(cfg_obj.save_dir)
-    save_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, save_dir / "config.yaml")
-    _eda(cfg=cfg_obj)
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
 
 if __name__ == "__main__":
-   main()
+    with open("conf/eda.yaml", "r") as f:
+        data = yaml.safe_load(f)
+    cfg_obj = EdaYaml(data)
+    _eda(cfg=cfg_obj)
+    print("\n" + "=" * 60 + "\nPreprocessing complete!")

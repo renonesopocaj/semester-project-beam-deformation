@@ -8,7 +8,7 @@ from src.gnn.preprocessing.data_utils.build_features import (calculate_kinematic
                                                              build_valued_node_features)
 from src.gnn.preprocessing.data_utils.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.data_utils.stats import load_stats
-from src.gnn.preprocessing.data_utils.stats import compute_stats, normalize, Stats
+from src.gnn.preprocessing.data_utils.stats import Stats
 from src.gnn.preprocessing.data_utils.noiser import Noiser, GaussianNoiser, NoNoiser
 from torch_geometric.data import Data, Batch
 from pathlib import Path
@@ -34,7 +34,7 @@ class Preprocessor(ABC):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
 
-    def _save_preprocessed(self, split, traj_idx, out_graphs, save_dir):
+    def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
         for traj in set(traj_idx):
@@ -43,9 +43,8 @@ class Preprocessor(ABC):
             print(f"  Length: {len(graphs)} timesteps")
             file_path = save_dir / f"graph_{traj:02d}.pt"
             torch.save(graphs, file_path)
-        print(f"Preprocessing complete for {split} split! Saved to: {save_dir}")
 
-    def preprocess_data(self, cfg):
+    def preprocess_data(self, cfg, graphs_dir, save_dir):
         """
         Preprocess simulation data into graph format. Note one file = one trajectory
         One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
@@ -65,7 +64,7 @@ class Preprocessor(ABC):
             cfg: YamlObject
         """
         torch.manual_seed(cfg.seed)
-        filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
+        filenames = list(Path(graphs_dir).glob("*.pt"))
 
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
         for idx_file, filename in enumerate(filenames):
@@ -130,10 +129,10 @@ class Preprocessor(ABC):
         # --- Open: All these do nothing if split NOT train ---
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
         self._compute_stats_train(cfg)  # if val doesn't do anything
-        self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, cfg.save_dir)  # if val nothing
+        self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
         self._normalize_assign_features_train()
         # Save all processed data (in all cases)
-        self._save_preprocessed(cfg.split, self.traj_idx_list, self.out_graphs, cfg.save_dir)
+        self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
 
     @abstractmethod
     def _compute_stats_train(self, cfg):
@@ -160,25 +159,27 @@ class Preprocessor(ABC):
 class PreprocessorFactory:
 
     @staticmethod
-    def create_preprocessor(cfg):
-        if cfg.split == "train":
+    def create_preprocessor(split, cfg):
+        if split == "train":
             return TrainPreprocessor(cfg)
-        elif cfg.split == "val":
-            return ValPreprocesor(cfg)
+        elif split == "val":
+            return ValPreprocessor(cfg)
+        elif split == "test":
+            return ValPreprocessor(cfg)
         else:
-            raise NotImplementedError(f"{cfg.split} not implemented")
+            raise NotImplementedError(f"{split} not implemented")
 
 
 class TrainPreprocessor(Preprocessor):
 
     def __init__(self, cfg):
         super().__init__()
-        self.noiser = GaussianNoiser(cfg.noise_scale)
-        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalize_method, cfg.isotropic)
+        self.noiser = GaussianNoiser(cfg.noise_scale_train)
+        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         stats = {"node": node_stats.to_dict(), "edge": edge_stats.to_dict(), "target": target_stats.to_dict()}
-        stats_dir = Path(save_dir + "/stats")
+        stats_dir = save_dir / "stats"
         stats_dir.mkdir(parents=True, exist_ok=True)
         with open(stats_dir / "stats.json", "w") as f:
             json.dump(stats, f, indent=4)
@@ -186,9 +187,9 @@ class TrainPreprocessor(Preprocessor):
 
     def _compute_stats_train(self, cfg):
         # Compute statistics
-        self.node_stats = compute_stats(self.valued_node_features)
-        self.edge_stats = compute_stats(self.edge_features)
-        self.target_stats = compute_stats(self.targets)
+        self.node_stats = self.normalizer.compute_stats(self.valued_node_features)
+        self.edge_stats = self.normalizer.compute_stats(self.edge_features)
+        self.target_stats = self.normalizer.compute_stats(self.targets)
 
     def _load_stats(self, cfg):
         pass
@@ -210,22 +211,21 @@ class TrainPreprocessor(Preprocessor):
     def _normalize_assign_features_train(self):
         # Normalize and assign features
         for t in range(len(self.out_graphs)):
-            _valued_node_features = normalize(self.valued_node_features[t], self.node_stats)
-            _edge_features = normalize(self.edge_features[t], self.edge_stats)
-            _targets = normalize(self.targets[t], self.target_stats)
+            _valued_node_features = self.normalizer.normalize(self.valued_node_features[t], self.node_stats)
+            _edge_features = self.normalizer.normalize(self.edge_features[t], self.edge_stats)
+            _targets = self.normalizer.normalize(self.targets[t], self.target_stats)
             self.out_graphs[t].x = torch.concat([self.categorical_node_features[t], _valued_node_features],
                                                 dim=1)
             self.out_graphs[t].edge_attr = _edge_features
             self.out_graphs[t].y = _targets
 
 
-class ValPreprocesor(Preprocessor):
+class ValPreprocessor(Preprocessor):
 
     def __init__(self, cfg):
         super().__init__()
         self.noiser = NoNoiser()
-        # TODO: take self.normalizer it from train config
-
+        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
 
     def _compute_stats_train(self, cfg):
         pass
@@ -240,10 +240,9 @@ class ValPreprocesor(Preprocessor):
         self.node_stats, self.edge_stats, self.target_stats = load_stats(cfg.train_save_dir)
 
     def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr):
-        # TODO: move this to out
         # Use precomputed stats for validation
-        edge_attr_norm = normalize(_edge_attr, self.edge_stats)
-        _vector_node_attr_norm = normalize(_node_attr, self.node_stats)
+        edge_attr_norm = self.normalizer.normalize(_edge_attr, self.edge_stats)
+        _vector_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
         node_attr = torch.concat([_categorical_node_attr, _vector_node_attr_norm], dim=1)
         return node_attr, edge_attr_norm
 
@@ -296,12 +295,30 @@ def main(cfg):
             e.g.: python -m src.gnn.preprocess --multirun split=train,val,test
     """
     cfg_obj = PreprocessYaml(cfg)
-    print(f"Preprocessing {cfg_obj.dataset_size} dataset, split={cfg_obj.split}...\n" + "=" * 60)
+    print(f"Preprocessing {cfg_obj.dataset_size} dataset\n" + "=" * 60)
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, save_dir / "config.yaml")
-    # FIXME
-    preprocess_data(cfg=cfg_obj)
+    save_subdir = (f"{cfg_obj.normalizer_method}_{'isotropic' if cfg_obj.isotropic_normalizer is True else 'anisotropic'}_"
+                   f"{'miseslog' if cfg_obj.mises_log is True else 'nolog'}")
+    save_dir_train = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "train"
+    save_dir_test = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "test"
+    save_dir_val = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "val"
+    graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
+    graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
+    graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
+    preprocessor_train = PreprocessorFactory.create_preprocessor("train", cfg_obj)
+    preprocessor_val = PreprocessorFactory.create_preprocessor("val", cfg_obj)
+    preprocessor_test = PreprocessorFactory.create_preprocessor("test", cfg_obj)
+    print("\n" + "=" * 60 + "\ntrain")
+    preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
+    print("\n" + "=" * 60 + "\nPreprocessing complete!")
+    print("\n" + "=" * 60 + "\ntest")
+    preprocessor_test.preprocess_data(cfg_obj, graphs_dir_test, save_dir_test)
+    print("\n" + "=" * 60 + "\nPreprocessing complete!")
+    print("\n" + "=" * 60 + "\nval")
+    preprocessor_val.preprocess_data(cfg_obj, graphs_dir_val, save_dir_val)
+    print("\n" + "=" * 60 + "\nPreprocessing complete!")
     print("\n" + "=" * 60 + "\nPreprocessing complete!")
 
 

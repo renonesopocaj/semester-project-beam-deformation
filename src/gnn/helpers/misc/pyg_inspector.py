@@ -252,3 +252,54 @@ class PyGInspector:
             return batch.to_data_list()
         except Exception:
             return None
+
+def print_all_pyg_fields(dataloader, graph):
+    inspector = PyGInspector(140, 4)
+    print("\n\n\n\t\t\t Inspector\n\n\n")
+    inspector.scan_graphs(dataloader, 50)
+    print("\n\n\n\t\t\tPrint pyg fields\n\n\n")
+    print_pyg_fields(graph, 50, 6)
+    print("\n\n\n\t\t\tOther\n\n\n")
+    # and show the core features if present:
+    keys_attr = graph.keys
+    keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
+
+    if "x" in keys:
+        print("x:", graph["x"].shape)
+    if "edge_index" in keys:
+        print("edge_index:", graph["edge_index"].shape)
+    if "edge_attr" in keys:
+        print("edge_attr:", graph["edge_attr"].shape)
+
+    # show first actual graph:
+    dl = graph.to_data_list()
+    print("num_graphs_in_batch:", len(dl))
+    print("first graph keys:", list(dl[0].keys()) if not callable(dl[0].keys) else list(dl[0].keys()))
+
+def print_pyg_fields(data, max_keys, max_preview):
+    """
+    Args:
+        data: object
+            PyG Data or Batch-like object
+        max_keys: int
+            Maximum number of keys to print
+        max_preview: int
+            How many values to preview for tensors
+    return: None
+        Prints available keys and tensor metadata
+    """
+    keys_attr = data.keys
+    keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
+
+    print(f"type = {type(data)}")
+    print(f"keys ({len(keys)}): {keys[:max_keys]}{' ...' if len(keys) > max_keys else ''}\n")
+
+    for k in keys[:max_keys]:
+        v = data[k]
+        if torch.is_tensor(v):
+            preview = v.reshape(-1)[:max_preview].detach()
+            if preview.is_cuda:
+                preview = preview.to("cpu")
+            print(f"{k}:\n\t Tensor shape={tuple(v.shape)} dtype={v.dtype} device={v.device} preview={preview.tolist()}")
+        else:
+            print(f"{k}:\n\t {type(v)}")

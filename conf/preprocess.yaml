@@ -2,9 +2,8 @@ defaults:
   - dataset: small
   - numerical: default
   - paths: single_direction_beam
+  - normalizer: z_anisotropic
   - _self_
-
-split: val
 
 hydra:
   run:

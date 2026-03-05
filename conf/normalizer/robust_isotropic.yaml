@@ -1,0 +1,2 @@
+isotropic: true
+normalizer_method: "robust"

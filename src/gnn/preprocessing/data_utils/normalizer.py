@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
-from stats import Stats
+from src.gnn.preprocessing.data_utils.stats import Stats
 
 class NormalizerFactory:
 
@@ -44,7 +44,12 @@ class Normalizer(ABC):
         return tensor * (self.stats.std + eps) + self.stats.mean
 
     def load_stats_from_json(self):
+        pass
         # TODO: filla
+
+    @abstractmethod
+    def compute_stats(self, tensor_list):
+        raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
 
 class ZIsotropicNormalizer(Normalizer):
 

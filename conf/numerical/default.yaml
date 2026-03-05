@@ -1,7 +1,7 @@
 device: cpu
 noise_scale_train: 0.0003
-dt: 0.08
 noise_scale_test: 0.0
+dt: 0.08
 seed: 42
 mises_log: true
 isotropic_norm: false

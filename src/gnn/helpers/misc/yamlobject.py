@@ -1,3 +1,18 @@
+from omegaconf import OmegaConf, DictConfig
+
+class EdaYaml:
+
+    def __init__(self, cfg):
+        """
+        Args:
+            cfg: dict or omegaconf.DictConfig
+                Configuration dictionary loaded from YAML or provided by Hydra.
+            return: None
+                Creates attributes on self dynamically.
+        """
+        flattened_cfg = _to_dict_flatten(cfg)
+        self.raw_data_dir = flattened_cfg["raw_data_dir"]
+
 class PreprocessYaml:
     """
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
@@ -12,29 +27,21 @@ class PreprocessYaml:
             return: None
                 Creates attributes on self dynamically.
         """
-        try:
-            from omegaconf import OmegaConf, DictConfig
-            if isinstance(cfg, DictConfig):
-                cfg = OmegaConf.to_container(cfg, resolve=True)
-        except ImportError:
-            pass
-        flattened_cfg = _flatten_dict(cfg)
+
+        flattened_cfg = _to_dict_flatten(cfg)
         self.dataset_size = flattened_cfg["dataset_size"]
-        self.split = flattened_cfg["split"]
         self.device = flattened_cfg["device"]
         self.noise_scale_train = flattened_cfg["noise_scale_train"]
         self.dt = flattened_cfg["dt"]
         self.noise_scale_test = flattened_cfg["noise_scale_test"]
         self.seed = flattened_cfg["seed"]
-        self.graphs_dir = flattened_cfg["graphs_dir"]
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
         self.base_dir = flattened_cfg["base_dir"]
-        self.test_graphs_dir = flattened_cfg["test_graphs_dir"]
         self.save_dir = flattened_cfg["save_dir"]
-        self.train_save_dir = flattened_cfg["train_save_dir"]
         self.limit_timesteps = flattened_cfg["limit_timesteps"]
         self.mises_log = flattened_cfg["mises_log"]
-        self.isotropic_norm = flattened_cfg["isotropic_norm"]
+        self.isotropic_normalizer = flattened_cfg["isotropic"]
+        self.normalizer_method = flattened_cfg["normalizer_method"]
 
 class TrainYaml:
     """
@@ -49,7 +56,7 @@ class TrainYaml:
             return: None
                 Creates attributes on self dynamically.
         """
-        flattened_cfg = _flatten_dict(cfg)
+        flattened_cfg = _to_dict_flatten(cfg)
         self.batch_size = flattened_cfg["batch_size"]
         self.num_workers = flattened_cfg["num_workers"]
         self.val_dir = flattened_cfg["val_dir"]
@@ -66,7 +73,7 @@ class TrainYaml:
         self.stats_path = flattened_cfg["stats_path"]
         self.enable_val = flattened_cfg["enable_val"]
 
-def _flatten_dict(data):
+def _to_dict_flatten(data):
     """
     Args:
         data: dict
@@ -74,11 +81,13 @@ def _flatten_dict(data):
         return: dict
             Flattened dictionary containing only leaf key-value pairs.
     """
+    if isinstance(data, DictConfig):
+        data = OmegaConf.to_container(data, resolve=True)
     flat = {}
 
     for key, value in data.items():
         if isinstance(value, dict):
-            nested_flat = _flatten_dict(value)
+            nested_flat = _to_dict_flatten(value)
             for nested_key, nested_value in nested_flat.items():
                 flat[nested_key] = nested_value
         else:
