@@ -4,10 +4,10 @@ import torch
 from torch_geometric.loader import DataLoader
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from src.gnn.preprocessing.data_utils.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.helpers.trainer import Trainer
-from src.gnn.preprocessing.data_utils.stats import Stats
-from src.gnn.helpers.models.meshgraphnet.meshgraphnet import MeshGraphNet
+from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
+from src.gnn.models.trainer import Trainer
+from src.gnn.preprocessing.stats import Stats
+from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import yaml
 from src.gnn.helpers.misc.yamlobject import TrainYaml
 

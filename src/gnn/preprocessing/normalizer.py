@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import torch
-from src.gnn.preprocessing.data_utils.stats import Stats
+from src.gnn.preprocessing.stats import Stats
 
 EPS = 1e-8
 

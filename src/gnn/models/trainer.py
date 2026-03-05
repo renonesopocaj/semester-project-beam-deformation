@@ -17,13 +17,6 @@ class Trainer:
     - Model evaluation through test rollouts
     - Model checkpointing and saving
     - Experiment tracking with wandb
-
-    Parameters:
-    - model: The GNN model to be trained
-    - optimizer: Optimizer for training
-    - device: Target computing device (CPU/GPU)
-    - loss_type: Loss function type ('mse' or 'mae')
-    - use_wandb: Whether to use Weights & Biases for logging
     """
     training_id: str
     run: wandb.sdk.wandb_run.Run
@@ -47,10 +40,15 @@ class Trainer:
         """
         Args:
             model:
+                The GNN model to be trained
             optimizer:
+                optimizer for training
             device:
+                Target computing device (CPU/GPU)
             loss_type: Literal["mse", "mae"]
+                Loss function type ('mse' or 'mae')
             use_wandb: bool
+                Whether to use Weights & Biases for logging
         """
         self.training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
         self.run = wandb.init(mode="disabled") if not use_wandb else wandb.init()

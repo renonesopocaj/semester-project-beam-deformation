@@ -1,5 +1,5 @@
 import torch
-from src.gnn.helpers.models.models_helpers import build_mlp_d
+from src.gnn.models.models_helpers import build_mlp_d
 import torch.nn as nn
 from torch_scatter import scatter_add
 

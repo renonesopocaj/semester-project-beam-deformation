@@ -3,13 +3,13 @@ import json
 import hydra
 from omegaconf import OmegaConf
 from src.gnn.helpers.misc.yamlobject import PreprocessYaml
-from src.gnn.preprocessing.data_utils.build_features import (calculate_kinematics, compute_von_mises_3d,
-                                                             build_edge_features,
-                                                             build_valued_node_features)
-from src.gnn.preprocessing.data_utils.normalizer import Normalizer, NormalizerFactory
-from src.gnn.preprocessing.data_utils.stats import load_stats
-from src.gnn.preprocessing.data_utils.stats import Stats
-from src.gnn.preprocessing.data_utils.noiser import Noiser, GaussianNoiser, NoNoiser
+from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
+                                                  build_edge_features,
+                                                  build_valued_node_features)
+from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
+from src.gnn.preprocessing.stats import load_stats
+from src.gnn.preprocessing.stats import Stats
+from src.gnn.preprocessing.noiser import Noiser, GaussianNoiser, NoNoiser
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -306,7 +306,7 @@ class ValPreprocessor(Preprocessor):
         )
 
 
-@hydra.main(version_base=None, config_path="../../../conf", config_name="preprocess")
+@hydra.main(version_base=None, config_path="../../conf", config_name="preprocess")
 def main(cfg):
     """
     Args:
