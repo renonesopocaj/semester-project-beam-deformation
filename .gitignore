@@ -27,3 +27,5 @@ saved_models
 *.pyc
 *.pyo
 *.pyd
+
+outputs
