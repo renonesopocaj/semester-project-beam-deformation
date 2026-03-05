@@ -1,0 +1,4 @@
+lr: 5e-5
+lr_scheduler: "step"
+total_epochs: 50
+loss_type: "mse"

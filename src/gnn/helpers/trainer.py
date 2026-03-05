@@ -99,14 +99,14 @@ class Trainer:
         loss.backward()
         self.optimizer.step()
 
-        # Compute component losses for logging FIXME: HARDCODED SLICES
+        # Compute component losses for logging FIXME: HARDCODED SLICES: is this fine?
         pred_acc = pred[:, :3].contiguous()
         target_acc = target[:, :3].contiguous()
         pred_stress = pred[:, 3].contiguous()
         target_stress = target[:, 3].contiguous()
         stress_loss = self.loss_fn(pred_stress, target_stress)
         acc_loss = self.loss_fn(pred_acc, target_acc)
-
+        # FIXME: ask about putting stuff on cpu
         # Store loss history FIXME: Why detach and numpy?
         self.train_acc_loss.append(acc_loss.cpu().detach().numpy())
         self.train_stress_loss.append(stress_loss.cpu().detach().numpy())
@@ -141,12 +141,12 @@ class Trainer:
             epoch: int
         """
         self.model.eval()
-        target_stats.to("cpu") # FIXME: hardcoded, move to device
+        target_stats.to(self.device)
         # Perform model rollout testing
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=test_loader, device=self.device,
                                             node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
                                             dt=dt)
-        # Compute rollout error with MAE FIXME: hardcoded mae
+        # Compute rollout error with MAE FIXME: hardcoded mae but for now it's fine (ignore this)
         rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
         # Create visualizations
         gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"

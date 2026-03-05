@@ -17,11 +17,11 @@ def train(cfg):
     print(f"Using device: {device}")
     # Allocating dataloader and datasets
     print("Train dataset:")
-    train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir)
+    train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
     if cfg.enable_val:
         print("Test dataset:")
-        test_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir)
+        test_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
         test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     # Test samples: {len(test_dataset)}
 
@@ -75,7 +75,7 @@ def train(cfg):
         # Validation phase
         if epoch % cfg.validation_interval == 0 and cfg.enable_val:
             trainer.test(test_loader=test_dataloader, node_stats=node_stats, edge_stats=edge_stats,
-                         target_stats=target_stats, dt=dt, epoch=epoch,)
+                         target_stats=target_stats, dt=dt, epoch=epoch)
             # trainer.save_model(epochnum=epoch)
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
                                    "rollout_error": f"{trainer.rollout_all_step_error:.6f}"})
