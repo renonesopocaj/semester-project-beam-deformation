@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 import torch
 from src.gnn.preprocessing.data_utils.stats import Stats
 
+EPS = 1e-8
+
 class NormalizerFactory:
 
     @staticmethod
@@ -18,7 +20,7 @@ class Normalizer(ABC):
     # stats are saved for every feature, so everyhting is very modular and I can forget about everything
     stats: Stats
 
-    def normalize(self, tensor, eps=1e-8):
+    def normalize(self, tensor, stats):
         """
         Normalize tensor using statistics. Stats.mean, Stats.std are torch.Tensor with shape (#features, 1) such that
         every feature (column -- or another dimension, but only one -- of tensor) is divided by its mean
@@ -29,9 +31,9 @@ class Normalizer(ABC):
             eps: float = 1e-8
         :return torch.Tensor
         """
-        return (tensor - self.stats.mean) / (self.stats.std + eps)
+        return (tensor - stats.mean) / (stats.std + EPS)
 
-    def denormalize(self, tensor, eps=1e-8):
+    def denormalize(self, tensor, stats):
         """
         Denormalize tensor using statistics.
 
@@ -41,7 +43,7 @@ class Normalizer(ABC):
            eps: float
         :return torch.Tensor
         """
-        return tensor * (self.stats.std + eps) + self.stats.mean
+        return tensor * (stats.std + EPS) + stats.mean
 
     def load_stats_from_json(self):
         pass
@@ -99,8 +101,8 @@ class ZAnisotropicZNormalizer(Normalizer):
         mean = sum_val / count
         var = (sum_sq / count) - (mean ** 2)
         std = torch.sqrt(var)
-        self.stats = Stats(mean=mean, std=std)
-        return self.stats
+        stats = Stats(mean=mean, std=std)
+        return stats
 
 class RobustIsotropicNormalizer(Normalizer):
     pass

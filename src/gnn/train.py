@@ -2,7 +2,6 @@ from IPython.display import Image, display
 import json
 import torch
 from torch_geometric.loader import DataLoader
-import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from src.gnn.preprocessing.data_utils.inmemorytimestepdataset import InMemoryTimeStepDataset
@@ -11,9 +10,6 @@ from src.gnn.preprocessing.data_utils.stats import Stats
 from src.gnn.helpers.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import yaml
 from src.gnn.helpers.misc.yamlobject import TrainYaml
-
-matplotlib.use("Agg")
-plt.ioff()
 
 def train(cfg):
     # Set device
@@ -29,9 +25,9 @@ def train(cfg):
         test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     # Test samples: {len(test_dataset)}
 
-    # Initialize model FIXME: questo spaccherebbe prenderli dalla cartella di generazione del dataset in automatico
+    # Initialize model FIXME: questo spaccherebbe prenderli dalla cartella di generazione del dataset in automatico.
     node_channels = 13  # 1 (boundary) + 3 (position) + 3 (velocity) + 3 (rest position) + 3 (force)
-    edge_channels = 8   # 3 (relative position) + 1 (norm) + 3 (rest relative position) + 1 (norm)
+    edge_channels = 8 # 3 (relative position) + 1 (norm) + 3 (rest relative position) + 1 (norm)
 
     torch.manual_seed(cfg.seed)
     model = MeshGraphNet(node_channels=node_channels, edge_channels=edge_channels, latent_size=cfg.latent_dim,
@@ -54,8 +50,6 @@ def train(cfg):
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
-
-    use_wandb = False # Set to False if you don't want to use wand
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=use_wandb)
@@ -92,6 +86,9 @@ def train(cfg):
                 trainer.save_model(epochnum=epoch)
         idx += 1
 
+    plot_training_history(trainer)
+
+def plot_training_history(trainer):
     print("\nTraining complete!")
     print(f"Models saved to: {trainer.model_dir}")
 

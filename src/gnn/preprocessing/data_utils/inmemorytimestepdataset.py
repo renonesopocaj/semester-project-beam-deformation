@@ -14,6 +14,7 @@ class InMemoryTimeStepDataset(Dataset):
                                and f.endswith(".pt")])
         print(f"\tFound {len(sample_files)} sample files")
         for sample_file in sample_files:
+            # FIXME: do not harcode cpu
             sample_data = torch.load(sample_file, map_location="cpu", weights_only=False)
             self.data.extend(sample_data)  # Flatten all time steps into one list
         print(f"\tLoaded the dataset with {len(self.data)} samples")

@@ -187,7 +187,7 @@ def plot_distribution(name, val):
         chunks.append(t.reshape(-1, 1))
     x = torch.cat(chunks, dim=0).to(torch.float32)
 
-    x_np = x.reshape(-1).detach().to("cpu").numpy()
+    x_np = x.reshape(-1).detach().to(DEVICE).numpy()
 
     plt.figure()
     plt.hist(x_np, bins=200, density=True)

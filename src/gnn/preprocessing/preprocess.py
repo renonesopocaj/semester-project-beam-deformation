@@ -23,12 +23,12 @@ class Preprocessor(ABC):
     edge_stats: Stats
     target_stats: Stats
     normalizer: Normalizer
-    out_graphs: list
-    categorical_node_features: list
-    valued_node_features: list
-    edge_features: list
-    traj_idx_list: list
-    targets: list
+    out_graphs: list[torch.Tensor]
+    categorical_node_features: list[torch.Tensor]
+    valued_node_features: list[torch.Tensor] # each tensor is (N, 12)
+    edge_features: list[torch.Tensor]
+    traj_idx_list: list[torch.Tensor]
+    targets: list[torch.Tensor]
 
     def __init__(self):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
@@ -66,6 +66,8 @@ class Preprocessor(ABC):
         torch.manual_seed(cfg.seed)
         filenames = list(Path(graphs_dir).glob("*.pt"))
 
+        self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
+
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
         for idx_file, filename in enumerate(filenames):
             print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
@@ -102,6 +104,7 @@ class Preprocessor(ABC):
                 self.traj_idx_list.append(idx_file)  # idx_file of the traj (of the file process)
                 # create local (inside for) variables
                 _node_force = all_node_force[t]
+                # All are (N, 3)
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force]
@@ -127,7 +130,6 @@ class Preprocessor(ABC):
                                        all_node_force, rest_pos_x, _categorical_node_attr)
 
         # --- Open: All these do nothing if split NOT train ---
-        self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
         self._compute_stats_train(cfg)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
         self._normalize_assign_features_train()
@@ -159,13 +161,13 @@ class Preprocessor(ABC):
 class PreprocessorFactory:
 
     @staticmethod
-    def create_preprocessor(split, cfg):
+    def create_preprocessor(split, cfg, save_dir_train):
         if split == "train":
             return TrainPreprocessor(cfg)
         elif split == "val":
-            return ValPreprocessor(cfg)
+            return ValPreprocessor(cfg, save_dir_train)
         elif split == "test":
-            return ValPreprocessor(cfg)
+            return ValPreprocessor(cfg, save_dir_train)
         else:
             raise NotImplementedError(f"{split} not implemented")
 
@@ -187,8 +189,11 @@ class TrainPreprocessor(Preprocessor):
 
     def _compute_stats_train(self, cfg):
         # Compute statistics
+        print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
         self.node_stats = self.normalizer.compute_stats(self.valued_node_features)
+        print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features)
+        print(f"targets.shape = {self.targets[0].shape}")
         self.target_stats = self.normalizer.compute_stats(self.targets)
 
     def _load_stats(self, cfg):
@@ -196,14 +201,15 @@ class TrainPreprocessor(Preprocessor):
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr):
-        # FIXME: is this Data only used for stats computation? Why a different object?
+        # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
+        # used for NNs
         self.out_graphs.append(
             Data(
-                edge_index=graph.edge_index,
-                t=graph.time,
-                y_acc_t=_a,
-                x_pos_t=_x,
-                x_vel_t=_v
+                edge_index=graph.edge_index, # global index
+                t=graph.time, # global t attribute
+                y_acc_t=_a, # target feature acceleration
+                x_pos_t=_x, # feature position
+                x_vel_t=_v # feature velocity
             )
         )
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -214,18 +220,27 @@ class TrainPreprocessor(Preprocessor):
             _valued_node_features = self.normalizer.normalize(self.valued_node_features[t], self.node_stats)
             _edge_features = self.normalizer.normalize(self.edge_features[t], self.edge_stats)
             _targets = self.normalizer.normalize(self.targets[t], self.target_stats)
+            # Creating standard PyG attributes x (feature), edge_attr, y (target)
+            # x.shape = (N, 4, 3)
             self.out_graphs[t].x = torch.concat([self.categorical_node_features[t], _valued_node_features],
                                                 dim=1)
+            # edge_attr.shape = (N, 8, 3)
             self.out_graphs[t].edge_attr = _edge_features
+            # target y.shape = (N, 4, 3)
             self.out_graphs[t].y = _targets
+            if t == 0:
+                print(f"The shape of x is = {self.out_graphs[0].x.shape} edge_attr = "
+                      f"{self.out_graphs[t].edge_attr.shape} out_graphs[t].y = {self.out_graphs[t].y.shape}")
 
 
 class ValPreprocessor(Preprocessor):
+    save_dir_train: Path
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, save_dir_train):
         super().__init__()
         self.noiser = NoNoiser()
         self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        self.save_dir_train = save_dir_train
 
     def _compute_stats_train(self, cfg):
         pass
@@ -237,12 +252,15 @@ class ValPreprocessor(Preprocessor):
         pass
 
     def _load_stats(self, cfg):
-        self.node_stats, self.edge_stats, self.target_stats = load_stats(cfg.train_save_dir)
+        self.node_stats, self.edge_stats, self.target_stats = load_stats(self.save_dir_train)
+        print(f"Stats:\n\tnode_stats.mean = \t{self.node_stats.mean}\n\tnode_stats.std =\t{self.node_stats.std}"
+              f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
+              f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
     def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr):
         # Use precomputed stats for validation
-        edge_attr_norm = self.normalizer.normalize(_edge_attr, self.edge_stats)
         _vector_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
+        edge_attr_norm = self.normalizer.normalize(_edge_attr, self.edge_stats)
         node_attr = torch.concat([_categorical_node_attr, _vector_node_attr_norm], dim=1)
         return node_attr, edge_attr_norm
 
@@ -307,9 +325,9 @@ def main(cfg):
     graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
-    preprocessor_train = PreprocessorFactory.create_preprocessor("train", cfg_obj)
-    preprocessor_val = PreprocessorFactory.create_preprocessor("val", cfg_obj)
-    preprocessor_test = PreprocessorFactory.create_preprocessor("test", cfg_obj)
+    preprocessor_train = PreprocessorFactory.create_preprocessor("train", cfg_obj, None)
+    preprocessor_val = PreprocessorFactory.create_preprocessor("val", cfg_obj, save_dir_train)
+    preprocessor_test = PreprocessorFactory.create_preprocessor("test", cfg_obj, save_dir_train)
     print("\n" + "=" * 60 + "\ntrain")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
     print("\n" + "=" * 60 + "\nPreprocessing complete!")
