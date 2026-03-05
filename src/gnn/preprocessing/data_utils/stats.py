@@ -1,13 +1,15 @@
 import torch
 from dataclasses import dataclass
+from pathlib import Path
+import json
 
 @dataclass
 class Stats:
     """
     Statistics for data normalization.
     """
-    mean: torch.Tensor
-    std: torch.Tensor
+    mean: torch.Tensor # or median
+    std: torch.Tensor # or IQR
 
     def to_dict(self):
         return {"mean": self.mean.tolist(), "std": self.std.tolist()}
@@ -21,48 +23,20 @@ class Stats:
         self.std = self.std.to(device)
         return self
 
-
-def compute_stats(tensor_list):
+def load_stats(train_save_dir):
     """
-    Compute mean and std statistics from a list of tensors.
     Args:
-        tensor_list
-
-    :return Stats object
+        train_save_dir: str or Path
+            Path to the directory where training data was saved (contains stats/ subfolder).
+        return: (Stats, Stats, Stats)
+            node_stats, edge_stats, target_stats loaded from stats.json.
     """
-    sum_val = 0
-    sum_sq = 0
-    count = 0
-    for tensor in tensor_list:
-        sum_val += tensor.sum(dim=0)
-        sum_sq += (tensor**2).sum(dim=0)
-        count += tensor.shape[0]
-    mean = sum_val / count
-    var = (sum_sq / count) - (mean**2)
-    std = torch.sqrt(var)
-    return Stats(mean=mean, std=std)
-
-
-def normalize(tensor, stats, eps = 1e-8):
-    """
-    Normalize tensor using statistics.
-
-    Args
-        tensor: torch.Tensor
-        stats: Stats,
-        eps: float = 1e-8
-    :return torch.Tensor
-    """
-    return (tensor - stats.mean) / (stats.std + eps)
-
-
-def denormalize(tensor, stats, eps = 1e-8):
-    """
-    Denormalize tensor using statistics.
-    Args:
-       tensor: torch.Tensor
-       stats: Stats
-       eps: float
-   :return torch.Tensor
-    """
-    return tensor * (stats.std + eps) + stats.mean
+    stats_path = Path(train_save_dir) / "stats" / "stats.json"
+    if not stats_path.exists():
+        raise FileNotFoundError(f"Stats file not found at {stats_path}. Preprocess the training data first.")
+    with open(stats_path, "r") as f:
+        stats = json.load(f)
+    node_stats = Stats.from_dict(stats["node"])
+    edge_stats = Stats.from_dict(stats["edge"])
+    target_stats = Stats.from_dict(stats["target"])
+    return node_stats, edge_stats, target_stats
