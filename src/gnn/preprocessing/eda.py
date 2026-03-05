@@ -45,8 +45,9 @@ def _eda(cfg):
     (eda_obj.acceleration_x, eda_obj.acceleration_y, eda_obj.acceleration_z, eda_obj.von_mises, eda_obj.velocity_x, eda_obj.velocity_y,
      eda_obj.velocity_z, eda_obj.position_x, eda_obj.position_y, eda_obj.position_z, eda_obj.relative_pos_x, eda_obj.relative_pos_y,
      eda_obj.relative_pos_z, eda_obj.stress_tensor, eda_obj.relative_pos_norm, eda_obj.rest_relative_pos_x, eda_obj.rest_relative_pos_y,
-     eda_obj.rest_relative_pos_z, eda_obj.rest_relative_pos_norm, eda_obj.force_x, eda_obj.force_y, eda_obj.force_z, eda_obj.von_mises_log) = \
-        ([], [], [], [], [], [], [], [], [], [], [],  [], [], [], [], [], [], [], [], [], [], [], [])
+     eda_obj.rest_relative_pos_z, eda_obj.rest_relative_pos_norm, eda_obj.force_x, eda_obj.force_y, eda_obj.force_z, eda_obj.von_mises_log,
+     eda_obj.stress_tensor_sum) = \
+        ([], [], [], [], [], [], [], [], [], [], [],  [], [], [], [], [], [], [], [], [], [], [], [], [])
     out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
         [], [], [], [], [], [])
     # inspector = PyGInspector(140, 4)
@@ -141,7 +142,8 @@ def _eda(cfg):
             eda_obj.rest_relative_pos_y.append(_edge_attr[:, 5])
             eda_obj.rest_relative_pos_z.append(_edge_attr[:, 6])
             eda_obj.rest_relative_pos_norm.append(_edge_attr[:, 7])
-            eda_obj.stress_tensor.append(graph.y_sig_t.sum(dim=1))
+            eda_obj.stress_tensor_sum.append(graph.y_sig_t.sum(dim=1))
+            eda_obj.stress_tensor.append(graph.y_sig_t)
             eda_obj.force_x.append(_node_force[:, 0])
             eda_obj.force_y.append(_node_force[:, 1])
             eda_obj.force_z.append(_node_force[:, 2])
@@ -187,6 +189,11 @@ def _eda(cfg):
             out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
             targets.append(torch.concat([_a, _von_mises], dim=1))
 
+    for idx in range(0, 9):
+        eda_obj.__setattr__(f"stress_coord_{idx}", [])
+        for stress_instance in eda_obj.stress_tensor:
+            eda_obj.__getattribute__(f"stress_coord_{idx}").append(stress_instance[:, idx])
+
     plot_all_distributions(eda_obj)
 
 def plot_all_distributions(eda_obj):
@@ -196,20 +203,26 @@ def plot_all_distributions(eda_obj):
             Object holding EDA attributes as (lists of) torch.Tensors
     """
     for key, val in eda_obj.__dict__.items():
-        plot_distribution(key, val)
+        # plot_distribution(key, val)
 
-    mean_vel, stddev_vel =compute_isotropic_stats(eda_obj.velocity_x, eda_obj.velocity_y, eda_obj.velocity_z)
+    mean_vel, stddev_vel = compute_isotropic_stats((eda_obj.velocity_x, eda_obj.velocity_y, eda_obj.velocity_z))
     print(f"Mean and stddev of velocity are {mean_vel}, {stddev_vel}")
-    plot_distribution_compare("velocity_x", eda_obj.velocity_x, mean_vel, stddev_vel, "Isotropic")
-    plot_distribution_compare("velocity_y", eda_obj.velocity_y, mean_vel, stddev_vel, "Isotropic")
-    plot_distribution_compare("velocity_z", eda_obj.velocity_z, mean_vel, stddev_vel, "Isotropic")
+    plot_distribution_compare("velocity_x", eda_obj.velocity_x, mean_vel, stddev_vel, "")
+    plot_distribution_compare("velocity_y", eda_obj.velocity_y, mean_vel, stddev_vel, "")
+    plot_distribution_compare("velocity_z", eda_obj.velocity_z, mean_vel, stddev_vel, "")
 
-    mean_acc, stddev_acc = compute_isotropic_stats(eda_obj.acceleration_x, eda_obj.acceleration_y,
-                                                  eda_obj.acceleration_z)
+    mean_acc, stddev_acc = compute_isotropic_stats((eda_obj.acceleration_x, eda_obj.acceleration_y,
+                                                    eda_obj.acceleration_z))
     print(f"Mean and stddev of acceleration are {mean_acc}, {stddev_acc}")
-    plot_distribution_compare("acceleration_x", eda_obj.acceleration_x, mean_acc, stddev_acc, "Isotropic")
-    plot_distribution_compare("acceleration_y", eda_obj.acceleration_y, mean_acc, stddev_acc, "Isotropic")
-    plot_distribution_compare("acceleration_z", eda_obj.acceleration_z, mean_acc, stddev_acc, "Isotropic")
+    plot_distribution_compare("acceleration_x", eda_obj.acceleration_x, mean_acc, stddev_acc, "")
+    plot_distribution_compare("acceleration_y", eda_obj.acceleration_y, mean_acc, stddev_acc, "")
+    plot_distribution_compare("acceleration_z", eda_obj.acceleration_z, mean_acc, stddev_acc, "")
+
+    mean_stress_tensor, stddev_stress_tensor = compute_isotropic_stats((eda_obj.stress_tensor,))
+    print(f"Mean and stddev of stress tensor are {mean_stress_tensor}, {stddev_stress_tensor}")
+    for idx in range(0,9):
+        plot_distribution_compare("stress_tensor", eda_obj.__getattribute__(f"stress_coord_{idx}"),
+                                  mean_stress_tensor, stddev_stress_tensor,f"Coordinate {idx}")
 
 def plot_distribution(name, val):
     """
@@ -243,11 +256,8 @@ def plot_distribution_compare(name, val, mean, std, title):
         val: list[torch.Tensor]
             List of tensors to concatenate; each will be reshaped to (N, 1)
     """
-    title = ""
     chunks = []
     for t in val:
-        if t.ndim not in (1, 2):
-            raise Exception(f"t.ndim={t.ndim}, t.shape={t.shape}")
         chunks.append(t.reshape(-1, 1))
     x = torch.cat(chunks, dim=0).to(torch.float32)
 
@@ -271,7 +281,7 @@ def plot_distribution_compare(name, val, mean, std, title):
     plt.tight_layout()
     plt.show()
 
-def compute_isotropic_stats(val1, val2, val3):
+def compute_isotropic_stats(val_list):
     """
     Args:
         name: str
@@ -280,10 +290,8 @@ def compute_isotropic_stats(val1, val2, val3):
             List of tensors to concatenate; each will be reshaped to (N, 1)
     """
     chunks = []
-    for val in (val1, val2, val3):
+    for val in val_list:
         for t in val:
-            if t.ndim not in (1, 2):
-                raise Exception(f"t.ndim={t.ndim}, t.shape={t.shape}")
             chunks.append(t.reshape(-1, 1))
     x = torch.cat(chunks, dim=0).to(torch.float32)
     print(x)
@@ -315,6 +323,7 @@ class EdaObj:
     force_y: list
     force_z: list
     von_mises_log: list
+    stress_tensor_sum: list
     def __init__(self):
         pass
 
