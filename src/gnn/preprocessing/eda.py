@@ -7,6 +7,32 @@ from src.gnn.preprocessing.data_utils.build_features import (calculate_kinematic
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 import matplotlib.pyplot as plt
+from src.gnn.helpers.misc.pyg_inspector import PyGInspector
+
+EPS = 1e-6
+
+def print_all_pyg_fields(dataloader, graph):
+    inspector = PyGInspector(140, 4)
+    print("\n\n\n\t\t\t Inspector\n\n\n")
+    inspector.scan_graphs(dataloader, 50)
+    print("\n\n\n\t\t\tPrint pyg fields\n\n\n")
+    print_pyg_fields(graph, 50, 6)
+    print("\n\n\n\t\t\tOther\n\n\n")
+    # and show the core features if present:
+    keys_attr = graph.keys
+    keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
+
+    if "x" in keys:
+        print("x:", graph["x"].shape)
+    if "edge_index" in keys:
+        print("edge_index:", graph["edge_index"].shape)
+    if "edge_attr" in keys:
+        print("edge_attr:", graph["edge_attr"].shape)
+
+    # show first actual graph:
+    dl = graph.to_data_list()
+    print("num_graphs_in_batch:", len(dl))
+    print("first graph keys:", list(dl[0].keys()) if not callable(dl[0].keys) else list(dl[0].keys()))
 
 def print_pyg_fields(data, max_keys, max_preview):
     """
@@ -36,21 +62,12 @@ def print_pyg_fields(data, max_keys, max_preview):
         else:
             print(f"{k}:\n\t {type(v)}")
 
-EPS = 1e-6
-
 def _eda(cfg):
     torch.manual_seed(42)
     filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
     eda_obj = EdaObj()
-    (eda_obj.acceleration_x, eda_obj.acceleration_y, eda_obj.acceleration_z, eda_obj.von_mises, eda_obj.velocity_x, eda_obj.velocity_y,
-     eda_obj.velocity_z, eda_obj.position_x, eda_obj.position_y, eda_obj.position_z, eda_obj.relative_pos_x, eda_obj.relative_pos_y,
-     eda_obj.relative_pos_z, eda_obj.stress_tensor, eda_obj.relative_pos_norm, eda_obj.rest_relative_pos_x, eda_obj.rest_relative_pos_y,
-     eda_obj.rest_relative_pos_z, eda_obj.rest_relative_pos_norm, eda_obj.force_x, eda_obj.force_y, eda_obj.force_z, eda_obj.von_mises_log,
-     eda_obj.stress_tensor_sum) = \
-        ([], [], [], [], [], [], [], [], [], [], [],  [], [], [], [], [], [], [], [], [], [], [], [], [])
     out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
         [], [], [], [], [], [])
-    # inspector = PyGInspector(140, 4)
 
     for idx_file, filename in enumerate(filenames):
         # For each file
@@ -61,29 +78,8 @@ def _eda(cfg):
         graphs_list_batch = []
         for idx_data, data in enumerate(dataloader):
             graph = data.to(cfg.device)
-            # if idx_data == 0:
-            #     print("\n\n\n\t\t\t Inspector\n\n\n")
-            #     inspector.scan_graphs(dataloader, 50)
-            #     print("\n\n\n\t\t\tPrint pyg fields\n\n\n")
-            #     print_pyg_fields(graph, 50, 6)
-            #     print("\n\n\n\t\t\tOther\n\n\n")
-            #     # and show the core features if present:
-            #     keys_attr = graph.keys
-            #     keys = list(keys_attr()) if callable(keys_attr) else list(keys_attr)
-            #
-            #     if "x" in keys:
-            #         print("x:", graph["x"].shape)
-            #     if "edge_index" in keys:
-            #         print("edge_index:", graph["edge_index"].shape)
-            #     if "edge_attr" in keys:
-            #         print("edge_attr:", graph["edge_attr"].shape)
-            #
-            #     # show first actual graph:
-            #     dl = graph.to_data_list()
-            #     print("num_graphs_in_batch:", len(dl))
-            #     print("first graph keys:", list(dl[0].keys()) if not callable(dl[0].keys) else list(dl[0].keys()))
-
             graphs_list_batch.append(graph)
+            if idx_data == 0: print_all_pyg_fields(dataloader, graph)
 
         # (For each file) From graphs_list (all graphs in batch), create a Batch object, and compute features
         # If you do batch.node_feature, you are creating a tensor which contains a tensor
@@ -123,6 +119,7 @@ def _eda(cfg):
             _von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             _von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
             node_attr = torch.concat([_categorical_node_attr, _numerical_node_attr], dim=1)
+
             eda_obj.acceleration_x.append(_a[:,0])
             eda_obj.acceleration_y.append(_a[:,1])
             eda_obj.acceleration_z.append(_a[:,2])
@@ -133,7 +130,6 @@ def _eda(cfg):
             eda_obj.position_x.append(_x[:, 0])
             eda_obj.position_y.append(_x[:, 1])
             eda_obj.position_z.append(_x[:, 2])
-            # _edge_attr = [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
             eda_obj.relative_pos_x.append(_edge_attr[:, 0])
             eda_obj.relative_pos_y.append(_edge_attr[:, 1])
             eda_obj.relative_pos_z.append(_edge_attr[:, 2])
@@ -148,6 +144,7 @@ def _eda(cfg):
             eda_obj.force_y.append(_node_force[:, 1])
             eda_obj.force_z.append(_node_force[:, 2])
             eda_obj.von_mises_log.append(_von_mises_log)
+
             out_graphs.append(
                 Data(
                     # targets: current time acceleration and von mises stress
@@ -203,6 +200,7 @@ def plot_all_distributions(eda_obj):
             Object holding EDA attributes as (lists of) torch.Tensors
     """
     for key, val in eda_obj.__dict__.items():
+        pass
         # plot_distribution(key, val)
 
     mean_vel, stddev_vel = compute_isotropic_stats((eda_obj.velocity_x, eda_obj.velocity_y, eda_obj.velocity_z))
@@ -324,11 +322,19 @@ class EdaObj:
     force_z: list
     von_mises_log: list
     stress_tensor_sum: list
+
     def __init__(self):
-        pass
+        (self.acceleration_x, self.acceleration_y, self.acceleration_z, self.von_mises, self.velocity_x,
+         self.velocity_y, self.velocity_z, self.position_x, self.position_y, self.position_z,
+         self.relative_pos_x, self.relative_pos_y, self.relative_pos_z, self.stress_tensor,
+         self.relative_pos_norm, self.rest_relative_pos_x, self.rest_relative_pos_y,
+         self.rest_relative_pos_z, self.rest_relative_pos_norm, self.force_x, self.force_y, self.force_z,
+         self.von_mises_log, self.stress_tensor_sum) = ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
+                                                        [], [], [], [], [], [], [], [])
 
 @hydra.main(version_base=None, config_path="../../../conf", config_name="preprocess")
 def main(cfg):
+    # FIXME: uncouple from preprocess, get eda
     """
     Args:
         cfg: omegaconf.DictConfig

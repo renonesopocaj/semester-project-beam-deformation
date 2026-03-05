@@ -146,27 +146,24 @@ class Trainer:
         self.model.eval()
         target_stats.to("cpu") # FIXME: hardcoded, move to device
         # Perform model rollout testing
-        try:
-            true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=test_loader, device=self.device,
-                                                node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
-                                                dt=dt)
-            # Compute rollout error with MAE FIXME: hardcoded mae
-            rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
-            # Create visualizations
-            gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"
-            volume_png_path = self.model_dir / f"Epoch_{epoch}_volume_change.png"
-            plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-            make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
-                                     out_gif=gif_path, fps=4)
-            # Log to wandb
-            data = {"val/gen_rollout_error": rollout_error,
-                    "val/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                    "val/volume_change_png": wandb.Image(str(volume_png_path))}
-            self.run.log(data, step=epoch)
-            # Store rollout error
-            self.rollout_all_step_error = rollout_error
-        except Exception as e:
-            print(e)
+        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=test_loader, device=self.device,
+                                            node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
+                                            dt=dt)
+        # Compute rollout error with MAE FIXME: hardcoded mae
+        rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
+        # Create visualizations
+        gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"
+        volume_png_path = self.model_dir / f"Epoch_{epoch}_volume_change.png"
+        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
+                                 out_gif=gif_path, fps=4)
+        # Log to wandb
+        data = {"val/gen_rollout_error": rollout_error,
+                "val/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
+                "val/volume_change_png": wandb.Image(str(volume_png_path))}
+        self.run.log(data, step=epoch)
+        # Store rollout error
+        self.rollout_all_step_error = rollout_error
 
     def save_model(self, epochnum):
         """

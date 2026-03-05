@@ -64,7 +64,7 @@ def preprocess_data(cfg):
     Validation: 1. load files and stats
                 2. for each file:
                     2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
-                    2.b. normalize
+                    2.b. normalize with stats loaded in 1
                 3. for each file: save
     Train: 1. load files
            2. for each file:
@@ -78,10 +78,10 @@ def preprocess_data(cfg):
     """
     torch.manual_seed(cfg.seed)
     filenames = list(Path(cfg.graphs_dir).glob("*.pt"))
-    out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx, targets = (
+    out_graphs, categorical_node_features, valued_node_features, edge_features, traj_idx_list, targets = (
         [], [], [], [], [], [])
 
-    # Load stats if validation
+    # Load edge, node, target stats if validation to then normalize without recomputing
     if cfg.split != "train":
         node_stats, edge_stats, target_stats = _load_stats(cfg.train_save_dir)
 
@@ -118,7 +118,7 @@ def preprocess_data(cfg):
             # limit trajectory length to compute acceleration
             if t > cfg.limit_timesteps - 2:
                 break
-            traj_idx.append(idx_file) # idx_file of the traj (of the file process)
+            traj_idx_list.append(idx_file) # idx_file of the traj (of the file process)
             # create local (inside for) variables
             _node_force = all_node_force[t]
             _x, _v, _a = x[t], v[t], a[t]
@@ -163,7 +163,7 @@ def preprocess_data(cfg):
                         x_pos_t=x[t],
                         x_vel_t=v[t],
                         node_force=all_node_force[t],
-                        rest_x0=rest_x0,
+                        rest_x0=u,
                         # note: the force is like the actuator: you need the next-step
                         node_force_next=all_node_force[t + 1],
                         # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed from
@@ -179,12 +179,21 @@ def preprocess_data(cfg):
                         x_element_connectivity=graph.x_element_connectivity,
                     )
                 )
-            else:
-                # Train: accumulate to out_graphs for stats computation
+            else: # If train:
+                # accumulate all graphs to out_graphs for stats computation
                 categorical_node_features.append(boundary_condition)
                 valued_node_features.append(build_valued_node_features(_x, _v, u, _node_force))
                 edge_features.append(build_edge_features(_x, u, graph.edge_index))
-                out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
+                # TODO: is this Data only used for stats computation? Why a different object?
+                out_graphs.append(
+                    Data(
+                        edge_index=graph.edge_index,
+                        t=graph.time,
+                        y_acc_t=_a,
+                        x_pos_t=_x,
+                        x_vel_t=_v
+                    )
+                )
                 targets.append(torch.concat([_a, _von_mises], dim=1))
 
     # Normalize data and save stats if it's in training preprocessing
@@ -204,7 +213,7 @@ def preprocess_data(cfg):
             out_graphs[t].edge_attr = _edge_features
             out_graphs[t].y = _targets
 
-    _save_preprocessed(cfg.split, traj_idx, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
+    _save_preprocessed(cfg.split, traj_idx_list, out_graphs, cfg.save_dir) # Save all processed data (in all cases)
 
 @hydra.main(version_base=None, config_path="../../../conf", config_name="preprocess")
 def main(cfg):

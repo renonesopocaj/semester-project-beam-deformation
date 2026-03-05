@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import imageio
 import torch
-from src.gnn.preprocessing.data_utils import volume
+from src.gnn.preprocessing.data_utils.build_features import volume
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
