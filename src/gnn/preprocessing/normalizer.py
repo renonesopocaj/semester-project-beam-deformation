@@ -13,8 +13,13 @@ class NormalizerFactory:
                 return ZIsotropicNormalizer()
             else:
                 return ZAnisotropicZNormalizer()
+        elif normalize_method == "robust":
+            if isotropic is True:
+                return RobustIsotropicNormalizer()
+            else:
+                return RobustAnisotropicNormalizer()
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Unknown normalizer method: {normalize_method}")
 
 class Normalizer(ABC):
     # stats are saved for every feature, so everyhting is very modular and I can forget about everything
@@ -100,7 +105,45 @@ class ZAnisotropicZNormalizer(Normalizer):
         return Stats(mean=mean, std=std)
 
 class RobustIsotropicNormalizer(Normalizer):
-    pass
+
+    def compute_stats(self, tensor_list):
+        """
+        Compute median and IQR pooling across all coordinates (isotropic).
+        Mirrors ZIsotropicNormalizer but uses median/IQR instead of mean/std.
+
+        Args:
+            tensor_list: list[torch.Tensor]
+                a list of tensors, each (N, ..., F) where F is the feature dim
+
+        return: Stats
+            Stats with mean=median, std=IQR, both shape (F,)
+        """
+        all_data = torch.cat(tensor_list, dim=0)
+        flat = all_data.reshape(-1, all_data.shape[-1])
+        median = torch.quantile(flat, 0.5, dim=0)
+        q1 = torch.quantile(flat, 0.25, dim=0)
+        q3 = torch.quantile(flat, 0.75, dim=0)
+        iqr = q3 - q1
+        return Stats(mean=median, std=iqr)
+
 
 class RobustAnisotropicNormalizer(Normalizer):
-    pass
+
+    def compute_stats(self, tensor_list):
+        """
+        Compute per-coordinate median and IQR (anisotropic).
+        Mirrors ZAnisotropicZNormalizer but uses median/IQR instead of mean/std.
+
+        Args:
+            tensor_list: list[torch.Tensor]
+                a list of tensors, each (N, F)
+
+        return: Stats
+            Stats with mean=median, std=IQR, both shape matching all dims except dim 0
+        """
+        all_data = torch.cat(tensor_list, dim=0)
+        median = torch.quantile(all_data, 0.5, dim=0)
+        q1 = torch.quantile(all_data, 0.25, dim=0)
+        q3 = torch.quantile(all_data, 0.75, dim=0)
+        iqr = q3 - q1
+        return Stats(mean=median, std=iqr)
