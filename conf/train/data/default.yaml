@@ -1,5 +1,6 @@
 dataset_dir: "dataset/processed/z_anisotropic_miseslog/small"
 train_dir: ${data.dataset_dir}/train
 val_dir: ${data.dataset_dir}/val
+test_dir: ${data.dataset_dir}/test
 stats_path: ${data.dataset_dir}/train/stats/stats.json
 preprocess_config_path: ${data.dataset_dir}/config.yaml

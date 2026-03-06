@@ -199,6 +199,8 @@ class Trainer:
             return: dict
                 Averaged loss and MAE metrics on the validation set.
         """
+        print(f"Validation laoder\n\t{validation_loader}\n\t{type(validation_loader)}\n\t{len(validation_loader)}")
+
         aggregated_metrics = {"loss": [], "mae": [], "acc_loss": [], "stress_loss": []}
         for target_name in self.target_names:
             aggregated_metrics[f"{target_name}_loss"] = []
@@ -258,6 +260,7 @@ class Trainer:
             epoch: int
                 number of peoch
         """
+        print(f"Validation laoder\n\t{validation_loader}\n\t{type(validation_loader)}\n\t{len(validation_loader)}")
         self.model.eval()
         target_stats.to(self.device)
         validation_metrics = self._compute_validation_epoch_metrics(validation_loader)
@@ -282,10 +285,10 @@ class Trainer:
         # Store rollout error
         self.rollout_all_step_error = rollout_error
 
-    def final_evaluation(self, evaluation_loader, node_stats, edge_stats, target_stats, dt, split_name):
+    def final_test(self, test_dataloader, node_stats, edge_stats, target_stats, dt, split_name):
         """
         Args:
-            evaluation_loader: pyg.DataLoader
+            test_dataloader: pyg.DataLoader
                 Dataloader used for the final evaluation split.
             node_stats: Stats
                 stats object of node features
@@ -302,8 +305,8 @@ class Trainer:
         """
         self.model.eval()
         target_stats.to(self.device)
-        evaluation_metrics = self._compute_validation_epoch_metrics(evaluation_loader)
-        true_rollout, pred_rollout, rollout_error = self._run_rollout(evaluation_loader, node_stats, edge_stats,
+        test_metrics = self._compute_validation_epoch_metrics(test_dataloader)
+        true_rollout, pred_rollout, rollout_error = self._run_rollout(test_dataloader, node_stats, edge_stats,
                                                                       target_stats, dt)
 
         gif_path = self.model_dir / f"{split_name}_beam_comparison.gif"
@@ -314,16 +317,16 @@ class Trainer:
         plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,
                                     output_prefix=split_name)
 
-        data = {f"{split_name}/loss": evaluation_metrics["loss"],
-                f"{split_name}/mae": evaluation_metrics["mae"],
+        data = {f"{split_name}/loss": test_metrics["loss"],
+                f"{split_name}/mae": test_metrics["mae"],
                 f"{split_name}/gen_rollout_error": rollout_error,
-                f"{split_name}/acc_loss": evaluation_metrics["acc_loss"],
-                f"{split_name}/stress_loss": evaluation_metrics["stress_loss"],
+                f"{split_name}/acc_loss": test_metrics["acc_loss"],
+                f"{split_name}/stress_loss": test_metrics["stress_loss"],
                 f"{split_name}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
                 f"{split_name}/volume_change_png": wandb.Image(str(volume_png_path))}
         for target_name in self.target_names:
-            data[f"{split_name}/{target_name}_loss"] = evaluation_metrics[f"{target_name}_loss"]
-            data[f"{split_name}/{target_name}_mae"] = evaluation_metrics[f"{target_name}_mae"]
+            data[f"{split_name}/{target_name}_loss"] = test_metrics[f"{target_name}_loss"]
+            data[f"{split_name}/{target_name}_mae"] = test_metrics[f"{target_name}_mae"]
         self.run.log(data)
         self.rollout_all_step_error = rollout_error
         return rollout_error

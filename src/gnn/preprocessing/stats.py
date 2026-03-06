@@ -31,7 +31,7 @@ def load_stats(train_save_dir):
         return: (Stats, Stats, Stats)
             node_stats, edge_stats, target_stats loaded from stats.json.
     """
-    stats_path = Path(train_save_dir) / "stats" / "stats.json"
+    stats_path = Path(train_save_dir)
     if not stats_path.exists():
         raise FileNotFoundError(f"Stats file not found at {stats_path}. Preprocess the training data first.")
     with open(stats_path, "r") as f:

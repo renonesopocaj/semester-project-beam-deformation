@@ -23,11 +23,13 @@ def train(cfg, preprocess_cfg):
     print("Train dataset:")
     train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
-    validation_dataloader = None
     if cfg.enable_val:
         print("Validation dataset:")
         validation_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
         validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False)
+    print("Test dataset:")
+    test_dataset = InMemoryTimeStepDataset(sample_dir=cfg.test_dir, device=device)
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # se rest_minus_nonrest true, cambia
     node_channels = preprocess_cfg.node_channels
@@ -61,6 +63,8 @@ def train(cfg, preprocess_cfg):
     # Training loop using the Trainer class
     idx = 0
     epoch_bar = tqdm(range(cfg.total_epochs), desc="Epochs")
+    print(f"Validation laoder\n\t{validation_dataloader}\n\t{type(validation_dataloader)}\n\t"
+          f"{len(validation_dataloader)}")
     for epoch in epoch_bar:
         # Training phase
         for batch in tqdm(train_dataloader, desc="Batches", leave=False):
@@ -73,6 +77,8 @@ def train(cfg, preprocess_cfg):
 
         # Validation phase
         if epoch % cfg.validation_interval == 0 and cfg.enable_val:
+            print(f"Validation laoder\n\t{validation_dataloader}\n\t{type(validation_dataloader)}\n\t"
+                  f"{len(validation_dataloader)}")
             trainer.validation(validation_loader=validation_dataloader, node_stats=node_stats, edge_stats=edge_stats,
                                target_stats=target_stats, dt=dt, epoch=epoch)
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
@@ -84,11 +90,10 @@ def train(cfg, preprocess_cfg):
         idx += 1
 
     plot_training_history(trainer)
-    if cfg.enable_val and validation_dataloader is not None:
-        final_rollout_error = trainer.final_evaluation(evaluation_loader=validation_dataloader, node_stats=node_stats,
-                                                       edge_stats=edge_stats, target_stats=target_stats, dt=dt,
-                                                       split_name="final_eval")
-        print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
+    final_rollout_error = trainer.final_test(test_dataloader=test_dataloader, node_stats=node_stats,
+                                             edge_stats=edge_stats, target_stats=target_stats, dt=dt,
+                                             split_name="test")
+    print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
     trainer.save_model(epochnum=cfg.total_epochs - 1)
 
 

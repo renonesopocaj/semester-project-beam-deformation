@@ -78,6 +78,7 @@ class TrainYaml:
         self.dataset_dir = flattened_cfg["dataset_dir"]
         self.train_dir = flattened_cfg["train_dir"]
         self.val_dir = flattened_cfg["val_dir"]
+        self.test_dir = flattened_cfg["test_dir"]
         self.stats_path = flattened_cfg["stats_path"]
         self.preprocess_config_path = flattened_cfg["preprocess_config_path"]
 
