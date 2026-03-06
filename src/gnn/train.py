@@ -1,11 +1,10 @@
 import yaml
-import json
 import torch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
 from src.gnn.training.trainer import Trainer
-from src.gnn.preprocessing.stats import Stats
+from src.gnn.preprocessing.stats import load_stats
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import hydra
 from src.gnn.helpers.misc.yamlobject import TrainYaml, PreprocessYaml
@@ -44,11 +43,7 @@ def train(cfg, preprocess_cfg):
     stats_path = cfg.stats_path
 
     print(f"Loading stats from {stats_path}...")
-    with open(stats_path, "r") as f:
-        stats = json.load(f)
-    node_stats = Stats.from_dict(stats["node"])
-    edge_stats = Stats.from_dict(stats["edge"])
-    target_stats = Stats.from_dict(stats["target"])
+    node_stats, edge_stats, target_stats = load_stats(stats_path)
     dt = preprocess_cfg.dt
 
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")

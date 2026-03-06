@@ -1,11 +1,9 @@
-import time
-import os
-import shutil
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import imageio
 import torch
+
+from src.gnn.helpers.plots.mesh import compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity, to_numpy, update_surface_collection
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
@@ -24,7 +22,7 @@ def plot_volume_change(pred_rollout, true_rollout, path):
     for pred, true in zip(pred_rollout, true_rollout):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
-        cells = torch.tensor(true.x_element_connectivity[0][0], dtype=torch.long)
+        cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
 
@@ -68,43 +66,27 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
     """
     assert len(pred_rollout) == len(true_rollout), ("Mismatch in predicted and ground truth frames.")
 
-    time_start = time.time()
-    temp_dir = "temp_frames_" + str(time_start)
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-    os.makedirs(temp_dir, exist_ok=True)
-
     frames = []
 
-    # Extract element connectivity
-    first_graph = true_rollout[0]
-    cells = first_graph.x_element_connectivity[0][0]
-
-    # Find global bounding box
-    all_x, all_y, all_z = [], [], []
+    faces = extract_surface_faces(true_rollout[0].x_element_connectivity)
+    coordinates_for_bounds = []
     vm_min, vm_max = 0.0, 0.0
 
     for g_pred, g_true in zip(pred_rollout, true_rollout):
-        coords_pred = g_pred.x_pos_t.cpu().numpy()
-        coords_true = g_true.x_pos_t.cpu().numpy()
-        von_mises_pred = g_pred.von_mises.cpu().numpy()
-        von_mises_true = g_true.von_mises.cpu().numpy()
+        coords_pred = to_numpy(g_pred.x_pos_t)
+        coords_true = to_numpy(g_true.x_pos_t)
+        von_mises_pred = to_numpy(g_pred.von_mises).reshape(-1)
+        von_mises_true = to_numpy(g_true.von_mises).reshape(-1)
 
         vm_max = max(vm_max, np.max(von_mises_pred))
         vm_max = max(vm_max, np.max(von_mises_true))
-        all_x.extend(coords_true[:, 0])
-        all_y.extend(coords_true[:, 1])
-        all_z.extend(coords_true[:, 2])
+        coordinates_for_bounds.append(coords_true)
 
         if bbox_only_on_true:
             continue
-        all_x.extend(coords_pred[:, 0])
-        all_y.extend(coords_pred[:, 1])
-        all_z.extend(coords_pred[:, 2])
+        coordinates_for_bounds.append(coords_pred)
 
-    x_min, x_max = np.min(all_x), np.max(all_x)
-    y_min, y_max = np.min(all_y), np.max(all_y)
-    z_min, z_max = np.min(all_z), np.max(all_z)
+    coordinate_min, coordinate_max, _, _ = compute_coordinate_bounds(coordinates_for_bounds)
 
     # Create figure
     fig, axarr = plt.subplots(1, 2, figsize=(16, 8), subplot_kw={"projection": "3d"})
@@ -117,20 +99,14 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
     cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cbar_ax)
     cbar.set_label("von Mises Stress")
 
-    # Pre-build polygon structure
-    polys_indices = []
-    for tet in cells:
-        polys_indices.append(tet[:3])  # Use first 3 vertices for a face
-    polys_indices = np.array(polys_indices)
-
     polycoll_true = None
     polycoll_pred = None
 
     # Configure axes
     for ax, title in zip(axarr, ["Ground Truth", "Predicted MeshGraphNet"]):
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-        ax.set_zlim(z_min, z_max)
+        ax.set_xlim(coordinate_min[0], coordinate_max[0])
+        ax.set_ylim(coordinate_min[1], coordinate_max[1])
+        ax.set_zlim(coordinate_min[2], coordinate_max[2])
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.set_zlabel("Z")
@@ -143,31 +119,14 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
         if verbose:
             print(f"Rendering frame {i}/{len(pred_rollout) - 1}")
 
-        coords_pred = graph_pred.x_pos_t.cpu().numpy()
-        coords_true = graph_true.x_pos_t.cpu().numpy()
-
-        vm_pred = graph_pred.von_mises.cpu().numpy()
-        vm_true = graph_true.von_mises.cpu().numpy()
-
-        def update_beam(ax, coords, vm, polycoll_existing):
-            polys = coords[polys_indices]
-            face_values = np.mean(vm[polys_indices], axis=1)
-            face_colors = cmap(norm(face_values))
-
-            if polycoll_existing is None:
-                polycoll = Poly3DCollection(polys)
-                polycoll.set_facecolors(face_colors)
-                polycoll.set_edgecolor("none")
-                ax.add_collection3d(polycoll)
-                return polycoll
-            else:
-                polycoll_existing.set_verts(polys)
-                polycoll_existing.set_facecolors(face_colors)
-                return polycoll_existing
+        coords_pred = to_numpy(graph_pred.x_pos_t)
+        coords_true = to_numpy(graph_true.x_pos_t)
+        vm_pred = to_numpy(graph_pred.von_mises).reshape(-1)
+        vm_true = to_numpy(graph_true.von_mises).reshape(-1)
 
         # Update both subplots
-        polycoll_true = update_beam(axarr[0], coords_true, vm_true, polycoll_true)
-        polycoll_pred = update_beam(axarr[1], coords_pred, vm_pred, polycoll_pred)
+        polycoll_true = update_surface_collection(axarr[0], faces, coords_true, vm_true, cmap, norm, polycoll_true)
+        polycoll_pred = update_surface_collection(axarr[1], faces, coords_pred, vm_pred, cmap, norm, polycoll_pred)
 
         # Render to numpy array
         fig.canvas.draw()

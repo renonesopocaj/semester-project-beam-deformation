@@ -1,6 +1,8 @@
 import torch
 from torch_geometric.data import Data
 
+from src.gnn.preprocessing.build_features import build_edge_features, build_valued_node_features
+
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first,
                rollout_steps, normalizer, rest_minus_nonrest_pos):
     """
@@ -84,11 +86,15 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
+                                     acceleration=graph.y_acc_t,
                                      von_mises=von_mises_true,
+                                     edge_index=graph.edge_index,
                                      x_element_connectivity=graph.x_element_connectivity))
             pred_rollout.append(Data(x_pos_t=x_new,
                                      x_vel_t=v_new,
+                                     acceleration=a,
                                      von_mises=von_mises,
+                                     edge_index=graph.edge_index,
                                      x_element_connectivity=graph.x_element_connectivity))
 
     return true_rollout, pred_rollout
@@ -117,31 +123,13 @@ def build_next_graph(simulation_graph, x_new, v_new, rest_pos, node_stats, edge_
     categorical_node_features = boundary_condition.unsqueeze(1)
     # FIXME: why next step?
     node_force = simulation_graph.node_force_next
-    # concat into one node feature
-    if rest_minus_nonrest_pos:
-        x_minus_u = x_new - v_new
-        valued_node_features = torch.concat([x_new, v_new, rest_pos, node_force, x_minus_u], dim=1)
-    else:
-        valued_node_features = torch.concat([x_new, v_new, rest_pos, node_force], dim=1)
+    valued_node_features = build_valued_node_features(x_new, v_new, rest_pos, node_force, rest_minus_nonrest_pos)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
     _x[-1] = simulation_graph.x[-1]  # Keep force node features unchanged
 
     # --------------- Edges ----------------------
-    # ground truth
-    src, dst = simulation_graph.edge_index
-    # prediction edge features
-    xij = x_new[dst] - x_new[src]
-    xij_norm = torch.norm(xij, dim=1).unsqueeze(1)
-    uij = rest_pos[dst] - rest_pos[src]
-    uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
-    # concat into one node feature
-    if rest_minus_nonrest_pos:
-        xij_minus_uij = xij - uij
-        xij_minus_uij_norm = torch.norm(xij - uij, dim=1).unsqueeze(1)
-        edge_features = torch.concat([xij, uij, xij_norm, uij_norm, xij_minus_uij, xij_minus_uij_norm], dim=1)
-    else:
-        edge_features = torch.concat([xij, uij, xij_norm, uij_norm], dim=1)
+    edge_features = build_edge_features(x_new, rest_pos, simulation_graph.edge_index, rest_minus_nonrest_pos)
     _edge_attr_normalized = normalizer.normalize(edge_features, edge_stats)
 
     # -------------- Final -----------------

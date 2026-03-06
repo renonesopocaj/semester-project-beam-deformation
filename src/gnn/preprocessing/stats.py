@@ -27,11 +27,13 @@ def load_stats(train_save_dir):
     """
     Args:
         train_save_dir: str or Path
-            Path to the directory where training data was saved (contains stats/ subfolder).
+            Path to a stats file or to the directory where training data was saved.
         return: (Stats, Stats, Stats)
             node_stats, edge_stats, target_stats loaded from stats.json.
     """
-    stats_path = Path(train_save_dir) / "stats" / "stats.json"
+    stats_path = Path(train_save_dir)
+    if stats_path.is_dir():
+        stats_path = stats_path / "stats" / "stats.json"
     if not stats_path.exists():
         raise FileNotFoundError(f"Stats file not found at {stats_path}. Preprocess the training data first.")
     with open(stats_path, "r") as f:
