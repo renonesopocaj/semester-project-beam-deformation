@@ -171,21 +171,18 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
 
         # Render to numpy array
         fig.canvas.draw()
-        frame = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-        frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
         frames.append(frame)
 
     plt.close(fig)
 
     # Create GIF
     imageio.mimsave(out_gif, frames, fps=fps, loop=0)
-    if verbose:
-        print(f"GIF saved => {out_gif}")
+    print(f"GIF saved => {out_gif}")
 
     # Cleanup
     shutil.rmtree(temp_dir)
-    if verbose:
-        print("Done.")
+    print("Done.")
 
 def volume(V, T):
     """
