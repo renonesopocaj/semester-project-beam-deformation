@@ -40,9 +40,13 @@ class PreprocessYaml:
         self.save_dir = flattened_cfg["save_dir"]
         self.limit_timesteps = flattened_cfg["limit_timesteps"]
         self.mises_log = flattened_cfg["mises_log"]
-        self.isotropic_normalizer = flattened_cfg["isotropic"]
+        self.isotropic_normalizer = flattened_cfg["isotropic_normalizer"]
         self.normalizer_method = flattened_cfg["normalizer_method"]
         self.rest_minus_nonrest_pos = flattened_cfg["rest_minus_nonrest_pos"]
+        if "edge_channels" in flattened_cfg:
+            self.edge_channels = flattened_cfg["edge_channels"]
+        if "node_channels" in flattened_cfg:
+            self.node_channels = flattened_cfg["node_channels"]
 
 class TrainYaml:
     """

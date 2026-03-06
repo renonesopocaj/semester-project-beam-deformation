@@ -12,13 +12,15 @@ def plot_volume_change(pred_rollout, true_rollout, path):
     Plot volume change over time for predicted vs ground truth.
 
     Args:
-        pred_rollout
-        true_rollout
-        path
+        pred_rollout: list[FIXME: TYPE]
+            list of predictions (each element attributes = targets)
+        true_rollout: list[FIXME: TYPE]
+            list of ground truth values (each element has attributes = targets)
+        path: Path
     """
     fig, ax = plt.subplots()
-    true_volumes_list = []
-    pred_volumes_list = []
+    true_volumes_list, pred_volumes_list = [], []
+
     for pred, true in zip(pred_rollout, true_rollout):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
@@ -31,6 +33,7 @@ def plot_volume_change(pred_rollout, true_rollout, path):
 
         true_volumes_list.append(V_true)
         pred_volumes_list.append(V_pred)
+
     ax.plot(true_volumes_list, label="True Volumes")
     ax.plot(pred_volumes_list, label="Predicted Volumes")
     plt.xlabel("Time Step")

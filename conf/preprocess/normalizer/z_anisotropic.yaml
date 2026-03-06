@@ -1,2 +1,2 @@
-isotropic: false
+isotropic_normalizer: false
 normalizer_method: "z"

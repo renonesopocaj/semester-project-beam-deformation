@@ -64,12 +64,12 @@ def build_edge_features(x, u, edge_index, rest_minus_nonrest_pos_edge):
     uij = u[dst] - u[src] # (N, 3) rest relative position
     xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (N, 1) relative position in norm
     uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (N, 1) rest_relative_position
-    if rest_minus_nonrest_pos_edge:
+    if rest_minus_nonrest_pos_edge: # 12 feat
         xij_minus_uij = xij - uij
         xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
         # (N, 12, 1)
         edge_attr = torch.concat([xij, uij, xij_minus_uij, xij_norm, uij_norm, xij_minus_uij_norm], dim=1)
-    else:
+    else: # 8 feat
         edge_attr = torch.concat([xij, uij, xij_norm, uij_norm], dim=1) # (N, 8, 1)
     return edge_attr
 

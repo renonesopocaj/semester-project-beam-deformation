@@ -110,7 +110,7 @@ def _eda(cfg):
                     x_pos_t=x[t],
                     x_vel_t=v[t],
                     node_force=all_node_force[t],
-                    rest_x0=rest_x0,
+                    rest_pos=rest_x0,
                     # note: the force is like the actuator: you need the next-step
                     node_force_next=all_node_force[t + 1],
                     # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed from

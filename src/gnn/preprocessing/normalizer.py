@@ -9,6 +9,17 @@ class NormalizerFactory:
 
     @staticmethod
     def create_normalizer(normalize_method, isotropic):
+        """
+        Factory pattern, creates and returns proper Normalizer object
+
+        Args:
+            normalize_method: str
+                string that indicates normalizer method, e.g. "z" | "robust"
+            isotropic: bool
+                true iff you want isotropic norm on features that have 3 coordinates
+
+        :return Normalizer
+        """
         if normalize_method == "z":
             if isotropic is True:
                 return ZIsotropicNormalizer()
@@ -33,8 +44,10 @@ class Normalizer(ABC):
 
         Args
             tensor: torch.Tensor
-            stats: Stats,
-            eps: float = 1e-8
+                tensor to normalize
+            stats: Stats
+                stats object
+
         :return torch.Tensor
         """
         return (tensor - stats.mean) / (stats.std + EPS)
@@ -44,27 +57,32 @@ class Normalizer(ABC):
         Denormalize tensor using statistics.
 
         Args:
-           tensor: torch.Tensor
-           stats: Stats
-           eps: float
+            tensor: torch.Tensor
+                tensor to normalize
+            stats: Stats
+                stats object
+
         :return torch.Tensor
         """
         return tensor * (stats.std + EPS) + stats.mean
 
     @abstractmethod
     def compute_stats(self, tensor_list, split_idx):
+        """
+        Args:
+            tensor_list: list[torch.Tensor]
+                list of tensors with shape (N, F)
+            split_idx: int
+                first split_idx features are grouped in xyz triplets
+
+        return: Stats
+            robust stats with isotropic pooling on triplets
+        """
         raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
 
 class ZIsotropicNormalizer(Normalizer):
 
     def compute_stats(self, tensor_list, split_idx):
-        """
-        Each feature has 3 coordinates to sum along
-
-        Args:
-            tensor_list: List[torch.tensor] tensors with shape (N, #features)
-        :return:
-        """
         assert split_idx % 3 == 0
 
         sum_val = torch.zeros(tensor_list[0].shape[1],device=tensor_list[0].device, dtype=tensor_list[0].dtype)
@@ -104,15 +122,6 @@ class ZIsotropicNormalizer(Normalizer):
 class ZAnisotropicZNormalizer(Normalizer):
 
     def compute_stats(self, tensor_list, split_idx):
-        """
-        Compute mean and std statistics from a list of tensors.
-
-        Args:
-            tensor_list: list[torch.Tensor] (N, #features)
-                a list of tensors
-
-        :return Stats object (mean: torch.Tensor, std: torch.Tensor)
-        """
         sum_val = 0
         sum_sq = 0
         count = 0
@@ -129,16 +138,6 @@ class ZAnisotropicZNormalizer(Normalizer):
 class RobustIsotropicNormalizer(Normalizer):
 
     def compute_stats(self, tensor_list, split_idx):
-        """
-        Args:
-            tensor_list: list[torch.Tensor]
-                list of tensors with shape (N, F)
-            split_idx: int
-                first split_idx features are grouped in xyz triplets
-
-        return: Stats
-            robust stats with isotropic pooling on triplets
-        """
         first_tensor = tensor_list[0]
         num_features = first_tensor.shape[1]
 
@@ -188,17 +187,6 @@ class RobustIsotropicNormalizer(Normalizer):
 class RobustAnisotropicNormalizer(Normalizer):
 
     def compute_stats(self, tensor_list, split_idx):
-        """
-        Compute per-feature median and IQR using NumPy to avoid torch.quantile
-        size limitations.
-
-        Args:
-            tensor_list: list[torch.Tensor]
-                a list of tensors, each (N, F)
-
-        return: Stats
-            Stats with mean=median, std=IQR
-        """
         first_tensor = tensor_list[0]
         all_data_np = np.concatenate([tensor.detach().cpu().numpy() for tensor in tensor_list], axis=0)
 

@@ -2,11 +2,26 @@ import os
 import time
 import torch
 from src.gnn.helpers.plots.visualize import make_beam_comparison_gif, plot_volume_change
-from src.gnn.helpers.eval_utilities import do_rollout, mae
+from src.gnn.helpers.eval_utilities import do_rollout
 import numpy as np
 from pathlib import Path
 import wandb
 import torch.nn.functional as F
+from src.gnn.preprocessing.normalizer import NormalizerFactory
+
+def loss_factory(loss_type):
+    """
+    Factory pattern, returns the proper function
+    """
+    # Set loss function
+    if loss_type == "mse":
+        return F.mse_loss
+    elif loss_type == "mae":
+        return F.l1_loss
+    elif loss_type == "huber":
+        return F.huber_loss
+    else:
+        raise NotImplementedError("Unsupported loss function")
 
 class Trainer:
     """
@@ -36,7 +51,7 @@ class Trainer:
     train_acc_loss: list[float]
     train_stress_loss: list[float]
 
-    def __init__(self, model, optimizer, device, loss_type, use_wandb):
+    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg):
         """
         Args:
             model:
@@ -51,21 +66,17 @@ class Trainer:
                 Whether to use Weights & Biases for logging
         """
         self.training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
+        self.device = device
+        # wandb
         self.run = wandb.init(mode="disabled") if not use_wandb else wandb.init()
+        # model, optimizer, loss
         self.model = model
         self.optimizer = optimizer
-        self.device = device
-
-        # Set loss function
-        if loss_type == "mse":
-            self.loss_fn = F.mse_loss
-        elif loss_type == "mae":
-            self.loss_fn = F.l1_loss
-        elif loss_type == "huber":
-            self.loss_fn = F.huber_loss
-        else:
-            raise NotImplementedError("Unsupported loss function")
-
+        self.loss_fn = loss_factory(loss_type)
+        # dataset-dependent stuff
+        self.used_dataset_normalizer = NormalizerFactory.create_normalizer(preprocess_cfg.normalizer_method,
+                                                                           preprocess_cfg.isotropic_normalizer)
+        self.rest_minus_nonrest_pos = preprocess_cfg.rest_minus_nonrest_pos
         # Training history
         self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
         # Create directory for saving models
@@ -114,6 +125,7 @@ class Trainer:
     def epoch_end(self, numepoch):
         """
         Log metrics at the end of each epoch.
+
         Args:
             numepoch: int
         """
@@ -130,24 +142,33 @@ class Trainer:
         Perform validation rollout and create visualizations.
 
         Args:
-            validation_loader
+            validation_loader: pyg.DataLoader
+                dataloader of validation dataset
             node_stats: Stats
+                stats object of node features
             edge_stats: Stats
+                stats object of edge features
             target_stats: Stats
+                stats object of target
             dt: float
+                time interval
             epoch: int
+                number of peoch
         """
         self.model.eval()
         target_stats.to(self.device)
         # Perform model rollout testing
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=validation_loader, device=self.device,
                                                 node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
-                                                dt=dt)
+                                                dt=dt, skip_first=0, rollout_steps=999999,
+                                                normalizer=self.used_dataset_normalizer,
+                                                rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
         # Compute rollout error with MAE
+        mae = lambda target, pred: torch.mean(torch.abs(target - pred))
         rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
         # Create visualizations
-        gif_path = self.model_dir / f"Epoch_{epoch}_beam_comparison.gif"
-        volume_png_path = self.model_dir / f"Epoch_{epoch}_volume_change.png"
+        gif_path = self.model_dir / f"Epoch{epoch}_beam_comparison.gif"
+        volume_png_path = self.model_dir / f"Epoch{epoch}_volume_change.png"
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
                                  out_gif=gif_path, fps=4)

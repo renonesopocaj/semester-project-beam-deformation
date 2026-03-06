@@ -1,17 +1,22 @@
-from IPython.display import Image, display
+import yaml
 import json
 import torch
 from torch_geometric.loader import DataLoader
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.models.trainer import Trainer
+from src.gnn.training.trainer import Trainer
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import hydra
-from src.gnn.helpers.misc.yamlobject import TrainYaml
+from src.gnn.helpers.misc.yamlobject import TrainYaml, PreprocessYaml
+from src.gnn.training.train_plots import plot_training_history
+from pathlib import Path
+import matplotlib
+import matplotlib.pyplot as plt
+matplotlib.use("Agg")
+plt.ioff()
 
-def train(cfg):
+def train(cfg, preprocess_cfg):
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -25,10 +30,9 @@ def train(cfg):
         validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False)
     # Test samples: {len(test_dataset)}
 
-    # Initialize model FIXME: questo spaccherebbe prenderli dalla cartella di generazione del dataset in automatico.
     # se rest_minus_nonrest true, cambia
-    node_channels = 13  # 1 (boundary) + 3 (position) + 3 (velocity) + 3 (rest position) + 3 (force)
-    edge_channels = 8 # 3 (relative position) + 1 (norm) + 3 (rest relative position) + 1 (norm)
+    node_channels = preprocess_cfg.node_channels
+    edge_channels = preprocess_cfg.edge_channels
 
     torch.manual_seed(cfg.seed)
     model = MeshGraphNet(node_channels=node_channels, edge_channels=edge_channels, latent_size=cfg.latent_dim,
@@ -45,15 +49,15 @@ def train(cfg):
     node_stats = Stats.from_dict(stats["node"])
     edge_stats = Stats.from_dict(stats["edge"])
     target_stats = Stats.from_dict(stats["target"])
-    # FIXME: dt should probably be loaded from dataset
-    dt = 0.08
+    dt = preprocess_cfg.dt
 
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=use_wandb)
+    trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=cfg.use_wandb,
+                      preprocess_cfg=preprocess_cfg)
 
     print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tTotal epochs: {cfg.total_epochs}\n\t"
           f"Validation interval: {cfg.validation_interval}\n\tLoss type: {cfg.loss_type}\n\tUsing wandb: "
@@ -89,31 +93,6 @@ def train(cfg):
 
     plot_training_history(trainer)
 
-def plot_training_history(trainer):
-    print("\nTraining complete!")
-    print(f"Models saved to: {trainer.model_dir}")
-
-    # Plot training history from the trainer
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-
-    # Training loss
-    ax.plot(trainer.train_history)
-    ax.set_xlabel("Training Step")
-    ax.set_ylabel("Training Loss (MSE)")
-    ax.set_title("Training Loss Over Time")
-    ax.grid(True)
-
-    plt.tight_layout()
-    plt.savefig("training_history.png")
-
-    print(f"Total training steps: {len(trainer.train_history)}")
-    print(f"Final training loss: {trainer.train_history[-1]:.6f}")
-    if hasattr(trainer, 'rollout_all_step_error'):
-        print(f"Final rollout error: {trainer.rollout_all_step_error:.6f}")
-
-    # Display the training history plot
-    display(Image(filename='training_history.png'))
-
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
 def main(cfg):
@@ -124,7 +103,10 @@ def main(cfg):
             e.g.: python -m src.gnn.train --multirun training.lr=1e-3,5e-4,1e-4
     """
     train_cfg = TrainYaml(cfg)
-    train(train_cfg)
+    with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
+        data = yaml.safe_load(file)
+    preprocess_cfg = PreprocessYaml(data)
+    train(train_cfg, preprocess_cfg)
 
 
 if __name__ == "__main__":

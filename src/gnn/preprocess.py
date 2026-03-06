@@ -1,7 +1,7 @@
 import torch
 import json
 import hydra
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 from src.gnn.helpers.misc.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
                                                   build_edge_features,
@@ -159,21 +159,6 @@ class Preprocessor(ABC):
                           all_node_force, rest_pos_x, _categorical_node_attr):
         raise NotImplementedError("_normalize_append_outgraphs")
 
-
-class PreprocessorFactory:
-
-    @staticmethod
-    def create_preprocessor(split, cfg, save_dir_train):
-        if split == "train":
-            return TrainPreprocessor(cfg)
-        elif split == "val":
-            return ValPreprocessor(cfg, save_dir_train)
-        elif split == "test":
-            return ValPreprocessor(cfg, save_dir_train)
-        else:
-            raise NotImplementedError(f"{split} not implemented")
-
-
 class TrainPreprocessor(Preprocessor):
 
     def __init__(self, cfg):
@@ -295,7 +280,7 @@ class ValPreprocessor(Preprocessor):
                 x_pos_t=_x,
                 x_vel_t=_v,
                 node_force=all_node_force[t],
-                rest_x0=rest_pos_x,
+                rest_pos=rest_pos_x,
                 # ==================================================================
                 #                           EDGE features
                 # ==================================================================
@@ -306,6 +291,15 @@ class ValPreprocessor(Preprocessor):
             )
         )
 
+def create_preprocessor(split, cfg, save_dir_train):
+    if split == "train":
+        return TrainPreprocessor(cfg)
+    elif split == "val":
+        return ValPreprocessor(cfg, save_dir_train)
+    elif split == "test":
+        return ValPreprocessor(cfg, save_dir_train)
+    else:
+        raise NotImplementedError(f"{split} not implemented")
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="preprocess")
 def main(cfg):
@@ -320,20 +314,28 @@ def main(cfg):
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, save_dir / "config.yaml")
-    save_subdir = (f"{cfg_obj.normalizer_method}_{'isotropic' if cfg_obj.isotropic_normalizer is True else 'anisotropic'}_"
+    processed_dir_name = (f"{cfg_obj.normalizer_method}_{'isotropic' if cfg_obj.isotropic_normalizer is True else 'anisotropic'}_"
                    f"{'miseslog' if cfg_obj.mises_log is True else 'nolog'}")
-    dataset_dir = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, dataset_dir / "config.yaml")
-    save_dir_train = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "train"
-    save_dir_test = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "test"
-    save_dir_val = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "val"
+    processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
+    # note: this is hardcoded to be quicker, but I could have just saved the resulting vectors
+    with open_dict(cfg):
+        # note numerical feat resp 15 and 12, + 1 categorical
+        cfg.node_channels = 16 if cfg_obj.rest_minus_nonrest_pos is True else 13
+        cfg.edge_channels = 12 if cfg_obj.rest_minus_nonrest_pos is True else 8
+    processed_dataset_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
+    # Where to save results
+    save_dir_train = processed_dataset_dir / "train"
+    save_dir_test = processed_dataset_dir / "test"
+    save_dir_val = processed_dataset_dir / "val"
+    # Raw paths
     graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
-    preprocessor_train = PreprocessorFactory.create_preprocessor("train", cfg_obj, None)
-    preprocessor_val = PreprocessorFactory.create_preprocessor("val", cfg_obj, save_dir_train)
-    preprocessor_test = PreprocessorFactory.create_preprocessor("test", cfg_obj, save_dir_train)
+    # Create preprocessors object
+    preprocessor_train = create_preprocessor("train", cfg_obj, None)
+    preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train)
+    preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train)
     print("\n" + "=" * 60 + "\ntrain")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
     print("\n" + "=" * 60 + "\nPreprocessing complete!")

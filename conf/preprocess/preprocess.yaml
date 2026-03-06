@@ -8,9 +8,9 @@ defaults:
 
 hydra:
   run:
-    dir: outputs/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: hydra/outputs/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweep:
-    dir: multirun/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: hydra/multirun/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.override_dirname}
   job:
     chdir: false
