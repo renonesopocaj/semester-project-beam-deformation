@@ -245,21 +245,24 @@ class ValPreprocessor(Preprocessor):
               f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
-    def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr):
+    def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr, _target):
         # Use precomputed stats for validation
         _numerical_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
         edge_attr_norm = self.normalizer.normalize(_edge_attr, self.edge_stats)
         node_attr = torch.concat([_categorical_node_attr, _numerical_node_attr_norm], dim=1)
-        return node_attr, edge_attr_norm
+        target_norm = self.normalizer.normalize(_target, self.target_stats)
+        return node_attr, edge_attr_norm, target_norm
 
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr):
-        node_attr_norm, edge_attr_norm = self._normalize_before_appending(_edge_attr, _node_attr,
-                                                                          _categorical_node_attr)
+        _target = torch.concat([_a, _von_mises], dim=1)
+        node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
+            _edge_attr, _node_attr, _categorical_node_attr, _target)
         self.out_graphs.append(
             Data(
                 # targets: current time acceleration and von mises stress
+                y=target_norm,
                 y_acc_t=_a,
                 y_von_mises=_von_mises,
                 # (global attribute on the graph) time step of current graph
