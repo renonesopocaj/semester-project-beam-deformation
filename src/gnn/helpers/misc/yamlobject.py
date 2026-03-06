@@ -58,21 +58,24 @@ class TrainYaml:
                 Creates attributes on self dynamically.
         """
         flattened_cfg = _to_dict_flatten(cfg)
+        self.seed = flattened_cfg["seed"]
+        self.use_wandb = flattened_cfg["use_wandb"]
         self.batch_size = flattened_cfg["batch_size"]
         self.num_workers = flattened_cfg["num_workers"]
-        self.val_dir = flattened_cfg["val_dir"]
-        self.train_dir = flattened_cfg["train_dir"]
-        self.seed = flattened_cfg["seed"]
         self.name = flattened_cfg["name"]
         self.num_messages = flattened_cfg["num_messages"]
         self.latent_dim = flattened_cfg["latent_dim"]
         self.lr = float(flattened_cfg["lr"])
+        self.lr_scheduler = flattened_cfg["lr_scheduler"]
         self.total_epochs = flattened_cfg["total_epochs"]
-        self.validation_interval = flattened_cfg["validation_interval"]
         self.loss_type = flattened_cfg["loss_type"]
-        self.use_wandb = flattened_cfg["use_wandb"]
-        self.stats_path = flattened_cfg["stats_path"]
         self.enable_val = flattened_cfg["enable_val"]
+        self.validation_interval = flattened_cfg["validation_interval"]
+        self.dataset_dir = flattened_cfg["dataset_dir"]
+        self.train_dir = flattened_cfg["train_dir"]
+        self.val_dir = flattened_cfg["val_dir"]
+        self.stats_path = flattened_cfg["stats_path"]
+        self.preprocess_config_path = flattened_cfg["preprocess_config_path"]
 
 def _to_dict_flatten(data):
     """
