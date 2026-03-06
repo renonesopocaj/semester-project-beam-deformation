@@ -65,7 +65,7 @@ class Preprocessor(ABC):
         """
         torch.manual_seed(cfg.seed)
         filenames = list(Path(graphs_dir).glob("*.pt"))
-
+        split_idx_edge = 9 if cfg.rest_minus_nonrest_pos else 6
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
@@ -123,7 +123,7 @@ class Preprocessor(ABC):
                 self.categorical_node_features.append(boundary_condition)
                 # concatenate _x, _v, rest_pos_x, _node_force and optionally x_minus_u
                 self.valued_node_features.append(build_valued_node_features(_x, _v, rest_pos_x, _node_force,
-                                                                            cfg.x_minus_u))
+                                                                            cfg.rest_minus_nonrest_pos))
                 self.edge_features.append(build_edge_features(_x, rest_pos_x, graph.edge_index,
                                                               cfg.rest_minus_nonrest_pos))
                 # Appends and creates PyG data object for both val and train
@@ -132,14 +132,14 @@ class Preprocessor(ABC):
                                        all_node_force, rest_pos_x, _categorical_node_attr)
 
         # --- Open: All these do nothing if split NOT train ---
-        self._compute_stats_train(cfg)  # if val doesn't do anything
+        self._compute_stats_train(cfg, split_idx_edge)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
         self._normalize_assign_features_train()
         # Save all processed data (in all cases)
         self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
 
     @abstractmethod
-    def _compute_stats_train(self, cfg):
+    def _compute_stats_train(self, cfg, split_idx_edge):
         raise NotImplementedError("compute_stats_train")
 
     @abstractmethod
@@ -189,14 +189,15 @@ class TrainPreprocessor(Preprocessor):
             json.dump(stats, f, indent=4)
         print(f"Stats saved to {stats_dir / 'stats.json'}")
 
-    def _compute_stats_train(self, cfg):
+    def _compute_stats_train(self, cfg, split_idx_edge):
         # Compute statistics
+        PLACEHOLDER_ALL_ISOTROPIC = self.valued_node_features[0].shape[1]
         print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
-        self.node_stats = self.normalizer.compute_stats(self.valued_node_features)
+        self.node_stats = self.normalizer.compute_stats(self.valued_node_features, PLACEHOLDER_ALL_ISOTROPIC)
         print(f"edge_features.shape = {self.edge_features[0].shape}")
-        self.edge_stats = self.normalizer.compute_stats(self.edge_features)
+        self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
         print(f"targets.shape = {self.targets[0].shape}")
-        self.target_stats = self.normalizer.compute_stats(self.targets)
+        self.target_stats = self.normalizer.compute_stats(self.targets, 0)
 
     def _load_stats(self, cfg):
         pass
@@ -244,7 +245,7 @@ class ValPreprocessor(Preprocessor):
         self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
         self.save_dir_train = save_dir_train
 
-    def _compute_stats_train(self, cfg):
+    def _compute_stats_train(self, cfg, split_idx_edge):
         pass
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
@@ -261,9 +262,9 @@ class ValPreprocessor(Preprocessor):
 
     def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr):
         # Use precomputed stats for validation
-        _vector_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
+        _numerical_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
         edge_attr_norm = self.normalizer.normalize(_edge_attr, self.edge_stats)
-        node_attr = torch.concat([_categorical_node_attr, _vector_node_attr_norm], dim=1)
+        node_attr = torch.concat([_categorical_node_attr, _numerical_node_attr_norm], dim=1)
         return node_attr, edge_attr_norm
 
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
@@ -306,7 +307,7 @@ class ValPreprocessor(Preprocessor):
         )
 
 
-@hydra.main(version_base=None, config_path="../../conf", config_name="preprocess")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="preprocess")
 def main(cfg):
     """
     Args:

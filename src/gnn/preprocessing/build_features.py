@@ -37,9 +37,9 @@ def build_valued_node_features(x, v, u, node_force, rest_minus_nonrest_pos):
     """
     if rest_minus_nonrest_pos:
         x_minus_u = x - u
-        node_attr = torch.concat([x, v, u, node_force, x_minus_u], dim=1)
+        node_attr = torch.concat([x, v, u, node_force, x_minus_u], dim=1) # (15)
     else:
-        node_attr = torch.concat([x, v, u, node_force], dim=1)
+        node_attr = torch.concat([x, v, u, node_force], dim=1) # (12)
     return node_attr
 
 
@@ -68,9 +68,9 @@ def build_edge_features(x, u, edge_index, rest_minus_nonrest_pos_edge):
         xij_minus_uij = xij - uij
         xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
         # (N, 12, 1)
-        edge_attr = torch.concat([xij, xij_norm, uij, uij_norm, xij_minus_uij, xij_minus_uij_norm], dim=1)
+        edge_attr = torch.concat([xij, uij, xij_minus_uij, xij_norm, uij_norm, xij_minus_uij_norm], dim=1)
     else:
-        edge_attr = torch.concat([xij, xij_norm, uij, uij_norm], dim=1) # (N, 8, 1)
+        edge_attr = torch.concat([xij, uij, xij_norm, uij_norm], dim=1) # (N, 8, 1)
     return edge_attr
 
 
@@ -97,25 +97,3 @@ def compute_von_mises_3d(stress_9):
             + 6.0 * (sxy ** 2 + syz ** 2 + sxz ** 2)
     )
     return torch.sqrt(vm) # (N,)
-
-
-def volume(V, T):
-    """
-    FIXME: take a look at it and understand it
-    Calculate volumes of tetrahedra.
-
-    Args:
-        V: torch.Tensor
-            Vertex positions (N, 3)
-        T: torch.Tensor
-            Tetrahedra connectivity (M, 4)
-
-    Returns: torch.Tensor
-        Volumes for each tetrahedron (M,)
-    """
-    a = V[T[:, 0], :]
-    b = V[T[:, 1], :]
-    c = V[T[:, 2], :]
-    d = V[T[:, 3], :]
-    vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
-    return vols

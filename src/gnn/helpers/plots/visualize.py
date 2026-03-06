@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import imageio
 import torch
-from src.gnn.preprocessing.build_features import volume
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
@@ -184,3 +183,23 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
     shutil.rmtree(temp_dir)
     if verbose:
         print("Done.")
+
+def volume(V, T):
+    """
+    Calculate volumes of tetrahedra.
+
+    Args:
+        V: torch.Tensor
+            Vertex positions (N, 3)
+        T: torch.Tensor
+            Tetrahedra connectivity (M, 4)
+
+    Returns: torch.Tensor
+        Volumes for each tetrahedron (M,)
+    """
+    a = V[T[:, 0], :]
+    b = V[T[:, 1], :]
+    c = V[T[:, 2], :]
+    d = V[T[:, 3], :]
+    vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
+    return vols

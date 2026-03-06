@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import torch
 from src.gnn.preprocessing.stats import Stats
+import numpy as np
 
 EPS = 1e-8
 
@@ -51,41 +52,63 @@ class Normalizer(ABC):
         return tensor * (stats.std + EPS) + stats.mean
 
     @abstractmethod
-    def compute_stats(self, tensor_list):
+    def compute_stats(self, tensor_list, split_idx):
         raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
 
 class ZIsotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list):
+    def compute_stats(self, tensor_list, split_idx):
         """
         Each feature has 3 coordinates to sum along
 
         Args:
-            tensor_list: List[torch.tensor]
+            tensor_list: List[torch.tensor] tensors with shape (N, #features)
         :return:
         """
-        sum_val = 0
-        sum_sq = 0
-        count = 0
+        assert split_idx % 3 == 0
+
+        sum_val = torch.zeros(tensor_list[0].shape[1],device=tensor_list[0].device, dtype=tensor_list[0].dtype)
+        sum_sq = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+        count = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+
         for tensor in tensor_list:
-            # sum across first dimension, i.e. (N, 3, 4) --> (4) tensor of means (for each feature, the mean along all
-            # coordinates)
-            sum_val += tensor.sum(dim=(0, 1))
-            sum_sq += (tensor ** 2).sum(dim=(0,1))
-            count += tensor.shape[0] * 3 # count coordinates (3)
+            # sum across first dimension, i.e. (N, #features) --> (#features) tensor of means (for each feature,
+            # the mean along all coordinates)
+            sum_val += tensor.sum(dim=0)
+            sum_sq += (tensor ** 2).sum(dim=0)
+            count += tensor.shape[0]
+
+        for i in range(0, split_idx, 3):
+            pooled_sum = sum_val[i] + sum_val[i + 1] + sum_val[i + 2]
+            pooled_sum_sq = sum_sq[i] + sum_sq[i + 1] + sum_sq[i + 2]
+            pooled_count = count[i] * 3
+
+            sum_val[i] = pooled_sum
+            sum_val[i + 1] = pooled_sum
+            sum_val[i + 2] = pooled_sum
+
+            sum_sq[i] = pooled_sum_sq
+            sum_sq[i + 1] = pooled_sum_sq
+            sum_sq[i + 2] = pooled_sum_sq
+
+            count[i] = pooled_count
+            count[i + 1] = pooled_count
+            count[i + 2] = pooled_count
+
         mean = sum_val / count
         var = (sum_sq / count) - (mean ** 2)
         std = torch.sqrt(var)
+
         return Stats(mean=mean, std=std)
 
 class ZAnisotropicZNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list):
+    def compute_stats(self, tensor_list, split_idx):
         """
         Compute mean and std statistics from a list of tensors.
 
         Args:
-            tensor_list: list[torch.Tensor]
+            tensor_list: list[torch.Tensor] (N, #features)
                 a list of tensors
 
         :return Stats object (mean: torch.Tensor, std: torch.Tensor)
@@ -94,8 +117,7 @@ class ZAnisotropicZNormalizer(Normalizer):
         sum_sq = 0
         count = 0
         for tensor in tensor_list:
-            # sum across first dimension, i.e. (N, 3, 4) --> (3, 4) tensor of means (for each coordinate, the mean of
-            # feature)
+            # tensor has shape (N, #features)
             sum_val += tensor.sum(dim=0)
             sum_sq += (tensor ** 2).sum(dim=0)
             count += tensor.shape[0]
@@ -106,44 +128,86 @@ class ZAnisotropicZNormalizer(Normalizer):
 
 class RobustIsotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list):
+    def compute_stats(self, tensor_list, split_idx):
         """
-        Compute median and IQR pooling across all coordinates (isotropic).
-        Mirrors ZIsotropicNormalizer but uses median/IQR instead of mean/std.
-
         Args:
             tensor_list: list[torch.Tensor]
-                a list of tensors, each (N, ..., F) where F is the feature dim
+                list of tensors with shape (N, F)
+            split_idx: int
+                first split_idx features are grouped in xyz triplets
 
         return: Stats
-            Stats with mean=median, std=IQR, both shape (F,)
+            robust stats with isotropic pooling on triplets
         """
-        all_data = torch.cat(tensor_list, dim=0)
-        flat = all_data.reshape(-1, all_data.shape[-1])
-        median = torch.quantile(flat, 0.5, dim=0)
-        q1 = torch.quantile(flat, 0.25, dim=0)
-        q3 = torch.quantile(flat, 0.75, dim=0)
-        iqr = q3 - q1
-        return Stats(mean=median, std=iqr)
+        first_tensor = tensor_list[0]
+        num_features = first_tensor.shape[1]
 
+        assert split_idx % 3 == 0, "split_idx must be divisible by 3"
+
+        mean_np = np.zeros(num_features, dtype=np.float64)
+        std_np = np.zeros(num_features, dtype=np.float64)
+
+        for i in range(0, split_idx, 3):
+            pooled_values = []
+            for tensor in tensor_list:
+                pooled_values.append(tensor[:, i:i + 3].detach().cpu().reshape(-1).numpy())
+            pooled_values = np.concatenate(pooled_values, axis=0)
+
+            median = np.quantile(pooled_values, 0.5)
+            q1 = np.quantile(pooled_values, 0.25)
+            q3 = np.quantile(pooled_values, 0.75)
+            iqr = q3 - q1
+
+            mean_np[i] = median
+            mean_np[i + 1] = median
+            mean_np[i + 2] = median
+
+            std_np[i] = iqr
+            std_np[i + 1] = iqr
+            std_np[i + 2] = iqr
+
+        for i in range(split_idx, num_features):
+            values = []
+            for tensor in tensor_list:
+                values.append(tensor[:, i].detach().cpu().numpy())
+            values = np.concatenate(values, axis=0)
+
+            median = np.quantile(values, 0.5)
+            q1 = np.quantile(values, 0.25)
+            q3 = np.quantile(values, 0.75)
+            iqr = q3 - q1
+
+            mean_np[i] = median
+            std_np[i] = iqr
+
+        mean = torch.tensor(mean_np, device=first_tensor.device, dtype=first_tensor.dtype)
+        std = torch.tensor(std_np, device=first_tensor.device, dtype=first_tensor.dtype)
+
+        return Stats(mean=mean, std=std)
 
 class RobustAnisotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list):
+    def compute_stats(self, tensor_list, split_idx):
         """
-        Compute per-coordinate median and IQR (anisotropic).
-        Mirrors ZAnisotropicZNormalizer but uses median/IQR instead of mean/std.
+        Compute per-feature median and IQR using NumPy to avoid torch.quantile
+        size limitations.
 
         Args:
             tensor_list: list[torch.Tensor]
                 a list of tensors, each (N, F)
 
         return: Stats
-            Stats with mean=median, std=IQR, both shape matching all dims except dim 0
+            Stats with mean=median, std=IQR
         """
-        all_data = torch.cat(tensor_list, dim=0)
-        median = torch.quantile(all_data, 0.5, dim=0)
-        q1 = torch.quantile(all_data, 0.25, dim=0)
-        q3 = torch.quantile(all_data, 0.75, dim=0)
-        iqr = q3 - q1
-        return Stats(mean=median, std=iqr)
+        first_tensor = tensor_list[0]
+        all_data_np = np.concatenate([tensor.detach().cpu().numpy() for tensor in tensor_list], axis=0)
+
+        median_np = np.quantile(all_data_np, 0.5, axis=0)
+        q1_np = np.quantile(all_data_np, 0.25, axis=0)
+        q3_np = np.quantile(all_data_np, 0.75, axis=0)
+        iqr_np = q3_np - q1_np
+
+        mean = torch.tensor(median_np, device=first_tensor.device, dtype=first_tensor.dtype)
+        std = torch.tensor(iqr_np, device=first_tensor.device, dtype=first_tensor.dtype)
+
+        return Stats(mean=mean, std=std)
