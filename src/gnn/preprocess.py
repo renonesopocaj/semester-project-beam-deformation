@@ -322,6 +322,9 @@ def main(cfg):
     OmegaConf.save(cfg, save_dir / "config.yaml")
     save_subdir = (f"{cfg_obj.normalizer_method}_{'isotropic' if cfg_obj.isotropic_normalizer is True else 'anisotropic'}_"
                    f"{'miseslog' if cfg_obj.mises_log is True else 'nolog'}")
+    dataset_dir = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, dataset_dir / "config.yaml")
     save_dir_train = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "train"
     save_dir_test = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "test"
     save_dir_val = Path(cfg_obj.save_dir) / save_subdir / cfg_obj.dataset_size / "val"
