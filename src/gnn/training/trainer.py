@@ -86,6 +86,7 @@ class Trainer:
         self.train_epoch_loss_history, self.train_epoch_mae_history = [], []
         self.val_epoch_loss_history, self.val_epoch_mae_history = [], []
         self.val_epochs_history = []
+        self.val_rollout_error_history = []
         self.train_component_loss_history = {target_name: [] for target_name in self.target_names}
         self.train_component_mae_history = {target_name: [] for target_name in self.target_names}
         self.val_component_loss_history = {target_name: [] for target_name in self.target_names}
@@ -214,9 +215,34 @@ class Trainer:
 
         return {metric_name: float(np.mean(metric_values)) for metric_name, metric_values in aggregated_metrics.items()}
 
+    def _run_rollout(self, data_loader, node_stats, edge_stats, target_stats, dt):
+        """
+        Args:
+            data_loader: pyg.DataLoader
+                Dataloader used for rollout evaluation.
+            node_stats: Stats
+                stats object of node features
+            edge_stats: Stats
+                stats object of edge features
+            target_stats: Stats
+                stats object of target
+            dt: float
+                time interval
+            return: tuple
+                Ground-truth rollout, predicted rollout, and final-step rollout MAE.
+        """
+        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=data_loader, device=self.device,
+                                                node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
+                                                dt=dt, skip_first=0, rollout_steps=999999,
+                                                normalizer=self.used_dataset_normalizer,
+                                                rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
+        mae = lambda target, pred: torch.mean(torch.abs(target - pred))
+        rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t).item()
+        return true_rollout, pred_rollout, rollout_error
+
     def validation(self, validation_loader, node_stats, edge_stats, target_stats, dt, epoch):
         """
-        Perform validation rollout and create visualizations.
+        Perform validation metrics tracking during training.
 
         Args:
             validation_loader: pyg.DataLoader
@@ -241,37 +267,66 @@ class Trainer:
         for target_name in self.target_names:
             self.val_component_loss_history[target_name].append(validation_metrics[f"{target_name}_loss"])
             self.val_component_mae_history[target_name].append(validation_metrics[f"{target_name}_mae"])
-        # Perform model rollout testing
-        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=validation_loader, device=self.device,
-                                                node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
-                                                dt=dt, skip_first=0, rollout_steps=999999,
-                                                normalizer=self.used_dataset_normalizer,
-                                                rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
-        # Compute rollout error with MAE
-        mae = lambda target, pred: torch.mean(torch.abs(target - pred))
-        rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t)
-        # Create visualizations
-        gif_path = self.model_dir / f"Epoch{epoch}_beam_comparison.gif"
-        volume_png_path = self.model_dir / f"Epoch{epoch}_volume_change.png"
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
-                                 out_gif=gif_path, fps=4)
-        plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,
-                                    epoch=epoch)
+        _, _, rollout_error = self._run_rollout(validation_loader, node_stats, edge_stats, target_stats, dt)
+        self.val_rollout_error_history.append(rollout_error)
         # Log to wandb
         data = {"val/loss": validation_metrics["loss"],
                 "val/mae": validation_metrics["mae"],
-                "val/gen_rollout_error": rollout_error.item(),
+                "val/gen_rollout_error": rollout_error,
                 "val/acc_loss": validation_metrics["acc_loss"],
-                "val/stress_loss": validation_metrics["stress_loss"],
-                "val/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                "val/volume_change_png": wandb.Image(str(volume_png_path))}
+                "val/stress_loss": validation_metrics["stress_loss"]}
         for target_name in self.target_names:
             data[f"val/{target_name}_loss"] = validation_metrics[f"{target_name}_loss"]
             data[f"val/{target_name}_mae"] = validation_metrics[f"{target_name}_mae"]
         self.run.log(data, step=epoch)
         # Store rollout error
-        self.rollout_all_step_error = rollout_error.item()
+        self.rollout_all_step_error = rollout_error
+
+    def final_evaluation(self, evaluation_loader, node_stats, edge_stats, target_stats, dt, split_name):
+        """
+        Args:
+            evaluation_loader: pyg.DataLoader
+                Dataloader used for the final evaluation split.
+            node_stats: Stats
+                stats object of node features
+            edge_stats: Stats
+                stats object of edge features
+            target_stats: Stats
+                stats object of target
+            dt: float
+                time interval
+            split_name: str
+                Name used for files and logging.
+            return: float
+                Final rollout MAE on the evaluation split.
+        """
+        self.model.eval()
+        target_stats.to(self.device)
+        evaluation_metrics = self._compute_validation_epoch_metrics(evaluation_loader)
+        true_rollout, pred_rollout, rollout_error = self._run_rollout(evaluation_loader, node_stats, edge_stats,
+                                                                      target_stats, dt)
+
+        gif_path = self.model_dir / f"{split_name}_beam_comparison.gif"
+        volume_png_path = self.model_dir / f"{split_name}_volume_change.png"
+        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
+                                 out_gif=gif_path, fps=4)
+        plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,
+                                    output_prefix=split_name)
+
+        data = {f"{split_name}/loss": evaluation_metrics["loss"],
+                f"{split_name}/mae": evaluation_metrics["mae"],
+                f"{split_name}/gen_rollout_error": rollout_error,
+                f"{split_name}/acc_loss": evaluation_metrics["acc_loss"],
+                f"{split_name}/stress_loss": evaluation_metrics["stress_loss"],
+                f"{split_name}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
+                f"{split_name}/volume_change_png": wandb.Image(str(volume_png_path))}
+        for target_name in self.target_names:
+            data[f"{split_name}/{target_name}_loss"] = evaluation_metrics[f"{target_name}_loss"]
+            data[f"{split_name}/{target_name}_mae"] = evaluation_metrics[f"{target_name}_mae"]
+        self.run.log(data)
+        self.rollout_all_step_error = rollout_error
+        return rollout_error
 
     def save_model(self, epochnum):
         """

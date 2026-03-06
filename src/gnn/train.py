@@ -23,11 +23,11 @@ def train(cfg, preprocess_cfg):
     print("Train dataset:")
     train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
+    validation_dataloader = None
     if cfg.enable_val:
-        print("Test dataset:")
+        print("Validation dataset:")
         validation_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
         validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False)
-    # Test samples: {len(test_dataset)}
 
     # se rest_minus_nonrest true, cambia
     node_channels = preprocess_cfg.node_channels
@@ -75,18 +75,21 @@ def train(cfg, preprocess_cfg):
         if epoch % cfg.validation_interval == 0 and cfg.enable_val:
             trainer.validation(validation_loader=validation_dataloader, node_stats=node_stats, edge_stats=edge_stats,
                                target_stats=target_stats, dt=dt, epoch=epoch)
-            # trainer.save_model(epochnum=epoch)
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
                                    "rollout_error": f"{trainer.rollout_all_step_error:.6f}"})
             print(f"\nEpoch {epoch}: Train Loss = {trainer.loss:.6f}, "
-                  f"Rollout Error = {trainer.rollout_all_step_error:.6f}")
+                  f"Validation Rollout Error = {trainer.rollout_all_step_error:.6f}")
         else:
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
-            if idx == cfg.total_epochs - 1:
-                trainer.save_model(epochnum=epoch)
         idx += 1
 
     plot_training_history(trainer)
+    if cfg.enable_val and validation_dataloader is not None:
+        final_rollout_error = trainer.final_evaluation(evaluation_loader=validation_dataloader, node_stats=node_stats,
+                                                       edge_stats=edge_stats, target_stats=target_stats, dt=dt,
+                                                       split_name="final_eval")
+        print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
+    trainer.save_model(epochnum=cfg.total_epochs - 1)
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")

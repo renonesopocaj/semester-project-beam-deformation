@@ -77,7 +77,8 @@ def _compute_limits(all_values, error_mode):
     return 0.0, vmax
 
 
-def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel):
+def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel, train_label="Train",
+                      val_label="Validation"):
     """
     Args:
         ax: matplotlib.axes.Axes
@@ -97,9 +98,9 @@ def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, ti
         return: None
             Draws a single epoch curve on the axis.
     """
-    ax.plot(train_epochs, train_values, label="Train", linewidth=2.0)
+    ax.plot(train_epochs, train_values, label=train_label, linewidth=2.0)
     if len(val_values) > 0:
-        ax.plot(val_epochs, val_values, label="Validation", linewidth=2.0, marker="o")
+        ax.plot(val_epochs, val_values, label=val_label, linewidth=2.0, marker="o")
     ax.set_xlabel("Epoch")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -107,7 +108,8 @@ def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, ti
     ax.legend()
 
 
-def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title, ylabel, output_path):
+def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title, ylabel, output_path,
+                      train_label="Train", val_label="Validation"):
     """
     Args:
         train_epochs: np.ndarray
@@ -128,7 +130,7 @@ def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title,
             Saves the figure to disk.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
-    _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel)
+    _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel, train_label, val_label)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
@@ -314,7 +316,7 @@ def _plot_edge_error_correlation(field_summary, output_path):
     plt.close(fig)
 
 
-def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, epoch):
+def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, output_prefix):
     """
     Args:
         true_rollout: list
@@ -323,8 +325,8 @@ def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, epoch):
             Predicted rollout graphs.
         output_dir: Path
             Directory where diagnostic artifacts will be saved.
-        epoch: int
-            Validation epoch identifier.
+        output_prefix: str
+            Prefix used for saved artifact names.
         return: None
             Saves all requested validation plots.
     """
@@ -332,11 +334,11 @@ def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, epoch):
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["absolute", "relative", "signed"]:
-            output_path = output_dir / f"Epoch{epoch}_{field_name}_{error_mode}_error.gif"
+            output_path = output_dir / f"{output_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
 
-        scatter_path = output_dir / f"Epoch{epoch}_{field_name}_prediction_vs_target.png"
-        correlation_path = output_dir / f"Epoch{epoch}_{field_name}_edge_error_correlation.png"
+        scatter_path = output_dir / f"{output_prefix}_{field_name}_prediction_vs_target.png"
+        correlation_path = output_dir / f"{output_prefix}_{field_name}_edge_error_correlation.png"
         field_summary = rollout_summary["fields"][field_name]
         _plot_prediction_target_scatter(field_summary, scatter_path)
         _plot_edge_error_correlation(field_summary, correlation_path)
@@ -363,12 +365,21 @@ def plot_training_history(trainer):
     _save_epoch_curve(train_epochs, np.asarray(trainer.train_epoch_mae_history), val_epochs,
                       np.asarray(trainer.val_epoch_mae_history), "MAE vs Epoch", "MAE",
                       model_dir / "mae_vs_epoch.png")
+    if len(trainer.val_rollout_error_history) > 0:
+        _save_epoch_curve(val_epochs, np.asarray(trainer.val_rollout_error_history), np.asarray([]), np.asarray([]),
+                          "Rollout Error vs Epoch", "Rollout Error", model_dir / "rollout_error_vs_epoch.png",
+                          train_label="Validation")
 
-    summary_figure, axes = plt.subplots(1, 2, figsize=(14, 5))
+    summary_figure, axes = plt.subplots(1, 3, figsize=(18, 5))
     _draw_epoch_curve(axes[0], train_epochs, np.asarray(trainer.train_epoch_loss_history), val_epochs,
                       np.asarray(trainer.val_epoch_loss_history), "Loss vs Epoch", "Loss")
     _draw_epoch_curve(axes[1], train_epochs, np.asarray(trainer.train_epoch_mae_history), val_epochs,
                       np.asarray(trainer.val_epoch_mae_history), "MAE vs Epoch", "MAE")
+    if len(trainer.val_rollout_error_history) > 0:
+        _draw_epoch_curve(axes[2], val_epochs, np.asarray(trainer.val_rollout_error_history), np.asarray([]),
+                          np.asarray([]), "Rollout Error vs Epoch", "Rollout Error", train_label="Validation")
+    else:
+        axes[2].axis("off")
     summary_figure.tight_layout()
     summary_figure.savefig(model_dir / "training_history.png")
     plt.close(summary_figure)
