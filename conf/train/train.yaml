@@ -1,13 +1,13 @@
 defaults:
-  # FIXME: these should be taken automatically once I selecte the desired folder
-  dataset_dir: "/" # FIXME: dir of dataset general, from there in the code deduce train vs val vs test and
-  # FIXME: obtain the config.yaml to read it and use its attributes for train
-  seed: 42
-  use_wandb: True
-  computational: default
-  model: meshgraphnet
-  training: training
-  validation: validation
+  - computational: default
+  - model: meshgraphnet
+  - training: training
+  - validation: validation
+  - data: default
+  - _self_
+
+seed: 42
+use_wandb: true
 
 hydra:
   run:

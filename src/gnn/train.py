@@ -8,7 +8,7 @@ from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDatase
 from src.gnn.models.trainer import Trainer
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-import yaml
+import hydra
 from src.gnn.helpers.misc.yamlobject import TrainYaml
 
 def train(cfg):
@@ -114,9 +114,18 @@ def plot_training_history(trainer):
     # Display the training history plot
     display(Image(filename='training_history.png'))
 
+
+@hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
+def main(cfg):
+    """
+    Args:
+        cfg: omegaconf.DictConfig
+            Hydra-composed configuration. Run with --multirun to sweep over multiple values,
+            e.g.: python -m src.gnn.train --multirun training.lr=1e-3,5e-4,1e-4
+    """
+    train_cfg = TrainYaml(cfg)
+    train(train_cfg)
+
+
 if __name__ == "__main__":
-    YAML_PATH = "conf/train.yaml"
-    with open(YAML_PATH) as f:
-        cfg = yaml.safe_load(f)
-    cfg = TrainYaml(cfg)
-    train(cfg)
+    main()
