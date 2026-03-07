@@ -1,3 +1,4 @@
+import os
 import yaml
 import torch
 from torch_geometric.loader import DataLoader
@@ -105,6 +106,14 @@ def main(cfg):
                                              edge_stats=edge_stats, target_stats=target_stats, dt=dt,
                                              split_name="test")
     print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
+    print("Train-sample dataset (seen trajectory):")
+    train_files = sorted([f for f in os.listdir(cfg.train_dir) if f.startswith("graph_") and f.endswith(".pt")])
+    train_sample_data = torch.load(os.path.join(cfg.train_dir, train_files[0]), map_location=device, weights_only=False)
+    train_sample_dataloader = DataLoader(train_sample_data, batch_size=1, shuffle=False)
+    train_rollout_error = trainer.final_test(test_dataloader=train_sample_dataloader, node_stats=node_stats,
+                                             edge_stats=edge_stats, target_stats=target_stats, dt=dt,
+                                             split_name="train_sample")
+    print(f"\nTrain-sample rollout error: {train_rollout_error:.6f}")
     trainer.save_model(epochnum=cfg.total_epochs - 1)
 
 
