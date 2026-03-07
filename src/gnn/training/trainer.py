@@ -193,11 +193,11 @@ class Trainer:
         if self.scheduler is not None:
             self.scheduler.step(metric=epoch_loss, epoch=numepoch)
             data["train/lr"] = self.scheduler.get_last_lr()[0]
-            if self.scheduler.should_save():
+            if self.scheduler.save:
                 print(f"Epoch {numepoch}: saving checkpoint before cosine warm-restart.")
                 self.save_model(epochnum=numepoch)
-                self.scheduler.reset_save_flag()
-            self.should_stop = self.scheduler.should_stop()
+                self.scheduler.save = False
+            self.should_stop = self.scheduler.stop
 
         self.run.log(data, step=numepoch)
 

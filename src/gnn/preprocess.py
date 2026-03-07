@@ -314,6 +314,7 @@ def main(cfg):
     """
     cfg_obj = PreprocessYaml(cfg)
     print(f"Preprocessing {cfg_obj.dataset_size} dataset\n" + "=" * 60)
+    print(f"\tSave dir of config.yaml = {cfg_obj.save_dir}")
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, save_dir / "config.yaml")
@@ -322,6 +323,7 @@ def main(cfg):
     offset_str = '_offset' if cfg_obj.rest_minus_nonrest_pos else 'nooffset'
     processed_dir_name = f"{cfg_obj.normalizer_method}{isotropic_str}{miseslog_str}{offset_str}"
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
+    print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
 
     # note: this is hardcoded to be quicker, but I could have just saved the shape[0] of the node and edge tensor

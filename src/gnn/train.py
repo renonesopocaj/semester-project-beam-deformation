@@ -49,7 +49,7 @@ def train(cfg, preprocess_cfg, device):
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg, cfg.total_epochs)
+    scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg)
     trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=cfg.use_wandb,
                       preprocess_cfg=preprocess_cfg, scheduler=scheduler)
 
@@ -122,7 +122,7 @@ def main(cfg):
     train_sample_dataloader = DataLoader(train_sample_data, batch_size=1, shuffle=False)
     train_rollout_error = trainer.final_test(test_dataloader=train_sample_dataloader, node_stats=node_stats,
                                              edge_stats=edge_stats, target_stats=target_stats, dt=dt,
-                                             split_name="train_sample")
+                                             split_name="sanity")
     print(f"\nTrain-sample rollout error: {train_rollout_error:.6f}")
     trainer.save_model(epochnum=cfg.total_epochs - 1)
 

@@ -1,32 +1,62 @@
 import torch
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts
+from abc import ABC, abstractmethod
 
-
-class SchedulerWrapper:
+class SchedulerWrapper(ABC):
     """
-    Thin wrapper around a PyTorch LR scheduler that provides a uniform interface
+    Wrapper around a PyTorch LR scheduler that provides a uniform interface
     for all three strategies (step, plateau, cosine) and exposes early-stopping
     and pre-restart-save signals.
 
     Attributes:
         scheduler_type: str
             One of "step", "plateau", "cosine".
-        _scheduler: torch.optim.lr_scheduler._LRScheduler or ReduceLROnPlateau
-        _early_stopping_patience: int
+        scheduler: torch.optim.lr_scheduler._LRScheduler or ReduceLROnPlateau
+        early_stopping_patience: int
             Epochs without improvement before setting the stop flag (plateau only).
-        _plateau_threshold: float
+        plateau_threshold: float
             Minimum relative change considered as improvement (plateau only).
-        _best_metric: float
+        best_metric: float
             Best observed metric value seen so far (plateau only).
-        _no_improve_count: int
+        no_improve_count: int
             Consecutive epochs without improvement (plateau only).
-        _stop: bool
+        stop: bool
             Whether the early-stopping criterion has been met.
-        _save: bool
+        save: bool
             Whether the model should be saved before the next cosine restart.
     """
 
-    def __init__(self, scheduler, scheduler_type, early_stopping_patience, plateau_threshold):
+    def __init__(self, scheduler):
+        """
+        Args:
+            scheduler: torch LR scheduler instance
+        """
+        self.scheduler = scheduler
+
+    @abstractmethod
+    def step(self, metric, epoch):
+        """
+        Step the underlying LR scheduler and update internal state flags.
+
+        Args:
+            metric: float
+                Validation/training metric used for plateau scheduling and
+                early-stopping decisions.
+            epoch: int
+                Current epoch index (0-based).
+        """
+        raise NotImplementedError("step in SchedulerWrapper abstract class not implemented")
+
+    def get_last_lr(self):
+        """
+        Returns:
+            list[float]: Last computed learning rate(s).
+        """
+        return self.scheduler.get_last_lr()
+
+class PlateauEarlyStoppingWrapper(SchedulerWrapper):
+
+    def __init__(self, scheduler, early_stopping_patience, plateau_threshold):
         """
         Args:
             scheduler: torch LR scheduler instance
@@ -39,83 +69,50 @@ class SchedulerWrapper:
                 Minimum relative improvement to reset early-stopping counter.
                 Only meaningful for "plateau".
         """
-        self._scheduler = scheduler
-        self.scheduler_type = scheduler_type
-        self._early_stopping_patience = early_stopping_patience
-        self._plateau_threshold = plateau_threshold
-        self._best_metric = float("inf")
-        self._no_improve_count = 0
-        self._stop = False
-        self._save = False
+        super().__init__(scheduler)
+        self.early_stopping_patience = early_stopping_patience
+        self.plateau_threshold = plateau_threshold
+        self.best_metric = float("inf")
+        self.no_improve_count = 0
+        self.stop = False
+        self.save = False
 
     def step(self, metric, epoch):
-        """
-        Step the underlying LR scheduler and update internal state flags.
-
-        For "plateau": passes `metric` to ReduceLROnPlateau and updates the
-        early-stopping counter.
-        For "cosine": detects whether the next epoch will trigger a warm restart
-        (T_cur == T_i - 1) and sets the save flag accordingly.
-        For "step": straightforward step with no metric.
-
-        Args:
-            metric: float
-                Validation/training metric used for plateau scheduling and
-                early-stopping decisions.
-            epoch: int
-                Current epoch index (0-based).
-        """
-        if self.scheduler_type == "plateau":
-            self._scheduler.step(metric)
-            # Update early-stopping counter
-            relative_improvement = (self._best_metric - metric) / (abs(self._best_metric) + 1e-9)
-            if relative_improvement > self._plateau_threshold:
-                self._best_metric = metric
-                self._no_improve_count = 0
-            else:
-                self._no_improve_count += 1
-            if self._no_improve_count >= self._early_stopping_patience:
-                self._stop = True
-
-        elif self.scheduler_type == "cosine":
-            # Detect upcoming restart before stepping: if T_cur is at the last
-            # position of the current cycle, the next step will reset to T_cur=0.
-            if self._scheduler.T_cur == self._scheduler.T_i - 1:
-                self._save = True
-            self._scheduler.step(epoch + 1)
-
-        else:  # "step"
-            self._scheduler.step()
-
-    def should_stop(self):
-        """
-        Returns:
-            bool: True if early stopping should terminate training.
-        """
-        return self._stop
-
-    def should_save(self):
-        """
-        Returns:
-            bool: True if the model should be saved at this epoch (pre-restart checkpoint).
-        """
-        return self._save
-
-    def reset_save_flag(self):
-        """Reset the pre-restart save flag after the checkpoint has been written."""
-        self._save = False
+        self.scheduler.step(metric)
+        # Update early-stopping counter
+        relative_improvement = (self.best_metric - metric) / (abs(self.best_metric) + 1e-9)
+        if relative_improvement > self.plateau_threshold:
+            self.best_metric = metric
+            self.no_improve_count = 0
+        else:
+            self.no_improve_count += 1
+        if self.no_improve_count >= self.early_stopping_patience:
+            self.stop = True
 
     def get_last_lr(self):
-        """
-        Returns:
-            list[float]: Last computed learning rate(s).
-        """
-        if self.scheduler_type == "plateau":
-            return [pg["lr"] for pg in self._scheduler.optimizer.param_groups]
-        return self._scheduler.get_last_lr()
+        return [pg["lr"] for pg in self.scheduler.optimizer.param_groups]
 
+class CosineWrapper(SchedulerWrapper):
 
-def scheduler_factory(optimizer, scheduler_cfg, total_epochs):
+    def __init__(self, scheduler):
+        super().__init__(scheduler)
+
+    def step(self, metric, epoch):
+        # Detect upcoming restart before stepping: if T_cur is at the last
+        # position of the current cycle, the next step will reset to T_cur=0.
+        if self.scheduler.T_cur == self.scheduler.T_i - 1:
+            self.save = True
+        self.scheduler.step(epoch + 1)
+
+class StepWrapper(SchedulerWrapper):
+
+    def __init__(self, scheduler):
+        super().__init__(scheduler)
+
+    def step(self, metric, epoch):
+        self.scheduler.step()
+
+def scheduler_factory(optimizer, scheduler_cfg):
     """
     Build and return a SchedulerWrapper from the scheduler config dict, or None
     if no scheduling is requested.
@@ -125,56 +122,32 @@ def scheduler_factory(optimizer, scheduler_cfg, total_epochs):
             The optimizer whose LR will be scheduled.
         scheduler_cfg: dict or None
             The `lr_scheduler` sub-dict from the training YAML.  Expected keys:
-                type: str — "step" | "plateau" | "cosine" | "none"
-                step: dict  — step_size, gamma
-                plateau: dict — factor, patience, min_lr, early_stopping_patience, threshold
-                cosine: dict  — T_0, T_mult, eta_min, save_before_restart (bool)
-        total_epochs: int
-            Total number of training epochs (used as a fallback for cosine).
+                type: str
+                    scheduler type: "step" | "plateau" | "cosine"
+                step: dict
+                    step_size, gamma
+                plateau: dict
+                    contains factor, patience, min_lr, early_stopping_patience, threshold
+                cosine: dict
+                    contains T_0, T_mult, eta_min, save_before_restart (bool)
         return: SchedulerWrapper or None
     """
-    if scheduler_cfg is None:
-        return None
-
-    sched_type = scheduler_cfg.get("type", "none")
-
-    if sched_type == "none":
-        return None
-
-    if sched_type == "step":
+    if scheduler_cfg.type == "step":
         step_cfg = scheduler_cfg["step"]
-        inner = StepLR(
-            optimizer,
-            step_size=step_cfg["step_size"],
-            gamma=step_cfg["gamma"],
-        )
-        return SchedulerWrapper(inner, "step", early_stopping_patience=0, plateau_threshold=0.0)
-
-    if sched_type == "plateau":
+        inner = StepLR(optimizer, step_size=step_cfg["step_size"], gamma=step_cfg["gamma"])
+        return StepWrapper(inner)
+    elif scheduler_cfg.type == "plateau":
         p_cfg = scheduler_cfg["plateau"]
-        inner = ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=p_cfg["factor"],
-            patience=p_cfg["patience"],
-            threshold=p_cfg["threshold"],
-            min_lr=p_cfg["min_lr"],
-        )
-        return SchedulerWrapper(
-            inner,
-            "plateau",
-            early_stopping_patience=p_cfg["early_stopping_patience"],
-            plateau_threshold=p_cfg["threshold"],
-        )
-
-    if sched_type == "cosine":
+        inner = ReduceLROnPlateau(optimizer, mode="min", factor=p_cfg["factor"], patience=p_cfg["patience"],
+                                  threshold=p_cfg["threshold"], min_lr=p_cfg["min_lr"])
+        return PlateauEarlyStoppingWrapper(inner,
+                                           early_stopping_patience=p_cfg["early_stopping_patience"],
+                                           plateau_threshold=p_cfg["threshold"])
+    elif scheduler_cfg.type == "cosine":
         c_cfg = scheduler_cfg["cosine"]
-        inner = CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=c_cfg["T_0"],
-            T_mult=c_cfg["T_mult"],
-            eta_min=c_cfg["eta_min"],
-        )
-        return SchedulerWrapper(inner, "cosine", early_stopping_patience=0, plateau_threshold=0.0)
-
-    raise ValueError(f"Unknown lr_scheduler type: '{sched_type}'. Choose from 'step', 'plateau', 'cosine', 'none'.")
+        inner = CosineAnnealingWarmRestarts(optimizer, T_0=c_cfg["T_0"], T_mult=c_cfg["T_mult"],
+                                            eta_min=c_cfg["eta_min"])
+        return CosineWrapper(inner)
+    else:
+        raise ValueError(f"Unknown lr_scheduler type: '{scheduler_cfg.type}'. Choose from "
+                         f"'step' | 'plateau' | 'cosine'")
