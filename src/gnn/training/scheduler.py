@@ -56,6 +56,29 @@ class SchedulerWrapper(ABC):
         """
         return self.scheduler.get_last_lr()
 
+    def state_dict(self):
+        """
+        Args:
+            return: dict
+                Serializable snapshot of the wrapper and the inner scheduler.
+        """
+        return {
+            "inner": self.scheduler.state_dict(),
+            "save": self.save,
+            "stop": self.stop,
+        }
+
+    def load_state_dict(self, state):
+        """
+        Args:
+            state: dict
+                State previously returned by state_dict().
+            return: None
+        """
+        self.scheduler.load_state_dict(state["inner"])
+        self.save = state["save"]
+        self.stop = state["stop"]
+
 class PlateauEarlyStoppingWrapper(SchedulerWrapper):
 
     def __init__(self, scheduler, early_stopping_patience, plateau_threshold):
@@ -93,6 +116,28 @@ class PlateauEarlyStoppingWrapper(SchedulerWrapper):
 
     def get_last_lr(self):
         return [pg["lr"] for pg in self.scheduler.optimizer.param_groups]
+
+    def state_dict(self):
+        """
+        Args:
+            return: dict
+                Serializable snapshot including early-stopping counters.
+        """
+        base = super().state_dict()
+        base["best_metric"] = self.best_metric
+        base["no_improve_count"] = self.no_improve_count
+        return base
+
+    def load_state_dict(self, state):
+        """
+        Args:
+            state: dict
+                State previously returned by state_dict().
+            return: None
+        """
+        super().load_state_dict(state)
+        self.best_metric = state["best_metric"]
+        self.no_improve_count = state["no_improve_count"]
 
 class CosineWrapper(SchedulerWrapper):
 

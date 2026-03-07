@@ -1,6 +1,8 @@
 lr: 5e-5
 total_epochs: 50
 loss_type: "mse"
+resume_from: null
+checkpoint_interval: 50
 
 lr_scheduler:
   type: "step"   # "step" | "plateau" | "cosine" | "none"

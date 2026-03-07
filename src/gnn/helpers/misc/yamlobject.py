@@ -106,6 +106,8 @@ class TrainYaml:
         self.test_dir = flattened_cfg["test_dir"]
         self.stats_path = flattened_cfg["stats_path"]
         self.preprocess_config_path = flattened_cfg["preprocess_config_path"]
+        self.resume_from = flattened_cfg.get("resume_from")
+        self.checkpoint_interval = flattened_cfg.get("checkpoint_interval")
 
 def _to_dict_flatten(data):
     """

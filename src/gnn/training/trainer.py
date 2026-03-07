@@ -1,5 +1,3 @@
-import os
-import time
 from pathlib import Path
 
 import numpy as np
@@ -45,48 +43,59 @@ class Trainer:
     train_history: list[float]
     train_acc_history: list[float]
     train_stress_history: list[float]
-    cur_dir: str
     model_dir: Path
-    path: Path
     loss: float
     rollout_all_step_error: float
     epoch_losses: list[float]
     train_acc_loss: list[float]
     train_stress_loss: list[float]
 
-    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler):
+    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler, training_id, run, model_root):
         """
+        Pure constructor: receives all identity and external resources from the
+        caller.  Does NOT generate training_id, call wandb.init(), or decide
+        its own directory.
+
         Args:
-            model:
-                The GNN model to be trained
-            optimizer:
-                optimizer for training
-            device:
-                Target computing device (CPU/GPU)
-            loss_type: Literal["mse", "mae"]
-                Loss function type ('mse' or 'mae')
+            model: torch.nn.Module
+                The GNN model to be trained.
+            optimizer: torch.optim.Optimizer
+                Optimizer for training.
+            device: torch.device
+                Target computing device (CPU/GPU).
+            loss_type: str
+                Loss function type ('mse', 'mae', or 'huber').
             use_wandb: bool
-                Whether to use Weights & Biases for logging
-            preprocess_cfg:
-                Preprocessing configuration object
+                Whether W&B logging is enabled.
+            preprocess_cfg: object
+                Preprocessing configuration with attribute-style access.
             scheduler: SchedulerWrapper or None
-                LR scheduler wrapper; None disables scheduling entirely
+                LR scheduler wrapper; None disables scheduling entirely.
+            training_id: str
+                Stable identifier for this training session.
+            run: wandb.sdk.wandb_run.Run
+                Already-initialised W&B run (or disabled run).
+            model_root: str or pathlib.Path
+                Root directory that contains all saved-training folders.
         """
-        self.training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
+        self.training_id = training_id
         self.device = device
-        # wandb
-        self.run = wandb.init(mode="disabled") if not use_wandb else wandb.init()
-        # model, optimizer, loss, scheduler
+        self.use_wandb = use_wandb
+        self.run = run
         self.model = model
         self.optimizer = optimizer
+        self.loss_type = loss_type
         self.loss_fn = loss_factory(loss_type)
         self.scheduler = scheduler
-        # dataset-dependent stuff
-        self.used_dataset_normalizer = NormalizerFactory.create_normalizer(preprocess_cfg.normalizer_method,
-                                                                           preprocess_cfg.isotropic_normalizer)
+        self.normalizer_method = preprocess_cfg.normalizer_method
+        self.isotropic_normalizer = preprocess_cfg.isotropic_normalizer
+        self.used_dataset_normalizer = NormalizerFactory.create_normalizer(self.normalizer_method,
+                                                                           self.isotropic_normalizer)
         self.rest_minus_nonrest_pos = preprocess_cfg.displacement
         self.target_names = ["acc_x", "acc_y", "acc_z", "von_mises"]
-        # Training history
+        self.model_dir = Path(model_root) / self.training_id
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        # Accumulated training history (across all epochs)
         self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
         self.train_epoch_loss_history, self.train_epoch_mae_history = [], []
         self.val_epoch_loss_history, self.val_epoch_mae_history = [], []
@@ -96,17 +105,12 @@ class Trainer:
         self.train_component_mae_history = {target_name: [] for target_name in self.target_names}
         self.val_component_loss_history = {target_name: [] for target_name in self.target_names}
         self.val_component_mae_history = {target_name: [] for target_name in self.target_names}
-        # Create directory for saving models
-        self.cur_dir = os.getcwd()
-        self.model_dir = Path(self.cur_dir) / "saved_models" / self.training_id
-
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        # Initialize metrics
+        # Scalar metrics
         self.loss = 0.0
         self.mae = 0.0
         self.rollout_all_step_error = 0.0
         self.should_stop = False
-        # Training history for 1 epoch
+        # Per-epoch buffers (reset at end of each epoch)
         self.epoch_losses, self.train_mae_losses = [], []
         self.train_acc_loss, self.train_stress_loss = [], []
         self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
@@ -193,10 +197,6 @@ class Trainer:
         if self.scheduler is not None:
             self.scheduler.step(metric=epoch_loss, epoch=numepoch)
             data["train/lr"] = self.scheduler.get_last_lr()[0]
-            if self.scheduler.save:
-                print(f"Epoch {numepoch}: saving checkpoint before cosine warm-restart.")
-                self.save_model(epochnum=numepoch)
-                self.scheduler.save = False
             self.should_stop = self.scheduler.stop
 
         self.run.log(data, step=numepoch)
@@ -347,64 +347,4 @@ class Trainer:
         self.rollout_all_step_error = rollout_error
         return rollout_error
 
-    def save_model(self, epochnum):
-        # TODO: implement loading and saving model properly (e.g. after every 50 epoch, and then save it)
-        """
-        Save model checkpoint.
-
-        Args:
-            epochnum: int
-                number of the epoch
-        """
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        # Create filename with epoch and rollout error
-        if epochnum is not None:
-            filename = f"Epoch_{epochnum}_GenLoss_{self.rollout_all_step_error:.10f}.pth"
-        else:
-            filename = f"GenLoss_{self.rollout_all_step_error:.10f}.pth"
-        self.path = self.model_dir / filename
-        # Save complete checkpoint
-        checkpoint = {'epoch': epochnum, 'model_state_dict': self.model.state_dict(),
-                      'optimizer_state_dict': self.optimizer.state_dict(), 'loss': self.loss,
-                      'rollout_all_step_error': self.rollout_all_step_error, 'training_id': self.training_id}
-        torch.save(checkpoint, self.path)
-        print(f"Model saved to {self.path}")
-
-    def load_checkpoint(self, checkpoint_path):
-        # TODO: implement loading and saving model properly (e.g. after every 50 epoch, and then save it)
-        """
-        Load a checkpoint to resume training.
-
-        Args:
-            checkpoint_path: str
-                Path to the checkpoint file
-        Returns: int: The epoch number to resume from (checkpoint epoch + 1)
-        """
-        checkpoint_path = Path(checkpoint_path)
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        print(f"Loading checkpoint from: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-
-        # Load model and optimizer states
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-        # Restore other states
-        resume_epoch = checkpoint['epoch']
-        self.loss = checkpoint.get('loss', 0.0)
-        self.rollout_all_step_error = checkpoint.get('rollout_all_step_error', 0.0)
-
-        # Save a notes.txt file with the original training ID
-        original_training_id = checkpoint.get('training_id', 'unknown')
-        notes_path = self.model_dir / "notes.txt"
-        with open(notes_path, 'w') as f:
-            f.write(f"Resumed from checkpoint: {checkpoint_path}\n\tOriginal training ID: {original_training_id}\n"
-                    f"\tResumed at epoch: {resume_epoch}\n\tNew training ID: {self.training_id}\n")
-
-        print(f"Checkpoint loaded successfully!\nResuming from epoch: {resume_epoch}\n\tLast loss: {self.loss:.6f}"
-              f"\n\tLast rollout error: {self.rollout_all_step_error:.6f}\n\tNotes saved to: {notes_path}")
-
-        return resume_epoch
 
