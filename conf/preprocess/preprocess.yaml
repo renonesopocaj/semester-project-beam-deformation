@@ -3,7 +3,7 @@ defaults:
   - numerical: default
   - paths: single_direction_beam
   - normalizer: z_anisotropic
-  - features: rest_minus_nonrest_pos
+  - features: default
   - _self_
 
 hydra:

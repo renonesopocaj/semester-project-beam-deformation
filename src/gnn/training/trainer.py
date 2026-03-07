@@ -84,7 +84,7 @@ class Trainer:
         # dataset-dependent stuff
         self.used_dataset_normalizer = NormalizerFactory.create_normalizer(preprocess_cfg.normalizer_method,
                                                                            preprocess_cfg.isotropic_normalizer)
-        self.rest_minus_nonrest_pos = preprocess_cfg.rest_minus_nonrest_pos
+        self.rest_minus_nonrest_pos = preprocess_cfg.displacement
         self.target_names = ["acc_x", "acc_y", "acc_z", "von_mises"]
         # Training history
         self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
