@@ -54,7 +54,7 @@ class Trainer:
     train_acc_loss: list[float]
     train_stress_loss: list[float]
 
-    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg):
+    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler):
         """
         Args:
             model:
@@ -67,15 +67,20 @@ class Trainer:
                 Loss function type ('mse' or 'mae')
             use_wandb: bool
                 Whether to use Weights & Biases for logging
+            preprocess_cfg:
+                Preprocessing configuration object
+            scheduler: SchedulerWrapper or None
+                LR scheduler wrapper; None disables scheduling entirely
         """
         self.training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
         self.device = device
         # wandb
         self.run = wandb.init(mode="disabled") if not use_wandb else wandb.init()
-        # model, optimizer, loss
+        # model, optimizer, loss, scheduler
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_factory(loss_type)
+        self.scheduler = scheduler
         # dataset-dependent stuff
         self.used_dataset_normalizer = NormalizerFactory.create_normalizer(preprocess_cfg.normalizer_method,
                                                                            preprocess_cfg.isotropic_normalizer)
@@ -99,6 +104,7 @@ class Trainer:
         self.loss = 0.0
         self.mae = 0.0
         self.rollout_all_step_error = 0.0
+        self.should_stop = False
         # Training history for 1 epoch
         self.epoch_losses, self.train_mae_losses = [], []
         self.train_acc_loss, self.train_stress_loss = [], []
@@ -183,6 +189,15 @@ class Trainer:
             self.train_component_mae_history[target_name].append(component_mae)
             data[f"train/{target_name}_loss"] = component_loss
             data[f"train/{target_name}_mae"] = component_mae
+        if self.scheduler is not None:
+            self.scheduler.step(metric=epoch_loss, epoch=numepoch)
+            data["train/lr"] = self.scheduler.get_last_lr()[0]
+            if self.scheduler.should_save():
+                print(f"Epoch {numepoch}: saving checkpoint before cosine warm-restart.")
+                self.save_model(epochnum=numepoch)
+                self.scheduler.reset_save_flag()
+            self.should_stop = self.scheduler.should_stop()
+
         self.run.log(data, step=numepoch)
 
         # Reset epoch losses

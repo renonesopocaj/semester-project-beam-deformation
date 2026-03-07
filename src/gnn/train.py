@@ -6,6 +6,7 @@ from tqdm import tqdm
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
 from src.gnn.training.trainer import Trainer
 from src.gnn.preprocessing.stats import load_stats
+from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import hydra
 from src.gnn.helpers.misc.yamlobject import TrainYaml, PreprocessYaml
@@ -47,12 +48,14 @@ def train(cfg, preprocess_cfg, device):
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg, cfg.total_epochs)
     trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=cfg.use_wandb,
-                      preprocess_cfg=preprocess_cfg)
+                      preprocess_cfg=preprocess_cfg, scheduler=scheduler)
 
-    print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tTotal epochs: {cfg.total_epochs}\n\t"
-          f"Validation interval: {cfg.validation_interval}\n\tLoss type: {cfg.loss_type}\n\tUsing wandb: "
-          f"{cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
+    sched_type = cfg.scheduler_cfg.get("type", "none") if cfg.scheduler_cfg else "none"
+    print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tLR scheduler: {sched_type}"
+          f"\n\tTotal epochs: {cfg.total_epochs}\n\t"
+          f"Validation interval: {cfg.validation_interval}\n\tLoss type: {cfg.loss_type}\n\tUsing wandb: ")
 
     # Training loop using the Trainer class
     idx = 0
@@ -64,7 +67,7 @@ def train(cfg, preprocess_cfg, device):
             # Train step
             trainer.train(graph=batch)
 
-        # End of epoch logging
+        # End of epoch logging (and steps the LR scheduler)
         trainer.epoch_end(numepoch=epoch)
 
         # Validation phase

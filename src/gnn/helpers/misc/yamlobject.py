@@ -1,5 +1,30 @@
 from omegaconf import OmegaConf, DictConfig
 
+
+def _extract_nested(cfg, key):
+    """
+    Find the first occurrence of `key` in a (possibly nested) dict/DictConfig
+    and return its value as a plain Python object (not flattened).
+
+    Args:
+        cfg: dict or omegaconf.DictConfig
+            The config tree to search.
+        key: str
+            The key to look for.
+        return: object or None
+            The value associated with `key`, or None if not found.
+    """
+    if isinstance(cfg, DictConfig):
+        cfg = OmegaConf.to_container(cfg, resolve=True)
+    for k, v in cfg.items():
+        if k == key:
+            return v
+        if isinstance(v, dict):
+            result = _extract_nested(v, key)
+            if result is not None:
+                return result
+    return None
+
 class EdaYaml:
 
     def __init__(self, cfg):
@@ -70,7 +95,7 @@ class TrainYaml:
         self.num_messages = flattened_cfg["num_messages"]
         self.latent_dim = flattened_cfg["latent_dim"]
         self.lr = float(flattened_cfg["lr"])
-        self.lr_scheduler = flattened_cfg["lr_scheduler"]
+        self.scheduler_cfg = _extract_nested(cfg, "lr_scheduler")
         self.total_epochs = flattened_cfg["total_epochs"]
         self.loss_type = flattened_cfg["loss_type"]
         self.enable_val = flattened_cfg["enable_val"]
