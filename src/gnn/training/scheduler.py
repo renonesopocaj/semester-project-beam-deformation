@@ -32,6 +32,8 @@ class SchedulerWrapper(ABC):
             scheduler: torch LR scheduler instance
         """
         self.scheduler = scheduler
+        self.save = False
+        self.stop = False
 
     @abstractmethod
     def step(self, metric, epoch):
@@ -132,22 +134,22 @@ def scheduler_factory(optimizer, scheduler_cfg):
                     contains T_0, T_mult, eta_min, save_before_restart (bool)
         return: SchedulerWrapper or None
     """
-    if scheduler_cfg.type == "step":
+    if scheduler_cfg["type"] == "step":
         step_cfg = scheduler_cfg["step"]
         inner = StepLR(optimizer, step_size=step_cfg["step_size"], gamma=step_cfg["gamma"])
         return StepWrapper(inner)
-    elif scheduler_cfg.type == "plateau":
+    elif scheduler_cfg["type"] == "plateau":
         p_cfg = scheduler_cfg["plateau"]
         inner = ReduceLROnPlateau(optimizer, mode="min", factor=p_cfg["factor"], patience=p_cfg["patience"],
                                   threshold=p_cfg["threshold"], min_lr=p_cfg["min_lr"])
         return PlateauEarlyStoppingWrapper(inner,
                                            early_stopping_patience=p_cfg["early_stopping_patience"],
                                            plateau_threshold=p_cfg["threshold"])
-    elif scheduler_cfg.type == "cosine":
+    elif scheduler_cfg["type"] == "cosine":
         c_cfg = scheduler_cfg["cosine"]
         inner = CosineAnnealingWarmRestarts(optimizer, T_0=c_cfg["T_0"], T_mult=c_cfg["T_mult"],
                                             eta_min=c_cfg["eta_min"])
         return CosineWrapper(inner)
     else:
-        raise ValueError(f"Unknown lr_scheduler type: '{scheduler_cfg.type}'. Choose from "
-                         f"'step' | 'plateau' | 'cosine'")
+        raise ValueError(f"Unknown lr_scheduler type: '{scheduler_cfg['type']}'. Choose from "
+                         f"'step' | 'plateau' | 'cosine' | 'none'")
