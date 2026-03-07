@@ -1,0 +1,6 @@
+plateau:
+  factor: 0.5
+  patience: 20
+  min_lr: 1.0e-7
+  early_stopping_patience: 60
+  threshold: 1.0e-4

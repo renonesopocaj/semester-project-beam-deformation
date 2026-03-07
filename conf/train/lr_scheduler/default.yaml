@@ -1,0 +1,3 @@
+lr_scheduler:
+  type: step   # step | plateau | cosine
+  initial_lr: 1e-5

@@ -317,11 +317,12 @@ def main(cfg):
     print(f"\tSave dir of config.yaml = {cfg_obj.save_dir}")
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, save_dir / "config.yaml")
-    isotropic_str = '_isotropic' if cfg_obj.isotropic_normalizer else '_anisotropic'
-    miseslog_str = '_miseslog' if cfg_obj.mises_log else '_nolog'
-    offset_str = '_displacement' if cfg_obj.displacement else 'nodisplacement'
-    processed_dir_name = f"{cfg_obj.normalizer_method}{isotropic_str}{miseslog_str}{offset_str}"
+    # OmegaConf.save(cfg, save_dir / "config.yaml")
+    isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else '_anisotr'
+    miseslog_str = '_log' if cfg_obj.mises_log else '_nolog'
+    offset_str = '_displace' if cfg_obj.displacement else '_nodisplace'
+    normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
+    processed_dir_name = f"{normalizer_str}{isotropic_str}{miseslog_str}{offset_str}"
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
