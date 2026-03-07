@@ -14,6 +14,7 @@ from src.gnn.training.train_plots import plot_training_history
 from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 matplotlib.use("Agg")
 plt.ioff()
 
@@ -52,10 +53,15 @@ def train(cfg, preprocess_cfg, device):
     trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=cfg.use_wandb,
                       preprocess_cfg=preprocess_cfg, scheduler=scheduler)
 
+    # ---------- Save config yamls in saved_models dir ----------
+    OmegaConf.save(cfg, trainer.model_dir / "train.yaml")
+    OmegaConf.save(preprocess_cfg, trainer.model_dir / "preprocess.yaml")
+    # ------------------------------------------------------------
+
     sched_type = cfg.scheduler_cfg.get("type", "none") if cfg.scheduler_cfg else "none"
-    print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tLR scheduler: {sched_type}"
-          f"\n\tTotal epochs: {cfg.total_epochs}\n\t"
-          f"Validation interval: {cfg.validation_interval}\n\tLoss type: {cfg.loss_type}\n\tUsing wandb: ")
+    print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tLR scheduler: {sched_type}\n\t"
+          f"Total epochs: {cfg.total_epochs}\n\tValidation interval: {cfg.validation_interval}\n\t"
+          f"Loss type: {cfg.loss_type}\n\tUsing wandb: {cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
 
     # Training loop using the Trainer class
     idx = 0
@@ -96,6 +102,7 @@ def main(cfg):
     train_cfg = TrainYaml(cfg)
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         data = yaml.safe_load(file)
+
     preprocess_cfg = PreprocessYaml(data)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

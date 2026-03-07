@@ -23,23 +23,23 @@ def calculate_kinematics(x, dt):
     return v, a
 
 
-def build_valued_node_features(x, v, u, node_force, rest_minus_nonrest_pos):
+def build_valued_node_features(x, v, rest_pos, node_force, rest_minus_nonrest_pos):
     """
     Build valued node features: [position, velocity, rest_position, node_force]
 
     Args:
         x: Tensor
         v: Tensor
-        u: Tensor
+        rest_pos: Tensor
         node_force: Tensor
     :return Tensor
         concatenated features
     """
     if rest_minus_nonrest_pos:
-        x_minus_u = x - u
-        node_attr = torch.concat([x, v, u, node_force, x_minus_u], dim=1) # (15)
+        x_minus_u = x - rest_pos
+        node_attr = torch.concat([x, v, rest_pos, node_force, x_minus_u], dim=1) # (15)
     else:
-        node_attr = torch.concat([x, v, u, node_force], dim=1) # (12)
+        node_attr = torch.concat([x, v, rest_pos, node_force], dim=1) # (12)
     return node_attr
 
 

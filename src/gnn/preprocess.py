@@ -23,11 +23,11 @@ class Preprocessor(ABC):
     edge_stats: Stats
     target_stats: Stats
     normalizer: Normalizer
-    out_graphs: list[torch.Tensor]
+    out_graphs: list[Data]
     categorical_node_features: list[torch.Tensor]
     valued_node_features: list[torch.Tensor] # each tensor is (N, 12)
     edge_features: list[torch.Tensor]
-    traj_idx_list: list[torch.Tensor]
+    traj_idx_list: list[int]
     targets: list[torch.Tensor]
 
     def __init__(self):
@@ -122,8 +122,8 @@ class Preprocessor(ABC):
                 # accumulate all graphs to out_graphs for stats computation
                 self.categorical_node_features.append(boundary_condition)
                 # concatenate _x, _v, rest_pos_x, _node_force and optionally x_minus_u
-                self.valued_node_features.append(build_valued_node_features(_x, _v, rest_pos_x, _node_force,
-                                                                            cfg.rest_minus_nonrest_pos))
+                self.valued_node_features.append(
+                    build_valued_node_features(_x, _v, rest_pos_x, _node_force, cfg.rest_minus_nonrest_pos))
                 self.edge_features.append(build_edge_features(_x, rest_pos_x, graph.edge_index,
                                                               cfg.rest_minus_nonrest_pos))
                 # Appends and creates PyG data object for both val and train
@@ -317,15 +317,19 @@ def main(cfg):
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, save_dir / "config.yaml")
-    processed_dir_name = (f"{cfg_obj.normalizer_method}_{'isotropic' if cfg_obj.isotropic_normalizer is True else 'anisotropic'}_"
-                   f"{'miseslog' if cfg_obj.mises_log is True else 'nolog'}")
+    isotropic_str = '_isotropic' if cfg_obj.isotropic_normalizer else '_anisotropic'
+    miseslog_str = '_miseslog' if cfg_obj.mises_log else '_nolog'
+    offset_str = '_offset' if cfg_obj.rest_minus_nonrest_pos else 'nooffset'
+    processed_dir_name = f"{cfg_obj.normalizer_method}{isotropic_str}{miseslog_str}{offset_str}"
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
-    # note: this is hardcoded to be quicker, but I could have just saved the resulting vectors
+    processed_dataset_dir.mkdir(parents=True, exist_ok=True)
+
+    # note: this is hardcoded to be quicker, but I could have just saved the shape[0] of the node and edge tensor
     with open_dict(cfg):
         # note numerical feat resp 15 and 12, + 1 categorical
         cfg.node_channels = 16 if cfg_obj.rest_minus_nonrest_pos is True else 13
         cfg.edge_channels = 12 if cfg_obj.rest_minus_nonrest_pos is True else 8
-    processed_dataset_dir.mkdir(parents=True, exist_ok=True)
+
     OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
     # Where to save results
     save_dir_train = processed_dataset_dir / "train"

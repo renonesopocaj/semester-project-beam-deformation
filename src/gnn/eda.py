@@ -59,7 +59,7 @@ def _eda(cfg):
             _x, _v, _a = x[t], v[t], a[t] # (N, 3)
             _categorical_node_attr = is_bc # (N, 1)
             # concatenate [position, velocity, rest_position, node_force] i.e. (4, N, 3) since each is (N, 3)
-            _numerical_node_attr = build_valued_node_features(_x, _v, rest_x0, _node_force)
+            _numerical_node_attr = build_valued_node_features(_x, _v, rest_x0, _node_force, )
             # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
             # .edge_index contains mesh connectivity
             _edge_attr = build_edge_features(_x, rest_x0, graph.edge_index, True)
@@ -129,7 +129,7 @@ def _eda(cfg):
             # Accumulate to out_graphs for stats computation
             categorical_node_features.append(is_bc)
             # (4, N, 3)
-            valued_node_features.append(build_valued_node_features(_x, _v, rest_x0, _node_force))
+            valued_node_features.append(build_valued_node_features(_x, _v, rest_x0, _node_force, ))
             edge_features.append(build_edge_features(_x, rest_x0, graph.edge_index, True))
             out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
             targets.append(torch.concat([_a, _von_mises], dim=1))
