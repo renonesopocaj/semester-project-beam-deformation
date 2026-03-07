@@ -12,6 +12,7 @@ from src.gnn.training.train_plots import plot_training_history
 from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 matplotlib.use("Agg")
 plt.ioff()
 
@@ -48,6 +49,11 @@ def train(cfg, preprocess_cfg, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type, use_wandb=cfg.use_wandb,
                       preprocess_cfg=preprocess_cfg)
+
+    # ---------- Save config yamls in saved_models dir ----------
+    OmegaConf.save(cfg, trainer.model_dir / "train.yaml")
+    OmegaConf.save(preprocess_cfg, trainer.model_dir / "preprocess.yaml")
+    # ------------------------------------------------------------
 
     print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.lr}\n\tTotal epochs: {cfg.total_epochs}\n\t"
           f"Validation interval: {cfg.validation_interval}\n\tLoss type: {cfg.loss_type}\n\tUsing wandb: "
@@ -92,6 +98,7 @@ def main(cfg):
     train_cfg = TrainYaml(cfg)
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         data = yaml.safe_load(file)
+
     preprocess_cfg = PreprocessYaml(data)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

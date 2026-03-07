@@ -94,6 +94,7 @@ class Trainer:
         # Create directory for saving models
         self.cur_dir = os.getcwd()
         self.model_dir = Path(self.cur_dir) / "saved_models" / self.training_id
+
         self.model_dir.mkdir(parents=True, exist_ok=True)
         # Initialize metrics
         self.loss = 0.0
@@ -332,6 +333,7 @@ class Trainer:
         return rollout_error
 
     def save_model(self, epochnum):
+        # TODO: implement loading and saving model properly (e.g. after every 50 epoch, and then save it)
         """
         Save model checkpoint.
 
@@ -354,6 +356,7 @@ class Trainer:
         print(f"Model saved to {self.path}")
 
     def load_checkpoint(self, checkpoint_path):
+        # TODO: implement loading and saving model properly (e.g. after every 50 epoch, and then save it)
         """
         Load a checkpoint to resume training.
 
