@@ -40,9 +40,7 @@ def plot_volume_change(pred_rollout, true_rollout, path):
     plt.savefig(path)
     plt.close()
 
-def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 1.0, W: float = 0.1, D: float = 0.04,
-                             out_gif: str = "beam_comparison.gif", fps: int = 4, bbox_only_on_true: bool = True,
-                             verbose=False):
+def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, out_gif, fps, bbox_only_on_true, verbose):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
 
@@ -55,7 +53,7 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
         W: float
         D: float
             Beam dimensions
-        out_gif: str
+        out_gif: Path
             Output GIF filename
         fps: int
             Frames per second

@@ -329,7 +329,7 @@ class Trainer:
         volume_png_path = self.model_dir / f"{split_name}_volume_change.png"
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
-                                 out_gif=gif_path, fps=4)
+                                 out_gif=gif_path, fps=4, bbox_only_on_true=False, verbose=False)
         plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,
                                     output_prefix=split_name)
 

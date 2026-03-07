@@ -58,6 +58,8 @@ class SchedulerWrapper(ABC):
 
     def state_dict(self):
         """
+        Create dict to save class state
+
         Args:
             return: dict
                 Serializable snapshot of the wrapper and the inner scheduler.
@@ -70,6 +72,8 @@ class SchedulerWrapper(ABC):
 
     def load_state_dict(self, state):
         """
+        Create a scheduler object from a dict-checkpoint (restoring state of the scheduler when it saved the checkpoint)
+
         Args:
             state: dict
                 State previously returned by state_dict().
@@ -119,6 +123,8 @@ class PlateauEarlyStoppingWrapper(SchedulerWrapper):
 
     def state_dict(self):
         """
+        Create dict to save class state
+
         Args:
             return: dict
                 Serializable snapshot including early-stopping counters.
@@ -130,6 +136,8 @@ class PlateauEarlyStoppingWrapper(SchedulerWrapper):
 
     def load_state_dict(self, state):
         """
+        Create a scheduler object from a dict-checkpoint (restoring state of the scheduler when it saved the checkpoint)
+
         Args:
             state: dict
                 State previously returned by state_dict().

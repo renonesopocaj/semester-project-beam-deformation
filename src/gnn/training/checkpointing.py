@@ -2,13 +2,31 @@ import json
 import random
 from pathlib import Path
 from types import SimpleNamespace
-
+from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 import numpy as np
 import torch
 import wandb
 
 from src.gnn.training.trainer import Trainer
 
+def model_builder(model_cfg):
+    """
+    Args:
+        model_cfg: dict
+        return: MeshGraphNet
+    """
+    return MeshGraphNet(node_channels=model_cfg["node_channels"], edge_channels=model_cfg["edge_channels"],
+                        latent_size=model_cfg["latent_size"], num_msgs=model_cfg["num_msgs"])
+
+
+def optimizer_builder(model, optimizer_cfg):
+    """
+    Args:
+        model: torch.nn.Module
+        optimizer_cfg: dict
+        return: torch.optim.Adam
+    """
+    return torch.optim.Adam(model.parameters(), lr=optimizer_cfg["lr"])
 
 def capture_rng_state():
     """
