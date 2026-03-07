@@ -139,10 +139,6 @@ def make_beam_comparison_gif(pred_rollout: list, true_rollout: list, L: float = 
     imageio.mimsave(out_gif, frames, fps=fps, loop=0)
     print(f"GIF saved => {out_gif}")
 
-    # Cleanup
-    shutil.rmtree(temp_dir)
-    print("Done.")
-
 def volume(V, T):
     """
     Calculate volumes of tetrahedra.

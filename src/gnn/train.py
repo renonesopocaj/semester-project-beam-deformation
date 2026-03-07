@@ -42,10 +42,9 @@ def train(cfg, preprocess_cfg):
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Total parameters: {total_params:,}")
-    stats_path = cfg.stats_path
 
-    print(f"Loading stats from {stats_path}...")
-    node_stats, edge_stats, target_stats = load_stats(stats_path)
+    print(f"Loading stats from {cfg.train_dir}...")
+    node_stats, edge_stats, target_stats = load_stats(cfg.train_dir)
     dt = preprocess_cfg.dt
 
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
