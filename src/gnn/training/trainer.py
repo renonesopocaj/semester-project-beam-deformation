@@ -97,21 +97,22 @@ class Trainer:
         self.model_dir.mkdir(parents=True, exist_ok=True)
         # Accumulated training history (across all epochs)
         self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
-        self.train_epoch_loss_history, self.train_epoch_mae_history = [], []
-        self.val_epoch_loss_history, self.val_epoch_mae_history = [], []
+        self.train_epoch_loss_history = []
+        self.val_epoch_loss_history = []
         self.val_epochs_history = []
         self.val_rollout_error_history = []
+        self.train_epoch_relative_mae_history, self.val_epoch_relative_mae_history = [], []
+        self.lr_history = []
         self.train_component_loss_history = {target_name: [] for target_name in self.target_names}
         self.train_component_mae_history = {target_name: [] for target_name in self.target_names}
         self.val_component_loss_history = {target_name: [] for target_name in self.target_names}
         self.val_component_mae_history = {target_name: [] for target_name in self.target_names}
         # Scalar metrics
         self.loss = 0.0
-        self.mae = 0.0
         self.rollout_all_step_error = 0.0
         self.should_stop = False
         # Per-epoch buffers (reset at end of each epoch)
-        self.epoch_losses, self.train_mae_losses = [], []
+        self.epoch_losses, self.train_relative_mae_losses = [], []
         self.train_acc_loss, self.train_stress_loss = [], []
         self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
         self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
@@ -126,9 +127,11 @@ class Trainer:
             return: dict
                 Loss and MAE metrics for the full target and each scalar component.
         """
+        denominator = torch.clamp(torch.abs(target), min=1e-12)
+        relative_mae = torch.mean(torch.abs(pred - target) / denominator).item()
         metrics = {
             "loss": self.loss_fn(pred, target).item(),
-            "mae": F.l1_loss(pred, target).item(),
+            "relative_mae": relative_mae,
             "acc_loss": self.loss_fn(pred[:, :3].contiguous(), target[:, :3].contiguous()).item(),
             "stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()).item(),
         }
@@ -161,10 +164,9 @@ class Trainer:
         self.train_acc_loss.append(metrics["acc_loss"])
         self.train_stress_loss.append(metrics["stress_loss"])
         self.loss = metrics["loss"]
-        self.mae = metrics["mae"]
         self.train_history.append(self.loss)
         self.epoch_losses.append(self.loss)
-        self.train_mae_losses.append(self.mae)
+        self.train_relative_mae_losses.append(metrics["relative_mae"])
         for target_name in self.target_names:
             self.epoch_component_loss[target_name].append(metrics[f"{target_name}_loss"])
             self.epoch_component_mae[target_name].append(metrics[f"{target_name}_mae"])
@@ -177,14 +179,14 @@ class Trainer:
             numepoch: int
         """
         epoch_loss = float(np.mean(self.epoch_losses))
-        epoch_mae = float(np.mean(self.train_mae_losses))
+        epoch_relative_mae = float(np.mean(self.train_relative_mae_losses))
         self.train_epoch_loss_history.append(epoch_loss)
-        self.train_epoch_mae_history.append(epoch_mae)
+        self.train_epoch_relative_mae_history.append(epoch_relative_mae)
         self.train_acc_history.append(float(np.mean(self.train_acc_loss)))
         self.train_stress_history.append(float(np.mean(self.train_stress_loss)))
 
         data = {"train/loss": epoch_loss,
-                "train/mae": epoch_mae,
+                "train/relative_mae": epoch_relative_mae,
                 "train/acc_loss": self.train_acc_history[-1],
                 "train/stress_loss": self.train_stress_history[-1]}
         for target_name in self.target_names:
@@ -196,13 +198,17 @@ class Trainer:
             data[f"train/{target_name}_mae"] = component_mae
         if self.scheduler is not None:
             self.scheduler.step(metric=epoch_loss, epoch=numepoch)
-            data["train/lr"] = self.scheduler.get_last_lr()[0]
+            current_lr = self.scheduler.get_last_lr()[0]
             self.should_stop = self.scheduler.stop
+        else:
+            current_lr = self.optimizer.param_groups[0]["lr"]
+        self.lr_history.append(current_lr)
+        data["train/lr"] = current_lr
 
         self.run.log(data, step=numepoch)
 
         # Reset epoch losses
-        self.epoch_losses, self.train_mae_losses = [], []
+        self.epoch_losses, self.train_relative_mae_losses = [], []
         self.train_acc_loss, self.train_stress_loss = [], []
         self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
         self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
@@ -217,7 +223,7 @@ class Trainer:
         """
         print(f"Validation laoder\n\t{validation_loader}\n\t{type(validation_loader)}\n\t{len(validation_loader)}")
 
-        aggregated_metrics = {"loss": [], "mae": [], "acc_loss": [], "stress_loss": []}
+        aggregated_metrics = {"loss": [], "relative_mae": [], "acc_loss": [], "stress_loss": []}
         for target_name in self.target_names:
             aggregated_metrics[f"{target_name}_loss"] = []
             aggregated_metrics[f"{target_name}_mae"] = []
@@ -282,7 +288,7 @@ class Trainer:
         validation_metrics = self._compute_validation_epoch_metrics(validation_loader)
         self.val_epochs_history.append(epoch)
         self.val_epoch_loss_history.append(validation_metrics["loss"])
-        self.val_epoch_mae_history.append(validation_metrics["mae"])
+        self.val_epoch_relative_mae_history.append(validation_metrics["relative_mae"])
         for target_name in self.target_names:
             self.val_component_loss_history[target_name].append(validation_metrics[f"{target_name}_loss"])
             self.val_component_mae_history[target_name].append(validation_metrics[f"{target_name}_mae"])
@@ -290,7 +296,7 @@ class Trainer:
         self.val_rollout_error_history.append(rollout_error)
         # Log to wandb
         data = {"val/loss": validation_metrics["loss"],
-                "val/mae": validation_metrics["mae"],
+                "val/relative_mae": validation_metrics["relative_mae"],
                 "val/gen_rollout_error": rollout_error,
                 "val/acc_loss": validation_metrics["acc_loss"],
                 "val/stress_loss": validation_metrics["stress_loss"]}
@@ -334,7 +340,7 @@ class Trainer:
                                     output_prefix=split_name)
 
         data = {f"{split_name}/loss": test_metrics["loss"],
-                f"{split_name}/mae": test_metrics["mae"],
+                f"{split_name}/relative_mae": test_metrics["relative_mae"],
                 f"{split_name}/gen_rollout_error": rollout_error,
                 f"{split_name}/acc_loss": test_metrics["acc_loss"],
                 f"{split_name}/stress_loss": test_metrics["stress_loss"],

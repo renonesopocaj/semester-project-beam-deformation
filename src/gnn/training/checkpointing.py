@@ -99,11 +99,12 @@ def trainer_state_to_dict(trainer, epoch, model_cfg, optimizer_cfg, scheduler_cf
             "train_acc_history": trainer.train_acc_history,
             "train_stress_history": trainer.train_stress_history,
             "train_epoch_loss_history": trainer.train_epoch_loss_history,
-            "train_epoch_mae_history": trainer.train_epoch_mae_history,
+            "train_epoch_relative_mae_history": trainer.train_epoch_relative_mae_history,
             "val_epoch_loss_history": trainer.val_epoch_loss_history,
-            "val_epoch_mae_history": trainer.val_epoch_mae_history,
+            "val_epoch_relative_mae_history": trainer.val_epoch_relative_mae_history,
             "val_epochs_history": trainer.val_epochs_history,
             "val_rollout_error_history": trainer.val_rollout_error_history,
+            "lr_history": trainer.lr_history,
             "train_component_loss_history": trainer.train_component_loss_history,
             "train_component_mae_history": trainer.train_component_mae_history,
             "val_component_loss_history": trainer.val_component_loss_history,
@@ -111,7 +112,7 @@ def trainer_state_to_dict(trainer, epoch, model_cfg, optimizer_cfg, scheduler_cf
         },
         "inflight_epoch_state": {
             "epoch_losses": trainer.epoch_losses,
-            "train_mae_losses": trainer.train_mae_losses,
+            "train_relative_mae_losses": trainer.train_relative_mae_losses,
             "train_acc_loss": trainer.train_acc_loss,
             "train_stress_loss": trainer.train_stress_loss,
             "epoch_component_loss": trainer.epoch_component_loss,
@@ -134,11 +135,12 @@ def apply_trainer_state(trainer, trainer_state):
     trainer.train_acc_history = history["train_acc_history"]
     trainer.train_stress_history = history["train_stress_history"]
     trainer.train_epoch_loss_history = history["train_epoch_loss_history"]
-    trainer.train_epoch_mae_history = history["train_epoch_mae_history"]
+    trainer.train_epoch_relative_mae_history = history.get("train_epoch_relative_mae_history", [])
     trainer.val_epoch_loss_history = history["val_epoch_loss_history"]
-    trainer.val_epoch_mae_history = history["val_epoch_mae_history"]
+    trainer.val_epoch_relative_mae_history = history.get("val_epoch_relative_mae_history", [])
     trainer.val_epochs_history = history["val_epochs_history"]
     trainer.val_rollout_error_history = history["val_rollout_error_history"]
+    trainer.lr_history = history.get("lr_history", [])
     trainer.train_component_loss_history = history["train_component_loss_history"]
     trainer.train_component_mae_history = history["train_component_mae_history"]
     trainer.val_component_loss_history = history["val_component_loss_history"]
@@ -146,7 +148,7 @@ def apply_trainer_state(trainer, trainer_state):
 
     inflight = trainer_state["inflight_epoch_state"]
     trainer.epoch_losses = inflight["epoch_losses"]
-    trainer.train_mae_losses = inflight["train_mae_losses"]
+    trainer.train_relative_mae_losses = inflight.get("train_relative_mae_losses", [])
     trainer.train_acc_loss = inflight["train_acc_loss"]
     trainer.train_stress_loss = inflight["train_stress_loss"]
     trainer.epoch_component_loss = inflight["epoch_component_loss"]
@@ -201,7 +203,6 @@ def save_checkpoint_bundle(trainer, checkpoint_dir, epoch, model_cfg, optimizer_
         "scheduler_state_dict": trainer.scheduler.state_dict() if trainer.scheduler is not None else None,
         "rng_state": capture_rng_state(),
         "loss": trainer.loss,
-        "mae": trainer.mae,
         "rollout_all_step_error": trainer.rollout_all_step_error,
         "model_training_mode": trainer.model.training,
     }
@@ -271,7 +272,6 @@ def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_build
         scheduler.load_state_dict(torch_state["scheduler_state_dict"])
 
     trainer.loss = torch_state["loss"]
-    trainer.mae = torch_state["mae"]
     trainer.rollout_all_step_error = torch_state["rollout_all_step_error"]
 
     apply_trainer_state(trainer, trainer_state)
