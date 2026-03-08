@@ -2,10 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import imageio
 import torch
+from matplotlib.ticker import FuncFormatter
 from src.gnn.helpers.mesh_build import (compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity,
                                         to_numpy, update_surface_collection)
 from pathlib import Path
 from mesh_build import volume
+
+RELATIVE_ERROR_CLIP = 5.0  # 500 %
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
@@ -204,6 +207,8 @@ def _compute_limits(all_values, error_mode):
         return -max_abs, max_abs
 
     vmax = float(np.max(all_values))
+    if error_mode == "relative":
+        vmax = min(vmax, RELATIVE_ERROR_CLIP)
     if vmax == 0.0:
         vmax = 1e-12
     return 0.0, vmax
@@ -310,7 +315,11 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
     colorbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.75, pad=0.12)
-    colorbar.set_label(f"{field_label} {error_mode} error")
+    if error_mode == "relative":
+        colorbar.set_label(f"{field_label} relative error [%, clipped at 500%]")
+        colorbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x * 100:.0f}%"))
+    else:
+        colorbar.set_label(f"{field_label} {error_mode} error")
     ax.set_xlim(coordinate_min[0] - padding[0], coordinate_max[0] + padding[0])
     ax.set_ylim(coordinate_min[1] - padding[1], coordinate_max[1] + padding[1])
     ax.set_zlim(coordinate_min[2] - padding[2], coordinate_max[2] + padding[2])
@@ -323,8 +332,13 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     poly_collection = None
     frames = []
     for timestep, (coordinates, error_values) in enumerate(zip(coordinates_per_step, error_per_step)):
+        if error_mode == "relative":
+            error_values = np.clip(error_values, 0.0, vmax)
         poly_collection = update_surface_collection(ax, faces, coordinates, error_values, cmap, norm, poly_collection)
-        ax.set_title(f"{field_label} {error_mode.title()} Error, step {timestep}")
+        if error_mode == "relative":
+            ax.set_title(f"{field_label} Relative Error [%, clipped \u2265500%], step {timestep}")
+        else:
+            ax.set_title(f"{field_label} {error_mode.title()} Error, step {timestep}")
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
