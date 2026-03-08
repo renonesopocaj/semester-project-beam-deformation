@@ -1,4 +1,4 @@
 total_epochs: 60
-loss_type: "mae"
+loss_type: "mse"
 resume_from: null
 checkpoint_interval: 50

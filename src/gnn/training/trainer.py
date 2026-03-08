@@ -9,7 +9,7 @@ from src.gnn.training.rollout import do_rollout
 from src.gnn.helpers.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
     plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
 from src.gnn.preprocessing.normalizer import NormalizerFactory
-from src.gnn.helpers.plot_rollout import plot_validation_diagnostics_norollout
+from src.gnn.helpers.misc import plot_validation_diagnostics_norollout
 
 def loss_factory(loss_type):
     """
