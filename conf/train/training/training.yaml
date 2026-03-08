@@ -1,22 +1,4 @@
-lr: 5e-5
-total_epochs: 50
-loss_type: "mse"
+total_epochs: 60
+loss_type: "mae"
 resume_from: null
 checkpoint_interval: 50
-
-lr_scheduler:
-  type: "step"   # "step" | "plateau" | "cosine" | "none"
-  step:
-    step_size: 10
-    gamma: 0.5
-  plateau:
-    factor: 0.5
-    patience: 20
-    min_lr: 1.0e-7
-    early_stopping_patience: 60
-    threshold: 1.0e-4
-  cosine:
-    T_0: 20
-    T_mult: 2
-    eta_min: 1.0e-8
-    save_before_restart: true

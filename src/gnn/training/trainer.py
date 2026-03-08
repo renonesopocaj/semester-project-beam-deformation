@@ -221,8 +221,6 @@ class Trainer:
             return: dict
                 Averaged loss and MAE metrics on the validation set.
         """
-        print(f"Validation laoder\n\t{validation_loader}\n\t{type(validation_loader)}\n\t{len(validation_loader)}")
-
         aggregated_metrics = {"loss": [], "relative_mae": [], "acc_loss": [], "stress_loss": []}
         for target_name in self.target_names:
             aggregated_metrics[f"{target_name}_loss"] = []

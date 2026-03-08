@@ -188,20 +188,18 @@ def scheduler_factory(optimizer, scheduler_cfg):
         return: SchedulerWrapper or None
     """
     if scheduler_cfg["type"] == "step":
-        step_cfg = scheduler_cfg["step"]
-        inner = StepLR(optimizer, step_size=step_cfg["step_size"], gamma=step_cfg["gamma"])
+        inner = StepLR(optimizer, step_size=scheduler_cfg["step_size"], gamma=scheduler_cfg["gamma"])
         return StepWrapper(inner)
     elif scheduler_cfg["type"] == "plateau":
-        p_cfg = scheduler_cfg["plateau"]
-        inner = ReduceLROnPlateau(optimizer, mode="min", factor=p_cfg["factor"], patience=p_cfg["patience"],
-                                  threshold=p_cfg["threshold"], min_lr=p_cfg["min_lr"])
+        inner = ReduceLROnPlateau(optimizer, mode="min", factor=scheduler_cfg["factor"],
+                                  patience=scheduler_cfg["patience"],
+                                  threshold=scheduler_cfg["threshold"], min_lr=scheduler_cfg["min_lr"])
         return PlateauEarlyStoppingWrapper(inner,
-                                           early_stopping_patience=p_cfg["early_stopping_patience"],
-                                           plateau_threshold=p_cfg["threshold"])
+                                           early_stopping_patience=scheduler_cfg["early_stopping_patience"],
+                                           plateau_threshold=scheduler_cfg["threshold"])
     elif scheduler_cfg["type"] == "cosine":
-        c_cfg = scheduler_cfg["cosine"]
-        inner = CosineAnnealingWarmRestarts(optimizer, T_0=c_cfg["T_0"], T_mult=c_cfg["T_mult"],
-                                            eta_min=c_cfg["eta_min"])
+        inner = CosineAnnealingWarmRestarts(optimizer, T_0=scheduler_cfg["T_0"], T_mult=scheduler_cfg["T_mult"],
+                                            eta_min=scheduler_cfg["eta_min"])
         return CosineWrapper(inner)
     else:
         raise ValueError(f"Unknown lr_scheduler type: '{scheduler_cfg['type']}'. Choose from "

@@ -4,10 +4,12 @@ defaults:
   - training: training
   - validation: validation
   - data: default
+  - lr_scheduler: step
   - _self_
 
 seed: 42
 use_wandb: true
+initial_lr: 1e-3
 
 hydra:
   run:

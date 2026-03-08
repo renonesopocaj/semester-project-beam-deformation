@@ -1,0 +1,5 @@
+type: "cosine"
+T_0: 20
+T_mult: 2
+eta_min: 1.0e-8
+save_before_restart: true

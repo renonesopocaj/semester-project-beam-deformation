@@ -1,6 +1,5 @@
 from omegaconf import OmegaConf, DictConfig
 
-
 def _extract_nested(cfg, key):
     """
     Find the first occurrence of `key` in a (possibly nested) dict/DictConfig
@@ -38,6 +37,7 @@ class EdaYaml:
         flattened_cfg = _to_dict_flatten(cfg)
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
 
+
 class PreprocessYaml:
     """
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
@@ -73,6 +73,7 @@ class PreprocessYaml:
         if "node_channels" in flattened_cfg:
             self.node_channels = flattened_cfg["node_channels"]
 
+
 class TrainYaml:
     """
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
@@ -94,7 +95,7 @@ class TrainYaml:
         self.name = flattened_cfg["name"]
         self.num_messages = flattened_cfg["num_messages"]
         self.latent_dim = flattened_cfg["latent_dim"]
-        self.lr = float(flattened_cfg["lr"])
+        self.initial_lr = float(flattened_cfg["initial_lr"])
         self.scheduler_cfg = _extract_nested(cfg, "lr_scheduler")
         self.total_epochs = flattened_cfg["total_epochs"]
         self.loss_type = flattened_cfg["loss_type"]
@@ -108,6 +109,7 @@ class TrainYaml:
         self.preprocess_config_path = flattened_cfg["preprocess_config_path"]
         self.resume_from = flattened_cfg.get("resume_from")
         self.checkpoint_interval = flattened_cfg.get("checkpoint_interval")
+
 
 def _to_dict_flatten(data):
     """
