@@ -6,9 +6,10 @@ import torch.nn.functional as F
 import wandb
 
 from src.gnn.training.rollout import do_rollout
-from src.gnn.helpers.plot_rollout import make_beam_comparison_gif, plot_volume_change
+from src.gnn.helpers.plot_rollout import make_beam_comparison_gif, plot_volume_change, \
+    plot_validation_diagnostics_rollout
 from src.gnn.preprocessing.normalizer import NormalizerFactory
-from src.gnn.helpers.plot_rollout import plot_validation_diagnostics
+from src.gnn.helpers.plot_rollout import plot_validation_diagnostics_norollout
 
 def loss_factory(loss_type):
     """
@@ -93,16 +94,20 @@ class Trainer:
                                                                            self.isotropic_normalizer)
         self.rest_minus_nonrest_pos = preprocess_cfg.displacement
         self.target_names = ["acc_x", "acc_y", "acc_z", "von_mises"]
+
+        # Allocate all directories
         self.model_dir = Path(model_root) / self.training_id
         self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.training_plots_dir = self.model_dir / "training"
+        self.training_plots_dir.mkdir(parents=True, exist_ok=True)
+        self.model_evaluation_dir = self.model_dir / "model_evaluation"
+        self.model_evaluation_dir.mkdir(parents=True, exist_ok=True)
+
         # Accumulated training history (across all epochs)
         self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
-        self.train_epoch_loss_history = []
-        self.val_epoch_loss_history = []
-        self.val_epochs_history = []
-        self.val_rollout_error_history = []
-        self.train_epoch_relative_mae_history, self.val_epoch_relative_mae_history = [], []
-        self.lr_history = []
+        (self.train_epoch_loss_history, self.val_epoch_loss_history, self.val_epochs_history,
+         self.val_rollout_error_history, self.train_epoch_relative_mae_history, self.val_epoch_relative_mae_history,
+         self.lr_history) = [], [], [], [], [], [], []
         self.train_component_loss_history = {target_name: [] for target_name in self.target_names}
         self.train_component_mae_history = {target_name: [] for target_name in self.target_names}
         self.val_component_loss_history = {target_name: [] for target_name in self.target_names}
@@ -112,13 +117,16 @@ class Trainer:
         self.rollout_all_step_error = 0.0
         self.should_stop = False
         # Per-epoch buffers (reset at end of each epoch)
-        self.epoch_losses, self.train_relative_mae_losses = [], []
-        self.train_acc_loss, self.train_stress_loss = [], []
+        self.epoch_losses, self.train_relative_mae_losses, self.train_acc_loss, self.train_stress_loss = [], [],[], []
         self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
         self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
 
     def _collect_batch_metrics(self, pred, target):
         """
+        Collects metrics on a train/validation set, about pred vs target, so it's actually agnostic and is not as
+        validation necessarily but in general as pred vs target.
+        No rollout.
+
         Args:
             pred: torch.Tensor
                 Model prediction with shape `(num_nodes, 4)`.
@@ -159,25 +167,29 @@ class Trainer:
         loss.backward()
         self.optimizer.step()
 
-        metrics = self._collect_batch_metrics(pred, target)
-        # Store loss history
-        self.train_acc_loss.append(metrics["acc_loss"])
-        self.train_stress_loss.append(metrics["stress_loss"])
-        self.loss = metrics["loss"]
+        # Compute alternative metrics (also different from loss) on training set, i.e. pred vs targets, such as loss
+        # and relative mae (no rollout). NOTE: it's not validation yet
+        batch_metrics = self._collect_batch_metrics(pred, target)
+        # Store histories of no-rollout loss and metrics (eg relative mae)
+        self.train_acc_loss.append(batch_metrics["acc_loss"])
+        self.train_stress_loss.append(batch_metrics["stress_loss"])
+        self.loss = batch_metrics["loss"]
         self.train_history.append(self.loss)
         self.epoch_losses.append(self.loss)
-        self.train_relative_mae_losses.append(metrics["relative_mae"])
+        self.train_relative_mae_losses.append(batch_metrics["relative_mae"])
         for target_name in self.target_names:
-            self.epoch_component_loss[target_name].append(metrics[f"{target_name}_loss"])
-            self.epoch_component_mae[target_name].append(metrics[f"{target_name}_mae"])
+            self.epoch_component_loss[target_name].append(batch_metrics[f"{target_name}_loss"])
+            self.epoch_component_mae[target_name].append(batch_metrics[f"{target_name}_mae"])
 
-    def epoch_end(self, numepoch):
+    def epoch_end_log_metrics_scheduler(self, numepoch):
         """
-        Log metrics at the end of each epoch.
+        Log non-rollout metrics such as realtive mae and loss at the end of each epoch.
 
         Args:
             numepoch: int
         """
+        # Compute mean from loss of batches inside the given epoch, to return as final value the "mean of that metric
+        # in that epoch"
         epoch_loss = float(np.mean(self.epoch_losses))
         epoch_relative_mae = float(np.mean(self.train_relative_mae_losses))
         self.train_epoch_loss_history.append(epoch_loss)
@@ -189,6 +201,7 @@ class Trainer:
                 "train/relative_mae": epoch_relative_mae,
                 "train/acc_loss": self.train_acc_history[-1],
                 "train/stress_loss": self.train_stress_history[-1]}
+
         for target_name in self.target_names:
             component_loss = float(np.mean(self.epoch_component_loss[target_name]))
             component_mae = float(np.mean(self.epoch_component_mae[target_name]))
@@ -196,25 +209,30 @@ class Trainer:
             self.train_component_mae_history[target_name].append(component_mae)
             data[f"train/{target_name}_loss"] = component_loss
             data[f"train/{target_name}_mae"] = component_mae
-        if self.scheduler is not None:
-            self.scheduler.step(metric=epoch_loss, epoch=numepoch)
-            current_lr = self.scheduler.get_last_lr()[0]
-            self.should_stop = self.scheduler.stop
-        else:
-            current_lr = self.optimizer.param_groups[0]["lr"]
-        self.lr_history.append(current_lr)
-        data["train/lr"] = current_lr
 
+        data = self._update_scheduler(epoch_loss, numepoch, data)
+
+        # Log everything in wandb
         self.run.log(data, step=numepoch)
 
         # Reset epoch losses
-        self.epoch_losses, self.train_relative_mae_losses = [], []
-        self.train_acc_loss, self.train_stress_loss = [], []
+        self.epoch_losses, self.train_relative_mae_losses, self.train_acc_loss, self.train_stress_loss = [], [], [], []
         self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
         self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
 
-    def _compute_validation_epoch_metrics(self, validation_loader):
+    def _update_scheduler(self, epoch_loss, numepoch, data):
+        # Scheduler updates
+        self.scheduler.step(metric=epoch_loss, epoch=numepoch)
+        current_lr = self.scheduler.get_last_lr()[0]
+        self.should_stop = self.scheduler.stop
+        self.lr_history.append(current_lr)
+        data["train/lr"] = current_lr
+        return data
+
+    def _validation_metrics_norollout(self, validation_loader):
         """
+        Compute all non-rollout validation matrics (loss, relative mae, etc)
+
         Args:
             validation_loader: pyg.DataLoader
                 Validation dataloader.
@@ -222,7 +240,7 @@ class Trainer:
                 Averaged loss and MAE metrics on the validation set.
         """
         aggregated_metrics = {"loss": [], "relative_mae": [], "acc_loss": [], "stress_loss": []}
-        for target_name in self.target_names:
+        for target_name in self.target_names: # example of self.target_names: ["acc_x", "acc_y", "acc_z", "von_mises"]
             aggregated_metrics[f"{target_name}_loss"] = []
             aggregated_metrics[f"{target_name}_mae"] = []
 
@@ -264,7 +282,7 @@ class Trainer:
 
     def validation(self, validation_loader, node_stats, edge_stats, target_stats, dt, epoch):
         """
-        Perform validation metrics tracking during training.
+        Perform validation metrics tracking during training. Perform also rollout.
 
         Args:
             validation_loader: pyg.DataLoader
@@ -280,15 +298,18 @@ class Trainer:
             epoch: int
                 number of peoch
         """
+        # Set model
         self.model.eval()
         target_stats.to(self.device)
-        validation_metrics = self._compute_validation_epoch_metrics(validation_loader)
+        # Compute non rollout validation metrics on validation set
+        validation_metrics = self._validation_metrics_norollout(validation_loader)
         self.val_epochs_history.append(epoch)
         self.val_epoch_loss_history.append(validation_metrics["loss"])
         self.val_epoch_relative_mae_history.append(validation_metrics["relative_mae"])
         for target_name in self.target_names:
             self.val_component_loss_history[target_name].append(validation_metrics[f"{target_name}_loss"])
             self.val_component_mae_history[target_name].append(validation_metrics[f"{target_name}_mae"])
+        # Compute rollout validation metrics
         _, _, rollout_error = self._run_rollout(validation_loader, node_stats, edge_stats, target_stats, dt)
         self.val_rollout_error_history.append(rollout_error)
         # Log to wandb
@@ -322,21 +343,31 @@ class Trainer:
             return: float
                 Final rollout MAE on the evaluation split.
         """
+        # Evaluate model (no plots, only computing rollout)
         self.model.eval()
         target_stats.to(self.device)
-        test_metrics = self._compute_validation_epoch_metrics(test_dataloader)
+        # Compute pred vs target (no rollout) metrics (loss, relative mae)
+        test_metrics = self._validation_metrics_norollout(test_dataloader)
+        # Compute rollout on given dataloader
         true_rollout, pred_rollout, rollout_error = self._run_rollout(test_dataloader, node_stats, edge_stats,
                                                                       target_stats, dt)
-
-        gif_path = self.model_dir / f"{split_name}_beam_comparison.gif"
-        volume_png_path = self.model_dir / f"{split_name}_volume_change.png"
+        # Create plots of rollout
+        gif_path = self.model_evaluation_dir / split_name / f"{split_name}_beam_comparison.gif"
+        volume_png_path = self.model_evaluation_dir / split_name / f"{split_name}_volume_change.png"
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-        # TODO: also plot rollout error over timestep
-        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
-                                 out_gif=gif_path, fps=4, bbox_only_on_true=False, verbose=False)
-        plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,
-                                    output_prefix=split_name)
+        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
+                                 L=1.0, W=0.1, D=0.04, # FIXME: hardcoded
+                                 gif_path=gif_path,
+                                 fps=4, bbox_only_on_true=False, verbose=False)
+        # Plot non rollout values
+        plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                              output_dir=self.model_evaluation_dir / split_name,
+                                              filename_prefix=split_name)
+        plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                              output_dir=self.model_evaluation_dir / split_name,
+                                              filename_prefix=split_name)
 
+        # Save
         data = {f"{split_name}/loss": test_metrics["loss"],
                 f"{split_name}/relative_mae": test_metrics["relative_mae"],
                 f"{split_name}/gen_rollout_error": rollout_error,
@@ -350,5 +381,3 @@ class Trainer:
         self.run.log(data)
         self.rollout_all_step_error = rollout_error
         return rollout_error
-
-

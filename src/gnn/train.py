@@ -79,6 +79,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     start_epoch = 0
 
+    # Init model, either resuming a previous train or from scratch
     if cfg.resume_from is not None:
         # Resume previous training
         print(f"Resuming training from checkpoint: {cfg.resume_from}")
@@ -119,16 +120,21 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
           f"Validation interval: {cfg.validation_interval}\n\t"
           f"Loss type: {cfg.loss_type}\n\tUsing wandb: {cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
 
+    # Main training and validation loop
     epoch_bar = tqdm(range(start_epoch, cfg.total_epochs), desc="Epochs")
     for epoch in epoch_bar:
+        # For all batches
         for batch in tqdm(train_dataloader, desc="Batches", leave=False):
+            # One train step + collect necessary metrics on training set
             batch = batch.to(device)
             trainer.train(graph=batch)
 
-        trainer.epoch_end(numepoch=epoch)
+        # Log non-rollout metrics such as relative mae and loss at the end of each epoch.
+        # Also update scheduler.
+        trainer.epoch_end_log_metrics_scheduler(numepoch=epoch)
 
         # Scheduler-triggered save (e.g. before cosine warm-restart)
-        if trainer.scheduler is not None and trainer.scheduler.save:
+        if trainer.scheduler.save:
             print(f"Epoch {epoch}: saving checkpoint before cosine warm-restart.")
             ckpt_dir = trainer.model_dir / f"checkpoint_epoch_{epoch}"
             save_checkpoint_bundle(trainer, ckpt_dir, epoch, model_cfg, optimizer_cfg, scheduler_cfg)
@@ -150,7 +156,8 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         else:
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
 
-    return trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg
+    return (trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg,
+            validation_dataloader)
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
@@ -161,6 +168,7 @@ def main(cfg):
             Hydra-composed configuration. Run with --multirun to sweep over multiple values,
             e.g.: python -m src.gnn.train --multirun training.lr=1e-3,5e-4,1e-4
     """
+    # Open configs
     train_cfg = TrainYaml(cfg)
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         preprocess_dict = yaml.safe_load(file)
@@ -169,17 +177,27 @@ def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg = \
-        train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
+    # Train, validation and log validation metrics
+    trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg, validation_dataloader \
+        = train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
+
+    # Plot loss, lr, metric on test set
+    plot_training_history(trainer)
 
     # Test model on a new trajectory (test set)
     print("Test dataset:")
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
-    plot_training_history(trainer)
     final_rollout_error = trainer.final_test(test_dataloader=test_dataloader, node_stats=node_stats,
                                              edge_stats=edge_stats, target_stats=target_stats, dt=dt,
                                              split_name="test")
+    print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
+
+    # Test model on a new trajectory (validation set)
+    print("Validation dataset:")
+    final_rollout_error = trainer.final_test(test_dataloader=validation_dataloader, node_stats=node_stats,
+                                             edge_stats=edge_stats, target_stats=target_stats, dt=dt,
+                                             split_name="validation")
     print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
 
     # Test model from an already seen trajectory (took from training set)

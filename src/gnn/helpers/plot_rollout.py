@@ -42,7 +42,7 @@ def plot_volume_change(pred_rollout, true_rollout, path):
     plt.savefig(path)
     plt.close()
 
-def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, out_gif, fps, bbox_only_on_true, verbose):
+def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
 
@@ -55,7 +55,7 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, out_gif, fps, 
         W: float
         D: float
             Beam dimensions
-        out_gif: Path
+        gif_path: Path
             Output GIF filename
         fps: int
             Frames per second
@@ -136,8 +136,8 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, out_gif, fps, 
     plt.close(fig)
 
     # Create GIF
-    imageio.mimsave(out_gif, frames, fps=fps, loop=0)
-    print(f"GIF saved => {out_gif}")
+    imageio.mimsave(gif_path, frames, fps=fps, loop=0)
+    print(f"GIF saved => {gif_path}")
 
 TARGET_FIELDS = [
     ("acc_x", "Acceleration X"),
@@ -389,8 +389,12 @@ def _plot_edge_error_correlation(field_summary, output_path):
     plt.close(fig)
 
 
-def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, output_prefix):
+def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix):
     """
+    Plot
+    1. scatter plots: prediction vs target, where every p[oint is one node
+    2. edge error correlation:
+
     Args:
         true_rollout: list
             Ground-truth rollout graphs.
@@ -398,7 +402,7 @@ def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, output_p
             Predicted rollout graphs.
         output_dir: Path
             Directory where diagnostic artifacts will be saved.
-        output_prefix: str
+        filename_prefix: str
             Prefix used for saved artifact names.
         return: None
             Saves all requested validation plots.
@@ -406,12 +410,35 @@ def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, output_p
     output_dir = Path(output_dir)
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     for field_name, field_label in TARGET_FIELDS:
-        for error_mode in ["absolute", "relative", "signed"]:
-            output_path = output_dir / f"{output_prefix}_{field_name}_{error_mode}_error.gif"
-            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
-
-        scatter_path = output_dir / f"{output_prefix}_{field_name}_prediction_vs_target.png"
-        correlation_path = output_dir / f"{output_prefix}_{field_name}_edge_error_correlation.png"
+        scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
+        correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
         field_summary = rollout_summary["fields"][field_name]
         _plot_prediction_target_scatter(field_summary, scatter_path)
         _plot_edge_error_correlation(field_summary, correlation_path)
+
+def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix):
+    """
+    Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
+    which corresponds to the error in two versions
+    - absolute (not done currently)
+    - signed
+    - relative
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+        output_dir: Path
+            Directory where diagnostic artifacts will be saved.
+        filename_prefix: str
+            Prefix used for saved artifact names.
+        return: None
+            Saves all requested validation plots.
+    """
+    output_dir = Path(output_dir)
+    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
+    for field_name, field_label in TARGET_FIELDS:
+        for error_mode in ["relative", "signed"]: # possibilities = ["absolute", "relative", "signed"]
+            output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
+            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
