@@ -402,6 +402,36 @@ def _plot_edge_error_correlation(field_summary, output_path):
     fig.savefig(output_path)
     plt.close(fig)
 
+def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path):
+    """
+    Plot position MAE at each rollout timestep.
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs (each has x_pos_t).
+        pred_rollout: list
+            Predicted rollout graphs (each has x_pos_t).
+        output_path: Path
+            Destination image path.
+        return: None
+    """
+    errors = []
+    for true_graph, pred_graph in zip(true_rollout, pred_rollout):
+        step_mae = torch.mean(torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)).item()
+        errors.append(step_mae)
+
+    timesteps = np.arange(len(errors))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(timesteps, errors, linewidth=2.0, marker="o", markersize=3)
+    ax.set_xlabel("Timestep")
+    ax.set_ylabel("Position MAE")
+    ax.set_title("Rollout Position Error vs Timestep")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap

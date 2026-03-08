@@ -6,8 +6,8 @@ import torch.nn.functional as F
 import wandb
 
 from src.gnn.training.rollout import do_rollout
-from src.gnn.helpers.plot_rollout import make_beam_comparison_gif, plot_volume_change, \
-    plot_validation_diagnostics_rollout
+from src.gnn.helpers.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
+    plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.helpers.plot_rollout import plot_validation_diagnostics_norollout
 
@@ -365,6 +365,9 @@ class Trainer:
                                  L=1.0, W=0.1, D=0.04, # FIXME: hardcoded
                                  gif_path=gif_path,
                                  fps=4, bbox_only_on_true=False, verbose=False)
+        print("Plotting rollout error vs timestep...")
+        rollout_error_path = path_split_name / f"{split_name}_rollout_error_vs_timestep.png"
+        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path)
         # Plot non rollout values
         print("Plotting non rollout values...")
         plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
