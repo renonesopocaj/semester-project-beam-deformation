@@ -286,7 +286,7 @@ def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_build
     return trainer, next_epoch
 
 
-def load_trainer_for_eval(checkpoint_dir, device, model_root):
+def load_trainer_for_eval(checkpoint_path, preprocess_cfg, device, model_root, model):
     """
     Load a minimal Trainer from a checkpoint for evaluation only.
     Restores the model weights and the preprocessing config needed by
@@ -294,7 +294,7 @@ def load_trainer_for_eval(checkpoint_dir, device, model_root):
     NOT restored.
 
     Args:
-        checkpoint_dir: str or pathlib.Path
+        checkpoint_path: str or pathlib.Path
             Directory containing torch_state.pt and trainer_state.json.
         device: torch.device
             Target device for the model.
@@ -303,16 +303,7 @@ def load_trainer_for_eval(checkpoint_dir, device, model_root):
         return: Trainer
             Trainer with model loaded and set to eval mode.
     """
-    checkpoint_dir = Path(checkpoint_dir)
-
-    with open(checkpoint_dir / "trainer_state.json", "r", encoding="utf-8") as fh:
-        trainer_state = json.load(fh)
-
-    torch_state = torch.load(checkpoint_dir / "torch_state.pt", map_location=device, weights_only=False)
-
-    preprocess_cfg = SimpleNamespace(**trainer_state["preprocess_cfg"])
-
-    model = model_builder(trainer_state["model_cfg"])
+    torch_state = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model = model.to(device)
     model.load_state_dict(torch_state["model_state_dict"], strict=True)
     model.eval()
@@ -321,8 +312,8 @@ def load_trainer_for_eval(checkpoint_dir, device, model_root):
 
     trainer = Trainer(
         model=model, optimizer=None, device=device,
-        loss_type=trainer_state["loss_type"], use_wandb=False,
+        loss_type=loss_type, use_wandb=False,
         preprocess_cfg=preprocess_cfg, scheduler=None,
-        training_id=trainer_state["training_id"], run=run, model_root=model_root,
+        training_id=training_id, run=run, model_root=model_root,
     )
     return trainer
