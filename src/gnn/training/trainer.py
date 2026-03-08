@@ -274,7 +274,6 @@ class Trainer:
             epoch: int
                 number of peoch
         """
-        print(f"Validation laoder\n\t{validation_loader}\n\t{type(validation_loader)}\n\t{len(validation_loader)}")
         self.model.eval()
         target_stats.to(self.device)
         validation_metrics = self._compute_validation_epoch_metrics(validation_loader)

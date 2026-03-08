@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import imageio
 import torch
-
-from src.gnn.helpers.plots.mesh import compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity, to_numpy, update_surface_collection
+from src.gnn.helpers.plots.mesh import (compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity,
+                                        to_numpy, update_surface_collection)
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
