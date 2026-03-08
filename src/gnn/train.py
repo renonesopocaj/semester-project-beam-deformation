@@ -16,8 +16,8 @@ from src.gnn.training.trainer import Trainer
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-from src.gnn.helpers.misc.yamlobject import TrainYaml, PreprocessYaml
-from src.gnn.training.train_plots import plot_training_history
+from src.gnn.helpers.yamlobject import TrainYaml, PreprocessYaml
+from src.gnn.helpers.train_plots import plot_training_history
 from src.gnn.training.checkpointing import (save_checkpoint_bundle, build_trainer_from_checkpoint, model_builder,
                                             optimizer_builder)
 

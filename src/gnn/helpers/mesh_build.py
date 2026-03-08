@@ -1,5 +1,5 @@
 from collections import Counter
-
+import torch
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -121,3 +121,23 @@ def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, p
     poly_collection.set_verts(polygons)
     poly_collection.set_facecolors(face_colors)
     return poly_collection
+
+def volume(V, T):
+    """
+    Calculate volumes of tetrahedra. Used in plot_volume_change
+
+    Args:
+        V: torch.Tensor
+            Vertex positions (N, 3)
+        T: torch.Tensor
+            Tetrahedra connectivity (M, 4)
+
+    Returns: torch.Tensor
+        Volumes for each tetrahedron (M,)
+    """
+    a = V[T[:, 0], :]
+    b = V[T[:, 1], :]
+    c = V[T[:, 2], :]
+    d = V[T[:, 3], :]
+    vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
+    return vols

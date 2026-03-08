@@ -2,7 +2,7 @@ import torch
 import json
 import hydra
 from omegaconf import OmegaConf, open_dict
-from src.gnn.helpers.misc.yamlobject import PreprocessYaml
+from src.gnn.helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
                                                   build_edge_features,
                                                   build_valued_node_features)

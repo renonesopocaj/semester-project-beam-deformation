@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import yaml
-from src.gnn.helpers.misc.yamlobject import EdaYaml
+from src.gnn.helpers.yamlobject import EdaYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
                                                   build_valued_node_features)
 from torch_geometric.data import Data, Batch

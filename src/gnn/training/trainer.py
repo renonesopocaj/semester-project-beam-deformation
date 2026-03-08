@@ -5,10 +5,10 @@ import torch
 import torch.nn.functional as F
 import wandb
 
-from src.gnn.helpers.eval_utilities import do_rollout
-from src.gnn.helpers.plots.visualize import make_beam_comparison_gif, plot_volume_change
+from src.gnn.training.rollout import do_rollout
+from src.gnn.helpers.plot_rollout import make_beam_comparison_gif, plot_volume_change
 from src.gnn.preprocessing.normalizer import NormalizerFactory
-from src.gnn.training.train_plots import plot_validation_diagnostics
+from src.gnn.helpers.plot_rollout import plot_validation_diagnostics
 
 def loss_factory(loss_type):
     """
@@ -331,6 +331,7 @@ class Trainer:
         gif_path = self.model_dir / f"{split_name}_beam_comparison.gif"
         volume_png_path = self.model_dir / f"{split_name}_volume_change.png"
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        # TODO: also plot rollout error over timestep
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
                                  out_gif=gif_path, fps=4, bbox_only_on_true=False, verbose=False)
         plot_validation_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=self.model_dir,

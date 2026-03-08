@@ -1,11 +1,143 @@
-from pathlib import Path
-
-import imageio
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+import imageio
+import torch
+from src.gnn.helpers.mesh_build import (compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity,
+                                        to_numpy, update_surface_collection)
+from pathlib import Path
+from mesh_build import volume
 
-from src.gnn.helpers.plots.mesh import compute_coordinate_bounds, extract_surface_faces, to_numpy, update_surface_collection
+def plot_volume_change(pred_rollout, true_rollout, path):
+    """
+    Plot volume change over time for predicted vs ground truth.
 
+    Args:
+        pred_rollout: list[FIXME: TYPE]
+            list of predictions (each element attributes = targets)
+        true_rollout: list[FIXME: TYPE]
+            list of ground truth values (each element has attributes = targets)
+        path: Path
+    """
+    fig, ax = plt.subplots()
+    true_volumes_list, pred_volumes_list = [], []
+
+    for pred, true in zip(pred_rollout, true_rollout):
+        x_true = true.x_pos_t
+        x_pred = pred.x_pos_t
+        cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
+        true_volumes = volume(x_true, cells)
+        pred_volumes = volume(x_pred, cells)
+
+        V_true = np.abs(true_volumes).sum()
+        V_pred = np.abs(pred_volumes).sum()
+
+        true_volumes_list.append(V_true)
+        pred_volumes_list.append(V_pred)
+
+    ax.plot(true_volumes_list, label="True Volumes")
+    ax.plot(pred_volumes_list, label="Predicted Volumes")
+    plt.xlabel("Time Step")
+    plt.ylabel("Volume")
+    ax.legend()
+    plt.savefig(path)
+    plt.close()
+
+def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, out_gif, fps, bbox_only_on_true, verbose):
+    """
+    Create side-by-side comparison GIF of predicted vs ground truth.
+
+    Args:
+        pred_rollout: list
+            List of predicted graphs
+        true_rollout: list
+            List of ground truth graphs
+        L: float
+        W: float
+        D: float
+            Beam dimensions
+        out_gif: Path
+            Output GIF filename
+        fps: int
+            Frames per second
+        bbox_only_on_true: bool
+            Whether to base bounding box on ground truth only
+        verbose: bool
+
+    """
+    assert len(pred_rollout) == len(true_rollout), ("Mismatch in predicted and ground truth frames.")
+
+    frames = []
+
+    faces = extract_surface_faces(true_rollout[0].x_element_connectivity)
+    coordinates_for_bounds = []
+    vm_min, vm_max = 0.0, 0.0
+
+    for g_pred, g_true in zip(pred_rollout, true_rollout):
+        coords_pred = to_numpy(g_pred.x_pos_t)
+        coords_true = to_numpy(g_true.x_pos_t)
+        von_mises_pred = to_numpy(g_pred.von_mises).reshape(-1)
+        von_mises_true = to_numpy(g_true.von_mises).reshape(-1)
+
+        vm_max = max(vm_max, np.max(von_mises_pred))
+        vm_max = max(vm_max, np.max(von_mises_true))
+        coordinates_for_bounds.append(coords_true)
+
+        if bbox_only_on_true:
+            continue
+        coordinates_for_bounds.append(coords_pred)
+
+    coordinate_min, coordinate_max, _, _ = compute_coordinate_bounds(coordinates_for_bounds)
+
+    # Create figure
+    fig, axarr = plt.subplots(1, 2, figsize=(16, 8), subplot_kw={"projection": "3d"})
+
+    cmap = plt.cm.jet
+    norm = plt.Normalize(vmin=vm_min, vmax=vm_max)
+
+    # Create colorbar
+    cbar_ax = fig.add_axes([0.92, 0.2, 0.02, 0.6])
+    cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cbar_ax)
+    cbar.set_label("von Mises Stress")
+
+    polycoll_true = None
+    polycoll_pred = None
+
+    # Configure axes
+    for ax, title in zip(axarr, ["Ground Truth", "Predicted MeshGraphNet"]):
+        ax.set_xlim(coordinate_min[0], coordinate_max[0])
+        ax.set_ylim(coordinate_min[1], coordinate_max[1])
+        ax.set_zlim(coordinate_min[2], coordinate_max[2])
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        ax.set_box_aspect((L * 0.1, 0.8 * W, 2.5 * D))
+        ax.view_init(elev=30, azim=45)
+        ax.set_title(title)
+
+    # Iterate over time steps
+    for i, (graph_pred, graph_true) in enumerate(zip(pred_rollout, true_rollout)):
+        if verbose:
+            print(f"Rendering frame {i}/{len(pred_rollout) - 1}")
+
+        coords_pred = to_numpy(graph_pred.x_pos_t)
+        coords_true = to_numpy(graph_true.x_pos_t)
+        vm_pred = to_numpy(graph_pred.von_mises).reshape(-1)
+        vm_true = to_numpy(graph_true.von_mises).reshape(-1)
+
+        # Update both subplots
+        polycoll_true = update_surface_collection(axarr[0], faces, coords_true, vm_true, cmap, norm, polycoll_true)
+        polycoll_pred = update_surface_collection(axarr[1], faces, coords_pred, vm_pred, cmap, norm, polycoll_pred)
+
+        # Render to numpy array
+        fig.canvas.draw()
+        frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+        frames.append(frame)
+
+    plt.close(fig)
+
+    # Create GIF
+    imageio.mimsave(out_gif, frames, fps=fps, loop=0)
+    print(f"GIF saved => {out_gif}")
 
 TARGET_FIELDS = [
     ("acc_x", "Acceleration X"),
@@ -75,65 +207,6 @@ def _compute_limits(all_values, error_mode):
     if vmax == 0.0:
         vmax = 1e-12
     return 0.0, vmax
-
-
-def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel, train_label="Train",
-                      val_label="Validation"):
-    """
-    Args:
-        ax: matplotlib.axes.Axes
-            Target axis.
-        train_epochs: np.ndarray
-            Epoch indices for training values.
-        train_values: np.ndarray
-            Training metric values.
-        val_epochs: np.ndarray
-            Epoch indices for validation values.
-        val_values: np.ndarray
-            Validation metric values.
-        title: str
-            Plot title.
-        ylabel: str
-            Plot y-axis label.
-        return: None
-            Draws a single epoch curve on the axis.
-    """
-    ax.plot(train_epochs, train_values, label=train_label, linewidth=2.0)
-    if len(val_values) > 0:
-        ax.plot(val_epochs, val_values, label=val_label, linewidth=2.0, marker="o")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-
-def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title, ylabel, output_path,
-                      train_label="Train", val_label="Validation"):
-    """
-    Args:
-        train_epochs: np.ndarray
-            Epoch indices for training values.
-        train_values: np.ndarray
-            Training metric values.
-        val_epochs: np.ndarray
-            Epoch indices for validation values.
-        val_values: np.ndarray
-            Validation metric values.
-        title: str
-            Plot title.
-        ylabel: str
-            Plot y-axis label.
-        output_path: Path
-            Destination image path.
-        return: None
-            Saves the figure to disk.
-    """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel, train_label, val_label)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
 
 
 def _build_rollout_summary(true_rollout, pred_rollout):
@@ -342,152 +415,3 @@ def plot_validation_diagnostics(true_rollout, pred_rollout, output_dir, output_p
         field_summary = rollout_summary["fields"][field_name]
         _plot_prediction_target_scatter(field_summary, scatter_path)
         _plot_edge_error_correlation(field_summary, correlation_path)
-
-
-def _save_dual_axis_loss_rollout(train_epochs, train_loss, val_epochs, val_loss, rollout_error, output_path):
-    """
-    Args:
-        train_epochs: np.ndarray
-            Epoch indices for training values.
-        train_loss: np.ndarray
-            Training loss values.
-        val_epochs: np.ndarray
-            Epoch indices for validation values.
-        val_loss: np.ndarray
-            Validation loss values.
-        rollout_error: np.ndarray
-            Validation rollout error values (same length as val_epochs).
-        output_path: Path
-            Destination image path.
-        return: None
-    """
-    fig, ax_left = plt.subplots(figsize=(10, 6))
-    _draw_dual_axis_loss_rollout(ax_left, train_epochs, train_loss, val_epochs, val_loss, rollout_error)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _draw_dual_axis_loss_rollout(ax_left, train_epochs, train_loss, val_epochs, val_loss, rollout_error):
-    """
-    Args:
-        ax_left: matplotlib.axes.Axes
-            Primary axis (loss scale).
-        train_epochs: np.ndarray
-            Epoch indices for training values.
-        train_loss: np.ndarray
-            Training loss values.
-        val_epochs: np.ndarray
-            Epoch indices for validation values.
-        val_loss: np.ndarray
-            Validation loss values.
-        rollout_error: np.ndarray
-            Validation rollout error values.
-        return: None
-    """
-    line_train, = ax_left.plot(train_epochs, train_loss, label="Train Loss", linewidth=2.0)
-    line_val = None
-    if len(val_loss) > 0:
-        line_val, = ax_left.plot(val_epochs, val_loss, label="Val Loss", linewidth=2.0, marker="o")
-    ax_left.set_xlabel("Epoch")
-    ax_left.set_ylabel("Loss")
-    ax_left.grid(True, alpha=0.3)
-
-    lines = [line_train]
-    if line_val is not None:
-        lines.append(line_val)
-
-    if len(rollout_error) > 0:
-        ax_right = ax_left.twinx()
-        line_rollout, = ax_right.plot(val_epochs, rollout_error, label="Val Rollout Error",
-                                      linewidth=2.0, marker="s", color="tab:green", linestyle="--")
-        ax_right.set_ylabel("Rollout Error")
-        lines.append(line_rollout)
-
-    ax_left.set_title("Loss & Rollout Error vs Epoch")
-    ax_left.legend(handles=lines, loc="best")
-
-
-def _save_lr_curve(epochs, lr_values, output_path):
-    """
-    Args:
-        epochs: np.ndarray
-            Epoch indices.
-        lr_values: np.ndarray
-            Learning rate per epoch.
-        output_path: Path
-            Destination image path.
-        return: None
-    """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    _draw_lr_curve(ax, epochs, lr_values)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _draw_lr_curve(ax, epochs, lr_values):
-    """
-    Args:
-        ax: matplotlib.axes.Axes
-            Target axis.
-        epochs: np.ndarray
-            Epoch indices.
-        lr_values: np.ndarray
-            Learning rate per epoch.
-        return: None
-    """
-    ax.plot(epochs, lr_values, linewidth=2.0, color="tab:purple")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Learning Rate")
-    ax.set_title("Learning Rate vs Epoch")
-    ax.grid(True, alpha=0.3)
-
-
-def plot_training_history(trainer):
-    """
-    Args:
-        trainer: Trainer
-            Trainer instance holding the epoch histories.
-        return: None
-            Saves end-of-training history plots.
-    """
-    print("\nTraining complete!")
-    print(f"Models saved to: {trainer.model_dir}")
-
-    model_dir = Path(trainer.model_dir)
-    train_epochs = np.arange(len(trainer.train_epoch_loss_history))
-    val_epochs = np.asarray(trainer.val_epochs_history)
-    rollout_error = np.asarray(trainer.val_rollout_error_history)
-
-    _save_dual_axis_loss_rollout(train_epochs, np.asarray(trainer.train_epoch_loss_history),
-                                 val_epochs, np.asarray(trainer.val_epoch_loss_history),
-                                 rollout_error, model_dir / "loss_rollout_vs_epoch.png")
-
-    _save_epoch_curve(train_epochs, np.asarray(trainer.train_epoch_relative_mae_history), val_epochs,
-                      np.asarray(trainer.val_epoch_relative_mae_history),
-                      "Relative MAE vs Epoch", "Relative MAE",
-                      model_dir / "relative_mae_vs_epoch.png")
-
-    has_lr = len(trainer.lr_history) > 0
-    if has_lr:
-        _save_lr_curve(train_epochs, np.asarray(trainer.lr_history), model_dir / "lr_vs_epoch.png")
-
-    summary_figure, axes = plt.subplots(1, 3, figsize=(18, 5))
-    _draw_dual_axis_loss_rollout(axes[0], train_epochs, np.asarray(trainer.train_epoch_loss_history),
-                                 val_epochs, np.asarray(trainer.val_epoch_loss_history), rollout_error)
-    _draw_epoch_curve(axes[1], train_epochs, np.asarray(trainer.train_epoch_relative_mae_history), val_epochs,
-                      np.asarray(trainer.val_epoch_relative_mae_history),
-                      "Relative MAE vs Epoch", "Relative MAE")
-    if has_lr:
-        _draw_lr_curve(axes[2], train_epochs, np.asarray(trainer.lr_history))
-    else:
-        axes[2].axis("off")
-    summary_figure.tight_layout()
-    summary_figure.savefig(model_dir / "training_history.png")
-    plt.close(summary_figure)
-
-    print(f"Total training steps: {len(trainer.train_history)}")
-    print(f"Final training loss: {trainer.train_history[-1]:.6f}")
-    if hasattr(trainer, "rollout_all_step_error"):
-        print(f"Final rollout error: {trainer.rollout_all_step_error:.6f}")
