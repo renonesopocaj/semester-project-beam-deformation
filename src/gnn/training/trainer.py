@@ -51,7 +51,8 @@ class Trainer:
     train_acc_loss: list[float]
     train_stress_loss: list[float]
 
-    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler, training_id, run, model_root):
+    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler, training_id, run,
+                 model_root):
         """
         Pure constructor: receives all identity and external resources from the
         caller.  Does NOT generate training_id, call wandb.init(), or decide
@@ -351,20 +352,27 @@ class Trainer:
         # Compute rollout on given dataloader
         true_rollout, pred_rollout, rollout_error = self._run_rollout(test_dataloader, node_stats, edge_stats,
                                                                       target_stats, dt)
+        # make sure exists
+        path_split_name = self.model_evaluation_dir / split_name
+        path_split_name.mkdir(parents=True, exist_ok = True)
         # Create plots of rollout
-        gif_path = self.model_evaluation_dir / split_name / f"{split_name}_beam_comparison.gif"
-        volume_png_path = self.model_evaluation_dir / split_name / f"{split_name}_volume_change.png"
+        gif_path = path_split_name / f"{split_name}_beam_comparison.gif"
+        volume_png_path = path_split_name / f"{split_name}_volume_change.png"
+        print("Plotting volume change...")
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        print("Plotting comparison gif...")
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
                                  L=1.0, W=0.1, D=0.04, # FIXME: hardcoded
                                  gif_path=gif_path,
                                  fps=4, bbox_only_on_true=False, verbose=False)
         # Plot non rollout values
+        print("Plotting non rollout values...")
         plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir=self.model_evaluation_dir / split_name,
+                                              output_dir= path_split_name,
                                               filename_prefix=split_name)
+        print("Plotting rollout values...")
         plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir=self.model_evaluation_dir / split_name,
+                                              output_dir= path_split_name,
                                               filename_prefix=split_name)
 
         # Save

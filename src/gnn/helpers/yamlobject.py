@@ -72,6 +72,12 @@ class PreprocessYaml:
             self.edge_channels = flattened_cfg["edge_channels"]
         if "node_channels" in flattened_cfg:
             self.node_channels = flattened_cfg["node_channels"]
+        if "train_dir" in flattened_cfg:
+            self.train_dir = flattened_cfg["train_dir"]
+        if "test_dir" in flattened_cfg:
+            self.test_dir = flattened_cfg["test_dir"]
+        if "save_dir_val" in flattened_cfg:
+            self.save_dir_val = flattened_cfg["save_dir_val"]
 
 
 class TrainYaml:

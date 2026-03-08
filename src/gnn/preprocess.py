@@ -327,13 +327,6 @@ def main(cfg):
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    # note: this is hardcoded to be quicker, but I could have just saved the shape[0] of the node and edge tensor
-    with open_dict(cfg):
-        # note numerical feat resp 15 and 12, + 1 categorical
-        cfg.node_channels = 16 if cfg_obj.displacement is True else 13
-        cfg.edge_channels = 12 if cfg_obj.displacement is True else 8
-
-    OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
     # Where to save results
     save_dir_train = processed_dataset_dir / "train"
     save_dir_test = processed_dataset_dir / "test"
@@ -342,6 +335,17 @@ def main(cfg):
     graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
+
+    # note: this is hardcoded to be quicker, but I could have just saved the shape[0] of the node and edge tensor
+    with open_dict(cfg):
+        # note numerical feat resp 15 and 12, + 1 categorical
+        cfg.node_channels = 16 if cfg_obj.displacement is True else 13
+        cfg.edge_channels = 12 if cfg_obj.displacement is True else 8
+        cfg.train_dir = save_dir_train
+        cfg.test_dir = save_dir_test
+        cfg.val_dir = save_dir_val
+    OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
+
     # Create preprocessors object
     preprocessor_train = create_preprocessor("train", cfg_obj, None)
     preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train)

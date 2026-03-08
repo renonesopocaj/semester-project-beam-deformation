@@ -286,7 +286,7 @@ def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_build
     return trainer, next_epoch
 
 
-def load_trainer_for_eval(checkpoint_path, preprocess_cfg, device, model_root, model):
+def load_trainer_for_eval(checkpoint_path, preprocess_cfg, device, model_root, model, loss_type, training_id):
     """
     Load a minimal Trainer from a checkpoint for evaluation only.
     Restores the model weights and the preprocessing config needed by
