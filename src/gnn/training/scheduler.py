@@ -1,8 +1,12 @@
 import torch
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts
 from abc import ABC, abstractmethod
+from typing import Any
 
 class SchedulerWrapper(ABC):
+    scheduler: Any
+    save: bool
+    stop: bool
     """
     Wrapper around a PyTorch LR scheduler that provides a uniform interface
     for all three strategies (step, plateau, cosine) and exposes early-stopping
@@ -84,6 +88,11 @@ class SchedulerWrapper(ABC):
         self.stop = state["stop"]
 
 class PlateauEarlyStoppingWrapper(SchedulerWrapper):
+    best_metric: float
+    no_improve_count: int
+    no_improve_count: int
+    plateau_threshold: float
+    early_stopping_patience: float
 
     def __init__(self, scheduler, early_stopping_patience, plateau_threshold):
         """
