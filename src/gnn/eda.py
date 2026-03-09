@@ -4,6 +4,7 @@ import yaml
 from src.gnn.helpers.yamlobject import EdaYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d, build_edge_features,
                                                   build_valued_node_features)
+from src.gnn.preprocess import TrainPreprocessor
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -129,7 +130,7 @@ def _eda(cfg):
             # Accumulate to out_graphs for stats computation
             categorical_node_features.append(is_bc)
             # (4, N, 3)
-            valued_node_features.append(build_valued_node_features(_x, _v, rest_x0, _node_force, ))
+            valued_node_features.append()
             edge_features.append(build_edge_features(_x, rest_x0, graph.edge_index, True))
             out_graphs.append(Data(edge_index=graph.edge_index, t=graph.time, y_acc_t=_a, x_pos_t=_x, x_vel_t=_v))
             targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -148,30 +149,13 @@ def plot_all_distributions(eda_obj):
             Object holding EDA attributes as (lists of) torch.Tensors
     """
     for key, val in eda_obj.__dict__.items():
-        pass
-        # plot_distribution(key, val)
-
-    mean_vel, stddev_vel = compute_isotropic_stats((eda_obj.velocity_x, eda_obj.velocity_y, eda_obj.velocity_z))
-    print(f"Mean and stddev of velocity are {mean_vel}, {stddev_vel}")
-    plot_distribution_compare("velocity_x", eda_obj.velocity_x, mean_vel, stddev_vel, "")
-    plot_distribution_compare("velocity_y", eda_obj.velocity_y, mean_vel, stddev_vel, "")
-    plot_distribution_compare("velocity_z", eda_obj.velocity_z, mean_vel, stddev_vel, "")
-
-    mean_acc, stddev_acc = compute_isotropic_stats((eda_obj.acceleration_x, eda_obj.acceleration_y,
-                                                    eda_obj.acceleration_z))
-    print(f"Mean and stddev of acceleration are {mean_acc}, {stddev_acc}")
-    plot_distribution_compare("acceleration_x", eda_obj.acceleration_x, mean_acc, stddev_acc, "")
-    plot_distribution_compare("acceleration_y", eda_obj.acceleration_y, mean_acc, stddev_acc, "")
-    plot_distribution_compare("acceleration_z", eda_obj.acceleration_z, mean_acc, stddev_acc, "")
-
-    mean_stress_tensor, stddev_stress_tensor = compute_isotropic_stats((eda_obj.stress_tensor,))
-    print(f"Mean and stddev of stress tensor are {mean_stress_tensor}, {stddev_stress_tensor}")
-    for idx in range(0,9):
-        plot_distribution_compare("stress_tensor", eda_obj.__getattribute__(f"stress_coord_{idx}"),
-                                  mean_stress_tensor, stddev_stress_tensor,f"Coordinate {idx}")
+        plot_distribution(key, val)
 
 def plot_distribution(name, val):
     """
+    Plots non-normalized distribution of given value, and normalized in all four ways.
+    # TODO: make plots
+
     Args:
         name: str
             Attribute name (used for titles/labels)
@@ -194,62 +178,92 @@ def plot_distribution(name, val):
     plt.tight_layout()
     plt.savefig(f"eda_artifacts/eda_{name}.png")
 
-def plot_distribution_compare(name, val, mean, std, title):
-    """
-    Args:
-        name: str
-            Attribute name (used for titles/labels)
-        val: list[torch.Tensor]
-            List of tensors to concatenate; each will be reshaped to (N, 1)
-    """
-    chunks = []
-    for t in val:
-        chunks.append(t.reshape(-1, 1))
-    x = torch.cat(chunks, dim=0).to(torch.float32)
+class Eda(TrainPreprocessor):
+    eda_obj: Any # of eda obj
 
-    mean_anisotropic = x.mean(dim=0, keepdim=True)
-    std_anisotropic = x.std(dim=0, unbiased=False, keepdim=True)
+    def __init__(self, cfg):
+        super().__init__(cfg)
 
-    x_norm_isotropic = (x - mean) / (std + EPS)
-    x_norm_isotropic = x_norm_isotropic.reshape(-1).detach().to("cpu").numpy()
-    x_norm_anis = (x - mean_anisotropic) / (std_anisotropic + EPS)
-    x_norm_anis = x_norm_anis.reshape(-1).detach().to("cpu").numpy()
+    def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
+        """
+        You previously have normalized, so here you can plot normalized version.
+        """
+        eda_obj = EdaObj()
+        # For all graphs
+        for traj in set(traj_idx):
+            print(f"Saving trajectory: {traj}")
+            graphs = [graph for idx, graph in zip(traj_idx, out_graphs) if idx == traj]
+            print(f"\tLength: {len(graphs)} timesteps")
+        eda_obj.acceleration_x.append(_a[:, 0])
+        eda_obj.acceleration_y.append(_a[:, 1])
+        eda_obj.acceleration_z.append(_a[:, 2])
+        eda_obj.von_mises.append(_von_mises)
+        eda_obj.velocity_x.append(_v[:, 0])
+        eda_obj.velocity_y.append(_v[:, 1])
+        eda_obj.velocity_z.append(_v[:, 2])
+        eda_obj.position_x.append(_x[:, 0])
+        eda_obj.position_y.append(_x[:, 1])
+        eda_obj.position_z.append(_x[:, 2])
+        eda_obj.relative_pos_x.append(_edge_attr[:, 0])
+        eda_obj.relative_pos_y.append(_edge_attr[:, 1])
+        eda_obj.relative_pos_z.append(_edge_attr[:, 2])
+        eda_obj.relative_pos_norm.append(_edge_attr[:, 3])
+        eda_obj.rest_relative_pos_x.append(_edge_attr[:, 4])
+        eda_obj.rest_relative_pos_y.append(_edge_attr[:, 5])
+        eda_obj.rest_relative_pos_z.append(_edge_attr[:, 6])
+        eda_obj.rest_relative_pos_norm.append(_edge_attr[:, 7])
+        eda_obj.stress_tensor_sum.append(graph.y_sig_t.sum(dim=1))
+        eda_obj.stress_tensor.append(graph.y_sig_t)
+        eda_obj.force_x.append(_node_force[:, 0])
+        eda_obj.force_y.append(_node_force[:, 1])
+        eda_obj.force_z.append(_node_force[:, 2])
+        eda_obj.von_mises_log.append(_von_mises_log)
+        self.eda_obj = eda_obj
 
-    bins = 200
-    hist_iso, edges = np.histogram(x_norm_isotropic, bins=bins, density=True)
-    hist_anis, _ = np.histogram(x_norm_anis, bins=edges, density=True)
-    hist_raw, _ = np.histogram(x, bins=edges, density=True)
-    ymax = max(hist_iso.max(), hist_anis.max(), hist_raw.max())
-    plt.figure()
-    plt.hist(x_norm_isotropic, label="Isotropic", color="r", bins=edges, density=True)
-    plt.hist(x_norm_anis, label="Anisotropic", color="b", bins=edges, density=True)
-    plt.hist(x, label="Not normalized", color="g", bins=edges, density=True)
-    plt.ylim(0, ymax * 1.05)
-    plt.title(f"{title} {name} distribution (normalized)")
-    plt.xlabel(f"{title} {name} (z-score)")
-    plt.ylabel(f"{name} Density")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-def compute_isotropic_stats(val_list):
-    """
-    Args:
-        name: str
-            Attribute name (used for titles/labels)
-        val: list[torch.Tensor]
-            List of tensors to concatenate; each will be reshaped to (N, 1)
-    """
-    chunks = []
-    for val in val_list:
-        for t in val:
-            chunks.append(t.reshape(-1, 1))
-    x = torch.cat(chunks, dim=0).to(torch.float32)
-    print(x)
-    mean = x.mean(dim=0, keepdim=True)
-    std = x.std(dim=0, unbiased=False, keepdim=True)
-    return mean, std
+    def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
+                          all_node_force, rest_pos_x, _categorical_node_attr):
+        """
+        Must use the same one as Validation, without normalization.
+        I will change the plotting function to not normalize.
+        """
+        # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
+        # used for NNs
+        _target = torch.concat([_a, _von_mises], dim=1)
+        self.out_graphs.append(
+            Data(
+                # targets: current time acceleration and von mises stress
+                y=_target.clone(),
+                y_acc_t=_a.clone(),
+                y_von_mises=_von_mises.clone(),
+                # (global attribute on the graph) time step of current graph
+                t=graph.time.clone(),
+                # ==================================================================
+                #                       NODE features
+                # ==================================================================
+                # x = [is_bc, position, velocity, rest_position, node_force]
+                x=_node_attr.clone(),  # this will be the NN input feature for training
+                # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed
+                # from x, v at time t and acceleration of t - 1 (previous step prediction)
+                # note: not used for NN input, used only for building next time step graph / ground truth
+                x_next=x_next[t].clone(),
+                v_next=v_next[t].clone(),
+                node_force_next=all_node_force[t + 1].clone(),
+                # all these are already in node_attr = [x, v, u, node_force], so saving them twice
+                # is only due to rollout/other
+                x_pos_t=_x.clone(),
+                x_vel_t=_v.clone(),
+                node_force=all_node_force[t].clone(),
+                rest_pos=rest_pos_x.clone(),
+                # ==================================================================
+                #                           EDGE features
+                # ==================================================================
+                edge_attr=_edge_attr.clone(),
+                # features to encode mesh connectivity in two different ways
+                edge_index=graph.edge_index.clone(),
+                x_element_connectivity=graph.x_element_connectivity.clone()
+            )
+        )
+        self.targets.append(torch.concat([_a, _von_mises], dim=1))
 
 class EdaObj:
     acceleration_x: list

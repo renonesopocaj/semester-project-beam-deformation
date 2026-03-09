@@ -16,7 +16,6 @@ from abc import ABC, abstractmethod
 
 EPS = 1e-6
 
-
 class Preprocessor(ABC):
     noiser: Noiser
     node_stats: Stats
@@ -40,7 +39,7 @@ class Preprocessor(ABC):
         for traj in set(traj_idx):
             print(f"Saving trajectory: {traj}")
             graphs = [graph for idx, graph in zip(traj_idx, out_graphs) if idx == traj]
-            print(f"  Length: {len(graphs)} timesteps")
+            print(f"\tLength: {len(graphs)} timesteps")
             file_path = save_dir / f"graph_{traj:02d}.pt"
             torch.save(graphs, file_path)
 
@@ -156,6 +155,7 @@ class Preprocessor(ABC):
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr):
         raise NotImplementedError("_normalize_append_outgraphs")
+
 
 class TrainPreprocessor(Preprocessor):
 
