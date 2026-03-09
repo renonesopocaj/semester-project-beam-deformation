@@ -86,10 +86,11 @@ class Preprocessor(ABC):
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
             x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
             v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
+            rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3), before noise
             x, v = self.noiser.add_noise_train(x, v, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
-            rest_pos_x = x[0]  # Rest (first) mesh position (N, 3)
+            # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3) FIXME: does it make any difference?
             # x_node_force is the force (scalar) in every point (x,y,z) of the graph at time t
             all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)  # (T, N, 3)
             # .x_bc contains 0,1 value with 1 = fixed, 0 = free
@@ -121,11 +122,8 @@ class Preprocessor(ABC):
 
                 # accumulate all graphs to out_graphs for stats computation
                 self.categorical_node_features.append(boundary_condition)
-                # concatenate _x, _v, rest_pos_x, _node_force and optionally x_minus_u
-                self.valued_node_features.append(
-                    build_valued_node_features(_x, _v, rest_pos_x, _node_force, cfg.displacement))
-                self.edge_features.append(build_edge_features(_x, rest_pos_x, graph.edge_index,
-                                                              cfg.displacement))
+                self.valued_node_features.append(_node_attr.clone())
+                self.edge_features.append(_edge_attr.clone())
                 # Appends and creates PyG data object for both val and train
                 # For val it's already normalized
                 self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
@@ -182,7 +180,7 @@ class TrainPreprocessor(Preprocessor):
         print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
         print(f"targets.shape = {self.targets[0].shape}")
-        self.target_stats = self.normalizer.compute_stats(self.targets, 0)
+        self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
 
     def _load_stats(self, cfg):
         pass

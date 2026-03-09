@@ -114,7 +114,7 @@ class ZIsotropicNormalizer(Normalizer):
             count[i + 2] = pooled_count
 
         mean = sum_val / count
-        var = (sum_sq / count) - (mean ** 2)
+        var = torch.clamp((sum_sq / count) - (mean ** 2), min=0.0)
         std = torch.sqrt(var)
 
         return Stats(mean=mean, std=std)
@@ -131,7 +131,7 @@ class ZAnisotropicZNormalizer(Normalizer):
             sum_sq += (tensor ** 2).sum(dim=0)
             count += tensor.shape[0]
         mean = sum_val / count
-        var = (sum_sq / count) - (mean ** 2)
+        var = torch.clamp((sum_sq / count) - (mean ** 2), min=0.0)
         std = torch.sqrt(var)
         return Stats(mean=mean, std=std)
 

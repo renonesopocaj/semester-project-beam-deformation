@@ -42,6 +42,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     with torch.no_grad():
         true_rollout, pred_rollout = [], []
         rest_pos = None
+        node_stats.to(device)
+        edge_stats.to(device)
+        target_stats.to(device)
 
         for t, graph_ground_truth in enumerate(test_loader):
             if rest_pos is None:
@@ -55,10 +58,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                 input_graph = graph_ground_truth
             # graph_ground_truth is ground truth, input_graph comes from autoregressive
 
-            # Predict --> denormalize prediction --> extract von mises vs acceleration FIXME: why move to cpu
+            # Predict --> denormalize prediction --> extract von mises vs acceleration
             pred = model(input_graph.to(device))
-            input_graph = input_graph.cpu()
-            pred = pred.cpu()
             pred_denorm = normalizer.denormalize(pred, target_stats)
             a = pred_denorm[:, :3]
             von_mises = pred_denorm[:, 3]
