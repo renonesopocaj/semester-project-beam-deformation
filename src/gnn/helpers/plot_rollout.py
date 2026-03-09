@@ -140,7 +140,7 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
 
     # Create GIF
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
-    print(f"GIF saved => {gif_path}")
+    print(f"\tGIF saved => {gif_path}")
 
 TARGET_FIELDS = [
     ("acc_x", "Acceleration X"),

@@ -339,9 +339,9 @@ def main(cfg):
         # note numerical feat resp 15 and 12, + 1 categorical
         cfg.node_channels = 16 if cfg_obj.displacement is True else 13
         cfg.edge_channels = 12 if cfg_obj.displacement is True else 8
-        cfg.train_dir = save_dir_train
-        cfg.test_dir = save_dir_test
-        cfg.val_dir = save_dir_val
+        cfg.train_dir = save_dir_train.as_posix()
+        cfg.test_dir = save_dir_test.as_posix()
+        cfg.val_dir = save_dir_val.as_posix()
     OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
 
     # Create preprocessors object

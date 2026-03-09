@@ -9,7 +9,7 @@ from src.gnn.training.rollout import do_rollout
 from src.gnn.helpers.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
     plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
 from src.gnn.preprocessing.normalizer import NormalizerFactory
-from src.gnn.helpers.plot_rollout import plot_validation_diagnostics_norollout
+from src.gnn.helpers.misc import plot_validation_diagnostics_norollout
 
 def loss_factory(loss_type):
     """
@@ -358,22 +358,22 @@ class Trainer:
         # Create plots of rollout
         gif_path = path_split_name / f"{split_name}_beam_comparison.gif"
         volume_png_path = path_split_name / f"{split_name}_volume_change.png"
-        print("Plotting volume change...")
+        print("\tPlotting volume change...")
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-        print("Plotting comparison gif...")
+        print("\tPlotting comparison gif...")
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
                                  L=1.0, W=0.1, D=0.04, # FIXME: hardcoded
                                  gif_path=gif_path,
                                  fps=4, bbox_only_on_true=False, verbose=False)
-        print("Plotting rollout error vs timestep...")
+        print("\tPlotting rollout error vs timestep...")
         rollout_error_path = path_split_name / f"{split_name}_rollout_error_vs_timestep.png"
         plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path)
         # Plot non rollout values
-        print("Plotting non rollout values...")
+        print("\tPlotting non rollout values...")
         plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
                                               output_dir= path_split_name,
                                               filename_prefix=split_name)
-        print("Plotting rollout values...")
+        print("\tPlotting rollout values...")
         plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
                                               output_dir= path_split_name,
                                               filename_prefix=split_name)
