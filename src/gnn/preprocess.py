@@ -71,7 +71,7 @@ class Preprocessor(ABC):
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Processing trajectories")
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
         for idx_file, filename in pbar:
-            pbar.set_description(f"{filename.name}")
+            # pbar.set_description(f"{filename.name}")
             # print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
             dataloader = torch.load(filename, weights_only=False)
 

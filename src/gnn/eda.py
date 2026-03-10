@@ -57,6 +57,10 @@ def plot_distribution(attr_name, eda_obj_list, labels):
         _x = torch.cat(_chunks, dim=0).to(torch.float32)
         _x_np = _x.reshape(-1).detach().to(DEVICE).numpy()
         chunks_list.append(_x_np)
+        del _chunks
+        del _val
+        del _x
+        del _x_np
 
     fig, ax_left = plt.subplots(figsize=(10, 6))
     ax_right = ax_left.twinx()
@@ -82,6 +86,11 @@ def plot_distribution(attr_name, eda_obj_list, labels):
     plt.tight_layout()
     plt.savefig(f"{SAVE_DIR}/eda_{attr_name}.png", dpi=150)
     plt.close(fig)
+    del handles_left
+    del labels_left
+    del handles_right
+    del labels_right
+    del chunks_list
 
 
 class EdaPreprocessor(TrainPreprocessor):
@@ -155,6 +164,13 @@ class EdaPreprocessor(TrainPreprocessor):
                     eda_obj.rest_relative_pos_norm.append(graph.edge_attr[:, 7])
 
         self.eda_obj = eda_obj
+        del eda_obj
+        del pbar
+        del has_displacement
+        del self.targets
+        del self.categorical_node_features
+        del self.valued_node_features
+        del self.edge_features
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, von_mises_log):
@@ -194,6 +210,7 @@ class EdaPreprocessor(TrainPreprocessor):
             )
         )
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
+        del _target
 
 
 class EdaObj:
@@ -294,10 +311,24 @@ def main(cfg):
                        preprocessor_train_z_anisotr_norm.eda_obj, preprocessor_train_rob_isotr_norm.eda_obj,
                        preprocessor_train_rob_anisotr_norm.eda_obj]
 
+    del preprocessor_train_z_isotr_norm
+    del preprocessor_train_z_anisotr_norm
+    del preprocessor_train_rob_isotr_norm
+    del preprocessor_train_rob_anisotr_norm
+    del cfg_obj_z_isotr_norm
+    del cfg_obj_z_anisotr_norm
+    del cfg_obj_rob_isotr_norm
+    del cfg_obj_rob_anisotr_norm
+
     print("Starting to plot all distributions")
     plot_all_distributions(all_eda_obj_arg, LABELS)
     print("Starting to generate ground truth GIFs...")
     generate_ground_truth_gifs(preprocessor_train_nonorm)
+
+    del all_eda_obj_arg
+    del preprocessor_train_nonorm
+    del cfg_obj_nonorm
+    del graphs_dir_train
 
 
 def generate_ground_truth_gifs(preprocessor):
@@ -324,6 +355,12 @@ def generate_ground_truth_gifs(preprocessor):
         print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")
         make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04,
                               gif_path=gif_path, fps=4, verbose=False)
+        del gif_path
+        del traj_graphs
+
+    del traj_idx_list
+    del out_graphs
+    del gif_dir
 
 
 if __name__ == "__main__":
