@@ -4,31 +4,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 class SchedulerWrapper(ABC):
-    scheduler: Any
-    save: bool
-    stop: bool
     """
     Wrapper around a PyTorch LR scheduler that provides a uniform interface
     for all three strategies (step, plateau, cosine) and exposes early-stopping
     and pre-restart-save signals.
-
-    Attributes:
-        scheduler_type: str
-            One of "step", "plateau", "cosine".
-        scheduler: torch.optim.lr_scheduler._LRScheduler or ReduceLROnPlateau
-        early_stopping_patience: int
-            Epochs without improvement before setting the stop flag (plateau only).
-        plateau_threshold: float
-            Minimum relative change considered as improvement (plateau only).
-        best_metric: float
-            Best observed metric value seen so far (plateau only).
-        no_improve_count: int
-            Consecutive epochs without improvement (plateau only).
-        stop: bool
-            Whether the early-stopping criterion has been met.
-        save: bool
-            Whether the model should be saved before the next cosine restart.
     """
+    scheduler: Any # scheduler torch object
+    save: bool # to save checkpoint of model
+    stop: bool # to stop training
 
     def __init__(self, scheduler):
         """

@@ -6,10 +6,10 @@ import torch.nn.functional as F
 import wandb
 
 from src.gnn.training.rollout import do_rollout
-from src.gnn.helpers.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
-    plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
+from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
+                                             plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
 from src.gnn.preprocessing.normalizer import NormalizerFactory
-from src.gnn.helpers.misc import plot_validation_diagnostics_norollout
+from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout
 
 def loss_factory(loss_type):
     """
@@ -141,7 +141,7 @@ class Trainer:
         metrics = {
             "loss": self.loss_fn(pred, target).item(),
             "relative_mae": relative_mae,
-            "acc_loss": self.loss_fn(pred[:, :3].contiguous(), target[:, :3].contiguous()).item(),
+            "acc_loss": self.loss_fn(pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()).item(),
             "stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()).item(),
         }
         for target_idx, target_name in enumerate(self.target_names):

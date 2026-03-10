@@ -61,7 +61,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             # Predict --> denormalize prediction --> extract von mises vs acceleration
             pred = model(input_graph.to(device))
             pred_denorm = normalizer.denormalize(pred, target_stats)
-            a = pred_denorm[:, :3]
+            a = pred_denorm[:, 0:3]
             von_mises = pred_denorm[:, 3]
             # Get ground truth (graph_ground_truth) targets
             von_mises_true = graph_ground_truth.y_von_mises
@@ -119,6 +119,7 @@ def build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos,
     input_graph = ground_truth_graph
     # ---------------------- Nodes ----------------------
     # Obtain BCs (cannot change so always ground truth)
+    # FIXME: hardcoded 0
     boundary_condition = ground_truth_graph.x[:, 0]
     categorical_node_features = boundary_condition.unsqueeze(1)
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph

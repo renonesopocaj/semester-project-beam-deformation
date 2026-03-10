@@ -3,7 +3,7 @@ import torch
 import yaml
 from torch_geometric.loader import DataLoader
 
-from src.gnn.helpers.yamlobject import PreprocessYaml, TrainYaml
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
 from src.gnn.preprocessing.stats import load_stats

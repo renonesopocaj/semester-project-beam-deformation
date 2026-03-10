@@ -1,6 +1,6 @@
 from pathlib import Path
-from src.gnn.helpers.plot_rollout import (_build_rollout_summary, _plot_prediction_target_scatter, TARGET_FIELDS,
-                                          _plot_edge_error_correlation)
+from src.gnn.validation.plot_rollout import (_build_rollout_summary, _plot_prediction_target_scatter, TARGET_FIELDS,
+                                             _plot_edge_error_correlation)
 
 def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix):
     """

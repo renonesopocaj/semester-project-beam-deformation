@@ -16,8 +16,8 @@ from src.gnn.training.trainer import Trainer
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-from src.gnn.helpers.yamlobject import TrainYaml, PreprocessYaml
-from src.gnn.helpers.train_plots import plot_training_history
+from src.gnn.misc_helpers.yamlobject import TrainYaml, PreprocessYaml
+from src.gnn.validation.train_plots import plot_training_history
 from src.gnn.training.checkpointing import (save_checkpoint_bundle, build_trainer_from_checkpoint, model_builder,
                                             optimizer_builder)
 
@@ -115,8 +115,8 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         OmegaConf.save(preprocess_dict, trainer.model_dir / "preprocess.yaml")
 
     sched_type = cfg.scheduler_cfg["type"]
-    print(f"Training ID: {trainer.training_id}\n\tLearning rate: {cfg.initial_lr}\n\tLR scheduler: {sched_type}\n\t"
-          f"Total epochs: {cfg.total_epochs}\n\tStart epoch: {start_epoch}\n\t"
+    print(f"Training ID: {trainer.training_id}\n\tInitial learning rate: {cfg.initial_lr}\n\tLR scheduler: {sched_type}"
+          f"\n\tTotal epochs: {cfg.total_epochs}\n\tStart epoch: {start_epoch}\n\t"
           f"Validation interval: {cfg.validation_interval}\n\t"
           f"Loss type: {cfg.loss_type}\n\tUsing wandb: {cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
 
@@ -152,11 +152,9 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             # tell me if it's correct
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
                                    "rollout_error": f"{trainer.rollout_all_step_error:.6f}",
-                                   "learning rate": f"{trainer.scheduler}",
+                                   "learning rate": f"{trainer.optimizer.param_groups[0]['lr']}",
                                    "error": f"{trainer.val_epoch_relative_mae_history[-1]}"
                                    })
-            # print(f"\nEpoch {epoch}: Train Loss = {trainer.loss:.6f}, "
-            #       f"Validation Rollout Error = {trainer.rollout_all_step_error:.6f}")
         else:
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
 
@@ -203,19 +201,6 @@ def main(cfg):
                                              edge_stats=edge_stats, target_stats=target_stats, dt=dt,
                                              split_name="validation")
     print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
-
-    # Test model from an already seen trajectory (took from training set)
-    # FIXME: training graph have stuff like rest_pos which is not set in preprocess and is set only for validation
-    # FIXME: add it for only the first graph -- if it's ok, maybe it's not and I need it for all the graphs in the
-    #  trajectory. Worst case see how heavier it is to add it for all of the graphs.
-    # print("Train-sample dataset (seen trajectory):")
-    # train_files = sorted([f for f in os.listdir(train_cfg.train_dir) if f.startswith("graph_") and f.endswith(".pt")])
-    # train_sample_data = torch.load(os.path.join(train_cfg.train_dir, train_files[0]), map_location=device, weights_only=False)
-    # train_sample_dataloader = DataLoader(train_sample_data, batch_size=1, shuffle=False)
-    # train_rollout_error = trainer.final_test(test_dataloader=train_sample_dataloader, node_stats=node_stats,
-    #                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt,
-    #                                          split_name="sanity")
-    # print(f"\nTrain-sample rollout error: {train_rollout_error:.6f}")
 
     # Final checkpoint
     final_ckpt_dir = trainer.model_dir / f"checkpoint_epoch_{train_cfg.total_epochs - 1}"

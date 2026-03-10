@@ -3,12 +3,19 @@ import matplotlib.pyplot as plt
 import imageio
 import torch
 from matplotlib.ticker import FuncFormatter
-from src.gnn.helpers.mesh_build import (compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity,
-                                        to_numpy, update_surface_collection)
+from src.gnn.validation.mesh_build_numerical import (compute_coordinate_bounds, extract_surface_faces, extract_tetra_connectivity,
+                                                     to_numpy, update_surface_collection)
 from pathlib import Path
-from src.gnn.helpers.mesh_build import volume
+from src.gnn.validation.mesh_build_numerical import volume
 
 RELATIVE_ERROR_CLIP = 5.0  # 500 %
+TARGET_FIELDS = [
+    ("acc_x", "Acceleration X"),
+    ("acc_y", "Acceleration Y"),
+    ("acc_z", "Acceleration Z"),
+    ("von_mises", "von Mises"),
+]
+
 
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
@@ -141,14 +148,6 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
     # Create GIF
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
     print(f"\tGIF saved => {gif_path}")
-
-TARGET_FIELDS = [
-    ("acc_x", "Acceleration X"),
-    ("acc_y", "Acceleration Y"),
-    ("acc_z", "Acceleration Z"),
-    ("von_mises", "von Mises"),
-]
-
 
 def _extract_scalar(graph, field_name):
     """

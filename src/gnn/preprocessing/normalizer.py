@@ -30,6 +30,8 @@ class NormalizerFactory:
                 return RobustIsotropicNormalizer()
             else:
                 return RobustAnisotropicNormalizer()
+        elif normalize_method.lower() == "none":
+            return NoNormalizer()
         else:
             raise NotImplementedError(f"Unknown normalizer method: {normalize_method}")
 
@@ -79,6 +81,47 @@ class Normalizer(ABC):
             robust stats with isotropic pooling on triplets
         """
         raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
+
+class NoNormalizer(Normalizer):
+
+    def compute_stats(self, tensor_list, split_idx):
+        assert split_idx % 3 == 0
+
+        sum_val = torch.zeros(tensor_list[0].shape[1],device=tensor_list[0].device, dtype=tensor_list[0].dtype)
+        sum_sq = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+        count = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+
+        for tensor in tensor_list:
+            # sum across first dimension, i.e. (N, #features) --> (#features) tensor of means (for each feature,
+            # the mean along all coordinates)
+            sum_val += tensor.sum(dim=0)
+            sum_sq += (tensor ** 2).sum(dim=0)
+            count += tensor.shape[0]
+
+        for i in range(0, split_idx, 3):
+            pooled_sum = sum_val[i] + sum_val[i + 1] + sum_val[i + 2]
+            pooled_sum_sq = sum_sq[i] + sum_sq[i + 1] + sum_sq[i + 2]
+            pooled_count = count[i] * 3
+
+            sum_val[i] = pooled_sum
+            sum_val[i + 1] = pooled_sum
+            sum_val[i + 2] = pooled_sum
+
+            sum_sq[i] = pooled_sum_sq
+            sum_sq[i + 1] = pooled_sum_sq
+            sum_sq[i + 2] = pooled_sum_sq
+
+            count[i] = pooled_count
+            count[i + 1] = pooled_count
+            count[i + 2] = pooled_count
+
+        mean = sum_val / count
+        mean = torch.zeros(mean.shape)
+        var = torch.clamp((sum_sq / count) - (mean ** 2), min=0.0)
+        std = torch.sqrt(var)
+        std = torch.ones(std.shape)
+
+        return Stats(mean=mean, std=std)
 
 class ZIsotropicNormalizer(Normalizer):
 

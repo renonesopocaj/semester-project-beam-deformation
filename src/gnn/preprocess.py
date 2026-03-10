@@ -2,7 +2,8 @@ import torch
 import json
 import hydra
 from omegaconf import OmegaConf, open_dict
-from src.gnn.helpers.yamlobject import PreprocessYaml
+from src.gnn.eda import EdaPreprocessor
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
                                                   build_edge_features,
                                                   build_valued_node_features)
@@ -113,9 +114,11 @@ class Preprocessor(ABC):
                 _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, cfg.displacement)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
+                # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
+                _von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
+                _von_mises_nolog = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
                 if cfg.mises_log:
-                    # # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
-                    _von_mises = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
+                    _von_mises = _von_mises_log
                 else:
                     _von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
 
@@ -126,7 +129,7 @@ class Preprocessor(ABC):
                 # Appends and creates PyG data object for both val and train
                 # For val it's already normalized
                 self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                                       all_node_force, rest_pos_x, _categorical_node_attr)
+                                       all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log)
 
         # --- Open: All these do nothing if split NOT train ---
         self._compute_stats_train(cfg, split_idx_edge)  # if val doesn't do anything
@@ -153,7 +156,7 @@ class Preprocessor(ABC):
 
     @abstractmethod
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
         raise NotImplementedError("_normalize_append_outgraphs")
 
 
@@ -180,13 +183,14 @@ class TrainPreprocessor(Preprocessor):
         print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
         print(f"targets.shape = {self.targets[0].shape}")
+        # isotropic acceleration iff normalizer is isotropic
         self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
 
     def _load_stats(self, cfg):
         pass
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
         # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
         # used for NNs
         self.out_graphs.append(
@@ -253,7 +257,7 @@ class ValPreprocessor(Preprocessor):
 
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
         _target = torch.concat([_a, _von_mises], dim=1)
         node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
             _edge_attr, _node_attr, _categorical_node_attr, _target)
@@ -263,6 +267,7 @@ class ValPreprocessor(Preprocessor):
                 y=target_norm,
                 y_acc_t=_a,
                 y_von_mises=_von_mises,
+                von_mises_log = _von_mises_log,
                 # (global attribute on the graph) time step of current graph
                 t=graph.time,
                 # ==================================================================
@@ -299,6 +304,8 @@ def create_preprocessor(split, cfg, save_dir_train):
         return ValPreprocessor(cfg, save_dir_train)
     elif split == "test":
         return ValPreprocessor(cfg, save_dir_train)
+    elif split == "eda":
+        return EdaPreprocessor(cfg)
     else:
         raise NotImplementedError(f"{split} not implemented")
 

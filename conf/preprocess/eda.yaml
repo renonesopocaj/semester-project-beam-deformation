@@ -1,0 +1,16 @@
+defaults:
+  - dataset: large
+  - numerical: default
+  - paths: single_direction_beam
+  - normalizer: z_anisotropic
+  - features: displacement
+  - _self_
+
+hydra:
+  run:
+    dir: hydra/outputs/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/preprocess/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false
