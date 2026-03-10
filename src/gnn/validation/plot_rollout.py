@@ -244,7 +244,7 @@ def _compute_error(true_values, pred_values, error_mode):
         pred_values: np.ndarray
             Predicted scalar values.
         error_mode: str
-            One of `absolute`, `relative`, `signed`.
+            One of `absolute`, `relative`, `signed_relative`.
         return: np.ndarray
             Nodewise error values for plotting.
     """
@@ -254,8 +254,9 @@ def _compute_error(true_values, pred_values, error_mode):
     if error_mode == "relative":
         denominator = np.maximum(np.abs(true_values), 1e-12)
         return np.abs(signed_error) / denominator
-    if error_mode == "signed":
-        return signed_error
+    if error_mode == "signed_relative":
+        denominator = np.maximum(np.abs(true_values), 1e-12)
+        return signed_error / denominator
     raise ValueError(f"Unsupported error mode: {error_mode}")
 
 
@@ -265,12 +266,12 @@ def _compute_limits(all_values, error_mode):
         all_values: np.ndarray
             Values aggregated across the full rollout.
         error_mode: str
-            One of `absolute`, `relative`, `signed`.
+            One of `absolute`, `relative`, `signed_relative`.
         return: tuple
             `(vmin, vmax)` for a stable color scale.
     """
-    if error_mode == "signed":
-        max_abs = float(np.max(np.abs(all_values)))
+    if error_mode == "signed_relative":
+        max_abs = min(float(np.max(np.abs(all_values))), RELATIVE_ERROR_CLIP)
         if max_abs == 0.0:
             max_abs = 1e-12
         return -max_abs, max_abs
@@ -311,32 +312,31 @@ def _build_rollout_summary(true_rollout, pred_rollout):
     for field_name, field_label in TARGET_FIELDS:
         target_per_step = []
         prediction_per_step = []
-        signed_errors_per_step = []
+        residual_errors_per_step = []
         absolute_errors_per_step = []
-        relative_errors_per_step = []
+        signed_relative_errors_per_step = []
         edge_error_i = []
         edge_error_j = []
 
         for true_graph, pred_graph in zip(true_rollout, pred_rollout):
             target_values = _extract_scalar(true_graph, field_name)
             prediction_values = _extract_scalar(pred_graph, field_name)
-            signed_errors = _compute_error(target_values, prediction_values, "signed")
-            absolute_errors = np.abs(signed_errors)
-            relative_errors = _compute_error(target_values, prediction_values, "relative")
+            residual_errors = prediction_values - target_values
+            absolute_errors = np.abs(residual_errors)
+            signed_relative_errors = _compute_error(target_values, prediction_values, "signed_relative")
             edge_index = to_numpy(true_graph.edge_index).astype(np.int64)
 
             target_per_step.append(target_values)
             prediction_per_step.append(prediction_values)
-            signed_errors_per_step.append(signed_errors)
+            residual_errors_per_step.append(residual_errors)
             absolute_errors_per_step.append(absolute_errors)
-            relative_errors_per_step.append(relative_errors)
-            edge_error_i.append(signed_errors[edge_index[0]])
-            edge_error_j.append(signed_errors[edge_index[1]])
+            signed_relative_errors_per_step.append(signed_relative_errors)
+            edge_error_i.append(residual_errors[edge_index[0]])
+            edge_error_j.append(residual_errors[edge_index[1]])
 
         errors_by_mode = {
             "absolute": absolute_errors_per_step,
-            "relative": relative_errors_per_step,
-            "signed": signed_errors_per_step,
+            "signed_relative": signed_relative_errors_per_step,
         }
         summary["fields"][field_name] = {
             "label": field_label,
@@ -362,7 +362,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
         field_name: str
             Scalar field identifier.
         error_mode: str
-            One of `absolute`, `relative`, `signed`.
+            Supported mode: `signed_relative`.
         output_path: Path
             Destination GIF path.
         return: None
@@ -378,17 +378,16 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     coordinate_span = rollout_summary["coordinate_span"]
     padding = rollout_summary["padding"]
     vmin, vmax = field_summary["limits_by_mode"][error_mode]
-    cmap = plt.cm.coolwarm if error_mode == "signed" else plt.cm.inferno
+    cmap = plt.cm.coolwarm if error_mode == "signed_relative" else plt.cm.inferno
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
 
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
     colorbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.75, pad=0.12)
-    if error_mode == "relative":
-        colorbar.set_label(f"{field_label} relative error [%, clipped at 500%]")
-        colorbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x * 100:.0f}%"))
-    else:
-        colorbar.set_label(f"{field_label} {error_mode} error")
+    if error_mode != "signed_relative":
+        raise ValueError(f"Unsupported rollout heatmap mode: {error_mode}")
+    colorbar.set_label(f"{field_label} signed relative error [%, clipped at \u00b1500%]")
+    colorbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x * 100:+.0f}%"))
     ax.set_xlim(coordinate_min[0] - padding[0], coordinate_max[0] + padding[0])
     ax.set_ylim(coordinate_min[1] - padding[1], coordinate_max[1] + padding[1])
     ax.set_zlim(coordinate_min[2] - padding[2], coordinate_max[2] + padding[2])
@@ -401,13 +400,9 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     poly_collection = None
     frames = []
     for timestep, (coordinates, error_values) in enumerate(zip(coordinates_per_step, error_per_step)):
-        if error_mode == "relative":
-            error_values = np.clip(error_values, 0.0, vmax)
+        error_values = np.clip(error_values, vmin, vmax)
         poly_collection = update_surface_collection(ax, faces, coordinates, error_values, cmap, norm, poly_collection)
-        if error_mode == "relative":
-            ax.set_title(f"{field_label} Relative Error [%, clipped \u2265500%], step {timestep}")
-        else:
-            ax.set_title(f"{field_label} {error_mode.title()} Error, step {timestep}")
+        ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}")
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
@@ -504,10 +499,8 @@ def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path):
 def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
-    which corresponds to the error in two versions
-    - absolute (not done currently)
-    - signed
-    - relative
+    which corresponds to the signed relative error
+    - signed_relative (percentage, clipped to +/-500%)
 
     Args:
         true_rollout: list
@@ -524,7 +517,7 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
     output_dir = Path(output_dir)
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     for field_name, field_label in TARGET_FIELDS:
-        for error_mode in ["relative", "signed"]: # possibilities = ["absolute", "relative", "signed"]
+        for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
 
