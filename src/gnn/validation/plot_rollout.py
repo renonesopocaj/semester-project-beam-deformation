@@ -201,9 +201,6 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose):
 
     poly_collection = None
     for i, graph in enumerate(trajectory_graphs):
-        if verbose:
-            print(f"Rendering frame {i}/{len(trajectory_graphs) - 1}")
-
         coords = to_numpy(graph.x_pos_t)
         vm = to_numpy(graph.von_mises).reshape(-1)
         poly_collection = update_surface_collection(ax, faces, coords, vm, cmap, norm, poly_collection)
@@ -214,7 +211,7 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose):
 
     plt.close(fig)
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
-    print(f"\tGIF saved => {gif_path}")
+    print(f"\t\tGIF saved => {gif_path}")
 
 
 def _extract_scalar(graph, field_name):

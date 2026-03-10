@@ -2,13 +2,14 @@ import torch
 import hydra
 import os
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
-from src.gnn.preprocess import TrainPreprocessor, create_preprocessor
+from src.gnn.preprocess import TrainPreprocessor
 from src.gnn.preprocessing.noiser import NoNoiser
 from src.gnn.preprocessing.build_features import compute_von_mises_3d
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
 from torch_geometric.data import Data
 from pathlib import Path
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 EPS = 1e-6
 DT = 0.08
@@ -30,6 +31,7 @@ def plot_all_distributions(eda_obj_list, labels):
     for key in eda_obj_list[0].__dict__:
         if len(getattr(eda_obj_list[0], key)) == 0:
             continue
+        print(f"\tPlotting distribution of key = {key}")
         plot_distribution(key, eda_obj_list, labels)
 
 
@@ -108,8 +110,8 @@ class EdaPreprocessor(TrainPreprocessor):
         eda_obj = EdaObj()
         has_displacement = out_graphs[0].edge_attr.shape[1] == 12
 
-        for traj in set(traj_idx):
-            print(f"EDA collecting trajectory: {traj}")
+        pbar = tqdm(sorted(set(traj_idx)), desc="EDA collecting trajectories")
+        for traj in pbar:
             for idx, graph in zip(traj_idx, out_graphs):
                 if idx != traj:
                     continue
@@ -188,7 +190,7 @@ class EdaPreprocessor(TrainPreprocessor):
                 edge_attr=_edge_attr.clone(),
                 # features to encode mesh connectivity in two different ways
                 edge_index=graph.edge_index.clone(),
-                x_element_connectivity=graph.x_element_connectivity.clone()
+                x_element_connectivity=graph.x_element_connectivity.copy()
             )
         )
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -247,12 +249,11 @@ def main(cfg):
         cfg: omegaconf.DictConfig
             Hydra-composed configuration.
     """
-    cfg_obj = PreprocessYaml(cfg)
-    cfg_obj_nonorm = cfg.copy()
-    cfg_obj_z_isotr_norm = cfg.copy()
-    cfg_obj_z_anisotr_norm = cfg.copy()
-    cfg_obj_rob_isotr_norm = cfg.copy()
-    cfg_obj_rob_anisotr_norm = cfg.copy()
+    cfg_obj_nonorm = PreprocessYaml(cfg)
+    cfg_obj_z_isotr_norm = PreprocessYaml(cfg)
+    cfg_obj_z_anisotr_norm = PreprocessYaml(cfg)
+    cfg_obj_rob_isotr_norm = PreprocessYaml(cfg)
+    cfg_obj_rob_anisotr_norm = PreprocessYaml(cfg)
 
     cfg_obj_nonorm.normalizer_method = "None"
     cfg_obj_z_isotr_norm.normalizer_method = "z"
@@ -266,15 +267,15 @@ def main(cfg):
     cfg_obj_rob_isotr_norm.isotropic_normalizer = True
     cfg_obj_rob_anisotr_norm.isotropic_normalizer = False
 
-    print(f"Preprocessing {cfg_obj.dataset_size} dataset\n" + "=" * 60)
-    print(f"\tSave dir of config.yaml = {cfg_obj.save_dir}")
-    graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
+    print(f"Preprocessing {cfg_obj_nonorm.dataset_size} dataset\n" + "=" * 60)
+    print(f"\tSave dir of config.yaml = {cfg_obj_nonorm.save_dir}")
+    graphs_dir_train = Path(cfg_obj_nonorm.raw_data_dir) / "train" / "graphs"
 
-    preprocessor_train_nonorm = create_preprocessor("eda", cfg_obj_nonorm, None)
-    preprocessor_train_z_isotr_norm = create_preprocessor("eda", cfg_obj_z_isotr_norm, None)
-    preprocessor_train_z_anisotr_norm = create_preprocessor("eda", cfg_obj_z_anisotr_norm, None)
-    preprocessor_train_rob_isotr_norm = create_preprocessor("eda", cfg_obj_rob_isotr_norm, None)
-    preprocessor_train_rob_anisotr_norm = create_preprocessor("eda", cfg_obj_rob_anisotr_norm, None)
+    preprocessor_train_nonorm = EdaPreprocessor(cfg_obj_nonorm)
+    preprocessor_train_z_isotr_norm = EdaPreprocessor(cfg_obj_z_isotr_norm)
+    preprocessor_train_z_anisotr_norm = EdaPreprocessor(cfg_obj_z_anisotr_norm)
+    preprocessor_train_rob_isotr_norm = EdaPreprocessor(cfg_obj_rob_isotr_norm)
+    preprocessor_train_rob_anisotr_norm = EdaPreprocessor(cfg_obj_rob_anisotr_norm)
 
     print("\n" + "=" * 60 + "\ntrain, no norm\n" + "=" * 60)
     preprocessor_train_nonorm.preprocess_data(cfg_obj_nonorm, graphs_dir_train, None)
@@ -288,14 +289,14 @@ def main(cfg):
     preprocessor_train_rob_anisotr_norm.preprocess_data(cfg_obj_rob_anisotr_norm, graphs_dir_train, None)
     print("\n" + "=" * 60 + "\nPreprocessing complete!")
 
-    plot_all_distributions(
-        [preprocessor_train_nonorm.eda_obj,
-         preprocessor_train_z_isotr_norm.eda_obj,
-         preprocessor_train_z_anisotr_norm.eda_obj,
-         preprocessor_train_rob_isotr_norm.eda_obj,
-         preprocessor_train_rob_anisotr_norm.eda_obj],
-        LABELS)
+    # Plots
+    all_eda_obj_arg = [preprocessor_train_nonorm.eda_obj, preprocessor_train_z_isotr_norm.eda_obj,
+                       preprocessor_train_z_anisotr_norm.eda_obj, preprocessor_train_rob_isotr_norm.eda_obj,
+                       preprocessor_train_rob_anisotr_norm.eda_obj]
 
+    print("Starting to plot all distributions")
+    plot_all_distributions(all_eda_obj_arg, LABELS)
+    print("Starting to generate ground truth GIFs...")
     generate_ground_truth_gifs(preprocessor_train_nonorm)
 
 
@@ -320,7 +321,7 @@ def generate_ground_truth_gifs(preprocessor):
             graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
 
         gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
-        print(f"Generating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")
+        print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")
         make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04,
                               gif_path=gif_path, fps=4, verbose=False)
 

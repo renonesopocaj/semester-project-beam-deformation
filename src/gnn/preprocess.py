@@ -2,7 +2,6 @@ import torch
 import json
 import hydra
 from omegaconf import OmegaConf, open_dict
-from src.gnn.eda import EdaPreprocessor
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
                                                   build_edge_features,
@@ -14,6 +13,7 @@ from src.gnn.preprocessing.noiser import Noiser, GaussianNoiser, NoNoiser
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
+from tqdm import tqdm
 
 EPS = 1e-6
 
@@ -68,9 +68,11 @@ class Preprocessor(ABC):
         split_idx_edge = 9 if cfg.displacement else 6
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
+        pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Processing trajectories")
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
-        for idx_file, filename in enumerate(filenames):
-            print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
+        for idx_file, filename in pbar:
+            pbar.set_description(f"{filename.name}")
+            # print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
             dataloader = torch.load(filename, weights_only=False)
 
             # Create list graphs_list_batch with all graphs in the file
@@ -178,11 +180,11 @@ class TrainPreprocessor(Preprocessor):
     def _compute_stats_train(self, cfg, split_idx_edge):
         # Compute statistics
         PLACEHOLDER_ALL_ISOTROPIC = self.valued_node_features[0].shape[1]
-        print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
+        # print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
         self.node_stats = self.normalizer.compute_stats(self.valued_node_features, PLACEHOLDER_ALL_ISOTROPIC)
-        print(f"edge_features.shape = {self.edge_features[0].shape}")
+        # print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
-        print(f"targets.shape = {self.targets[0].shape}")
+        # print(f"targets.shape = {self.targets[0].shape}")
         # isotropic acceleration iff normalizer is isotropic
         self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
 
@@ -218,9 +220,9 @@ class TrainPreprocessor(Preprocessor):
             self.out_graphs[t].edge_attr = _edge_features
             # target y.shape = (N, 4, 3)
             self.out_graphs[t].y = _targets
-            if t == 0:
-                print(f"The shape of x is = {self.out_graphs[0].x.shape} edge_attr = "
-                      f"{self.out_graphs[t].edge_attr.shape} out_graphs[t].y = {self.out_graphs[t].y.shape}")
+            # if t == 0:
+            #     print(f"The shape of x is = {self.out_graphs[0].x.shape} edge_attr = "
+            #           f"{self.out_graphs[t].edge_attr.shape} out_graphs[t].y = {self.out_graphs[t].y.shape}")
 
 
 class ValPreprocessor(Preprocessor):
@@ -304,8 +306,6 @@ def create_preprocessor(split, cfg, save_dir_train):
         return ValPreprocessor(cfg, save_dir_train)
     elif split == "test":
         return ValPreprocessor(cfg, save_dir_train)
-    elif split == "eda":
-        return EdaPreprocessor(cfg)
     else:
         raise NotImplementedError(f"{split} not implemented")
 
