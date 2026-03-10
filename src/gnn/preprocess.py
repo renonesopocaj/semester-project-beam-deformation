@@ -178,6 +178,7 @@ class TrainPreprocessor(Preprocessor):
         print(f"Stats saved to {stats_dir / 'stats.json'}")
 
     def _compute_stats_train(self, cfg, split_idx_edge):
+        print("\nComputing train stats...\n")
         # Compute statistics
         PLACEHOLDER_ALL_ISOTROPIC = self.valued_node_features[0].shape[1]
         # print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
@@ -187,6 +188,7 @@ class TrainPreprocessor(Preprocessor):
         # print(f"targets.shape = {self.targets[0].shape}")
         # isotropic acceleration iff normalizer is isotropic
         self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
+        print("\nFinished computing train stats\n")
 
     def _load_stats(self, cfg):
         pass
@@ -208,7 +210,9 @@ class TrainPreprocessor(Preprocessor):
 
     def _normalize_assign_features_train(self):
         # Normalize and assign features
-        for t in range(len(self.out_graphs)):
+        pbar = tqdm(range(len(self.out_graphs)), total=len(self.out_graphs), desc="Normalizing trajectories")
+        # for t in range(len(self.out_graphs)):
+        for t in pbar:
             _valued_node_features = self.normalizer.normalize(self.valued_node_features[t], self.node_stats)
             _edge_features = self.normalizer.normalize(self.edge_features[t], self.edge_stats)
             _targets = self.normalizer.normalize(self.targets[t], self.target_stats)

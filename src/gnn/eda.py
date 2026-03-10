@@ -28,10 +28,11 @@ def plot_all_distributions(eda_obj_list, labels):
             Human-readable label for each normalizer variant.
     """
     os.makedirs(SAVE_DIR, exist_ok=True)
-    for key in eda_obj_list[0].__dict__:
+    pbar = tqdm(eda_obj_list[0].__dict__, desc="Plotting distribution")
+    for key in pbar:
         if len(getattr(eda_obj_list[0], key)) == 0:
             continue
-        print(f"\tPlotting distribution of key = {key}")
+        pbar.set_postfix({"key": key})
         plot_distribution(key, eda_obj_list, labels)
 
 
@@ -124,6 +125,7 @@ class EdaPreprocessor(TrainPreprocessor):
             for idx, graph in zip(traj_idx, out_graphs):
                 if idx != traj:
                     continue
+
                 # --- Targets from graph.y ---
                 eda_obj.acceleration_x.append(graph.y[:, 0])
                 eda_obj.acceleration_y.append(graph.y[:, 1])
@@ -131,6 +133,7 @@ class EdaPreprocessor(TrainPreprocessor):
                 eda_obj.von_mises.append(graph.y[:, 3])
 
                 # --- Node features from graph.x (skip col 0 = categorical BC) ---
+                # [x, v, rest_pos, node_force, x_minus_u]
                 eda_obj.position_x.append(graph.x[:, 1])
                 eda_obj.position_y.append(graph.x[:, 2])
                 eda_obj.position_z.append(graph.x[:, 3])
@@ -143,25 +146,29 @@ class EdaPreprocessor(TrainPreprocessor):
                 eda_obj.force_x.append(graph.x[:, 10])
                 eda_obj.force_y.append(graph.x[:, 11])
                 eda_obj.force_z.append(graph.x[:, 12])
+                if has_displacement:
+                    eda_obj.displacement_pos_x.append(graph.x[:, 13])
+                    eda_obj.displacement_pos_y.append(graph.x[:, 14])
+                    eda_obj.displacement_pos_z.append(graph.x[:, 15])
 
                 # --- Edge features from graph.edge_attr ---
-                eda_obj.relative_pos_x.append(graph.edge_attr[:, 0])
-                eda_obj.relative_pos_y.append(graph.edge_attr[:, 1])
-                eda_obj.relative_pos_z.append(graph.edge_attr[:, 2])
-                eda_obj.rest_relative_pos_x.append(graph.edge_attr[:, 3])
-                eda_obj.rest_relative_pos_y.append(graph.edge_attr[:, 4])
-                eda_obj.rest_relative_pos_z.append(graph.edge_attr[:, 5])
+                eda_obj.edge_relative_pos_x.append(graph.edge_attr[:, 0])
+                eda_obj.edge_relative_pos_y.append(graph.edge_attr[:, 1])
+                eda_obj.edge_relative_pos_z.append(graph.edge_attr[:, 2])
+                eda_obj.edge_rest_relative_pos_x.append(graph.edge_attr[:, 3])
+                eda_obj.edge_rest_relative_pos_y.append(graph.edge_attr[:, 4])
+                eda_obj.edge_rest_relative_pos_z.append(graph.edge_attr[:, 5])
 
                 if has_displacement:
-                    eda_obj.displacement_pos_x.append(graph.edge_attr[:, 6])
-                    eda_obj.displacement_pos_y.append(graph.edge_attr[:, 7])
-                    eda_obj.displacement_pos_z.append(graph.edge_attr[:, 8])
-                    eda_obj.relative_pos_norm.append(graph.edge_attr[:, 9])
-                    eda_obj.rest_relative_pos_norm.append(graph.edge_attr[:, 10])
-                    eda_obj.displacement_norm.append(graph.edge_attr[:, 11])
+                    eda_obj.edge_displacement_pos_x.append(graph.edge_attr[:, 6])
+                    eda_obj.edge_displacement_pos_y.append(graph.edge_attr[:, 7])
+                    eda_obj.edge_displacement_pos_z.append(graph.edge_attr[:, 8])
+                    eda_obj.edge_relative_pos_norm.append(graph.edge_attr[:, 9])
+                    eda_obj.edge_rest_relative_pos_norm.append(graph.edge_attr[:, 10])
+                    eda_obj.edge_displacement_norm.append(graph.edge_attr[:, 11])
                 else:
-                    eda_obj.relative_pos_norm.append(graph.edge_attr[:, 6])
-                    eda_obj.rest_relative_pos_norm.append(graph.edge_attr[:, 7])
+                    eda_obj.edge_relative_pos_norm.append(graph.edge_attr[:, 6])
+                    eda_obj.edge_rest_relative_pos_norm.append(graph.edge_attr[:, 7])
 
         self.eda_obj = eda_obj
         del eda_obj
@@ -224,39 +231,43 @@ class EdaObj:
     position_x: list
     position_y: list
     position_z: list
-    relative_pos_x: list
-    relative_pos_y: list
-    relative_pos_z: list
-    relative_pos_norm: list
-    rest_relative_pos_x: list
-    rest_relative_pos_y: list
-    rest_relative_pos_z: list
-    rest_relative_pos_norm: list
+    edge_relative_pos_x: list
+    edge_relative_pos_y: list
+    edge_relative_pos_z: list
+    edge_relative_pos_norm: list
+    edge_rest_relative_pos_x: list
+    edge_rest_relative_pos_y: list
+    edge_rest_relative_pos_z: list
+    edge_rest_relative_pos_norm: list
     force_x: list
     force_y: list
     force_z: list
-    displacement_pos_x: list
-    displacement_pos_y: list
-    displacement_pos_z: list
-    displacement_norm: list
+    edge_displacement_pos_x: list
+    edge_displacement_pos_y: list
+    edge_displacement_pos_z: list
+    edge_displacement_norm: list
     rest_pos_x: list
     rest_pos_y: list
     rest_pos_z: list
+    displacement_pos_x: list
+    displacement_pos_y: list
+    displacement_pos_z: list
 
     def __init__(self):
         (self.acceleration_x, self.acceleration_y, self.acceleration_z, self.von_mises,
          self.velocity_x, self.velocity_y, self.velocity_z,
          self.position_x, self.position_y, self.position_z,
-         self.relative_pos_x, self.relative_pos_y, self.relative_pos_z, self.relative_pos_norm,
-         self.rest_relative_pos_x, self.rest_relative_pos_y, self.rest_relative_pos_z,
-         self.rest_relative_pos_norm,
-         self.force_x, self.force_y, self.force_z,
          self.displacement_pos_x, self.displacement_pos_y, self.displacement_pos_z,
-         self.displacement_norm,
-         self.rest_pos_x, self.rest_pos_y, self.rest_pos_z) = (
-            [], [], [], [], [], [], [], [], [], [],
-            [], [], [], [], [], [], [], [], [], [], [],
-            [], [], [], [], [], [], [])
+         self.force_x, self.force_y, self.force_z,
+         self.rest_pos_x, self.rest_pos_y, self.rest_pos_z,
+         # edge
+         self.edge_relative_pos_x, self.edge_relative_pos_y, self.edge_relative_pos_z, self.edge_relative_pos_norm,
+         self.edge_rest_relative_pos_x, self.edge_rest_relative_pos_y, self.edge_rest_relative_pos_z,
+         self.edge_rest_relative_pos_norm,
+         self.edge_displacement_pos_x, self.edge_displacement_pos_y, self.edge_displacement_pos_z,
+         self.edge_displacement_norm) = \
+            ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
+            [], [], [], [])
 
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda")
@@ -320,10 +331,10 @@ def main(cfg):
     del cfg_obj_rob_isotr_norm
     del cfg_obj_rob_anisotr_norm
 
-    print("Starting to plot all distributions")
+    print("="*60+"Starting to plot all distributions..."+"="*60+"\n")
     plot_all_distributions(all_eda_obj_arg, LABELS)
-    print("Starting to generate ground truth GIFs...")
-    generate_ground_truth_gifs(preprocessor_train_nonorm)
+    print("="*60+"\nStarting to generate ground truth GIFs..\n"+"="*60+"\n")
+    # generate_ground_truth_gif_all(preprocessor_train_nonorm)
 
     del all_eda_obj_arg
     del preprocessor_train_nonorm
@@ -331,7 +342,7 @@ def main(cfg):
     del graphs_dir_train
 
 
-def generate_ground_truth_gifs(preprocessor):
+def generate_ground_truth_gif_all(preprocessor):
     """
     Generate one GIF per trajectory from the no-norm preprocessor's raw graphs.
 
@@ -345,16 +356,16 @@ def generate_ground_truth_gifs(preprocessor):
     traj_idx_list = preprocessor.traj_idx_list
     out_graphs = preprocessor.out_graphs
 
-    for traj in sorted(set(traj_idx_list)):
+    pbar = tqdm(sorted(set(traj_idx_list)), desc="Ground truth GIFs")
+    for traj in pbar:
         traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
 
         for graph in traj_graphs:
             graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
 
         gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
-        print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")
-        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04,
-                              gif_path=gif_path, fps=4, verbose=False)
+        # print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")xx
+        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
         del gif_path
         del traj_graphs
 
