@@ -149,6 +149,74 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
     print(f"\tGIF saved => {gif_path}")
 
+
+def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose):
+    """
+    Create a single-panel GIF showing ground truth mesh colored by von Mises stress.
+
+    Args:
+        trajectory_graphs: list
+            List of graphs for one trajectory. Each graph must have
+            x_pos_t (N,3), von_mises (N,1), and x_element_connectivity.
+        L: float
+        W: float
+        D: float
+            Beam dimensions for aspect ratio.
+        gif_path: Path
+            Output GIF filename.
+        fps: int
+            Frames per second.
+        verbose: bool
+    """
+    frames = []
+    faces = extract_surface_faces(trajectory_graphs[0].x_element_connectivity)
+
+    coordinates_for_bounds = []
+    vm_min, vm_max = 0.0, 0.0
+    for graph in trajectory_graphs:
+        coords = to_numpy(graph.x_pos_t)
+        vm = to_numpy(graph.von_mises).reshape(-1)
+        vm_max = max(vm_max, float(np.max(vm)))
+        coordinates_for_bounds.append(coords)
+
+    coordinate_min, coordinate_max, _, _ = compute_coordinate_bounds(coordinates_for_bounds)
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+
+    cmap = plt.cm.jet
+    norm = plt.Normalize(vmin=vm_min, vmax=vm_max)
+
+    cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.75, pad=0.1)
+    cbar.set_label("von Mises Stress")
+
+    ax.set_xlim(coordinate_min[0], coordinate_max[0])
+    ax.set_ylim(coordinate_min[1], coordinate_max[1])
+    ax.set_zlim(coordinate_min[2], coordinate_max[2])
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.set_box_aspect((L * 0.1, 0.8 * W, 2.5 * D))
+    ax.view_init(elev=30, azim=45)
+
+    poly_collection = None
+    for i, graph in enumerate(trajectory_graphs):
+        if verbose:
+            print(f"Rendering frame {i}/{len(trajectory_graphs) - 1}")
+
+        coords = to_numpy(graph.x_pos_t)
+        vm = to_numpy(graph.von_mises).reshape(-1)
+        poly_collection = update_surface_collection(ax, faces, coords, vm, cmap, norm, poly_collection)
+        ax.set_title(f"Ground Truth, step {i}")
+
+        fig.canvas.draw()
+        frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
+
+    plt.close(fig)
+    imageio.mimsave(gif_path, frames, fps=fps, loop=0)
+    print(f"\tGIF saved => {gif_path}")
+
+
 def _extract_scalar(graph, field_name):
     """
     Args:

@@ -4,6 +4,8 @@ import os
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocess import TrainPreprocessor, create_preprocessor
 from src.gnn.preprocessing.noiser import NoNoiser
+from src.gnn.preprocessing.build_features import compute_von_mises_3d
+from src.gnn.validation.plot_rollout import make_ground_truth_gif
 from torch_geometric.data import Data
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -293,6 +295,34 @@ def main(cfg):
          preprocessor_train_rob_isotr_norm.eda_obj,
          preprocessor_train_rob_anisotr_norm.eda_obj],
         LABELS)
+
+    generate_ground_truth_gifs(preprocessor_train_nonorm)
+
+
+def generate_ground_truth_gifs(preprocessor):
+    """
+    Generate one GIF per trajectory from the no-norm preprocessor's raw graphs.
+
+    Args:
+        preprocessor: EdaPreprocessor
+            The non-normalized preprocessor whose out_graphs hold raw x_pos_t and y_sig_t.
+    """
+    gif_dir = Path("eda_artifacts") / "ground_truth_gifs"
+    os.makedirs(gif_dir, exist_ok=True)
+
+    traj_idx_list = preprocessor.traj_idx_list
+    out_graphs = preprocessor.out_graphs
+
+    for traj in sorted(set(traj_idx_list)):
+        traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
+
+        for graph in traj_graphs:
+            graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+
+        gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
+        print(f"Generating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")
+        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04,
+                              gif_path=gif_path, fps=4, verbose=False)
 
 
 if __name__ == "__main__":
