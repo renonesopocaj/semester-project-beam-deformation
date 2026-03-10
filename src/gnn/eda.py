@@ -14,7 +14,7 @@ EPS = 1e-6
 DT = 0.08
 LIMIT_TIMESTEPS = 50
 DEVICE = "cpu"
-
+SAVE_DIR = "eda_artifacts"
 LABELS = ["No norm", "Z isotr.", "Z anisotr.", "Robust isotr.", "Robust anisotr."]
 
 
@@ -26,7 +26,7 @@ def plot_all_distributions(eda_obj_list, labels):
         labels: list[str]
             Human-readable label for each normalizer variant.
     """
-    os.makedirs("eda_artifacts", exist_ok=True)
+    os.makedirs(SAVE_DIR, exist_ok=True)
     for key in eda_obj_list[0].__dict__:
         if len(getattr(eda_obj_list[0], key)) == 0:
             continue
@@ -78,7 +78,7 @@ def plot_distribution(attr_name, eda_obj_list, labels):
                loc="upper right", bbox_to_anchor=(0.98, 0.95))
 
     plt.tight_layout()
-    plt.savefig(f"eda_artifacts/eda_{attr_name}.png", dpi=150)
+    plt.savefig(f"{SAVE_DIR}/eda_{attr_name}.png", dpi=150)
     plt.close(fig)
 
 
@@ -307,7 +307,7 @@ def generate_ground_truth_gifs(preprocessor):
         preprocessor: EdaPreprocessor
             The non-normalized preprocessor whose out_graphs hold raw x_pos_t and y_sig_t.
     """
-    gif_dir = Path("eda_artifacts") / "ground_truth_gifs"
+    gif_dir = Path(SAVE_DIR) / "ground_truth_gifs"
     os.makedirs(gif_dir, exist_ok=True)
 
     traj_idx_list = preprocessor.traj_idx_list
