@@ -91,19 +91,27 @@ class EdaPreprocessor(TrainPreprocessor):
                     eda_obj.position_y.append(graph.x_pos_t[:, 1])
                     eda_obj.position_z.append(graph.x_pos_t[:, 2])
                     # Rest position
-                    # TODO:
+                    eda_obj.rest_pos_x.append(graph.rest_pos[:, 0])
+                    eda_obj.rest_pos_y.append(graph.rest_pos[:, 1])
+                    eda_obj.rest_pos_z.append(graph.rest_pos[:, 2])
                     # Position edges
                     eda_obj.relative_pos_x.append(graph.edge_attr[:, 0])
                     eda_obj.relative_pos_y.append(graph.edge_attr[:, 1])
                     eda_obj.relative_pos_z.append(graph.edge_attr[:, 2])
                     # Norm
-                    eda_obj.relative_pos_norm.append(graph.edge_attr[:, 3])
+                    eda_obj.relative_pos_norm.append(graph.edge_attr[:, 9])
                     # Rest position edges
-                    eda_obj.rest_relative_pos_x.append(graph.edge_attr[:, 4])
-                    eda_obj.rest_relative_pos_y.append(graph.edge_attr[:, 5])
-                    eda_obj.rest_relative_pos_z.append(graph.edge_attr[:, 6])
+                    eda_obj.rest_relative_pos_x.append(graph.edge_attr[:, 3])
+                    eda_obj.rest_relative_pos_y.append(graph.edge_attr[:, 4])
+                    eda_obj.rest_relative_pos_z.append(graph.edge_attr[:, 5])
                     # Norm
-                    eda_obj.rest_relative_pos_norm.append(graph.edge_attr[:, 7])
+                    eda_obj.rest_relative_pos_norm.append(graph.edge_attr[:, 10])
+                    # Time t - rest position edges
+                    eda_obj.displacement_pos_x.append(graph.edge_attr[:, 6])
+                    eda_obj.displacement_pos_y.append(graph.edge_attr[:, 7])
+                    eda_obj.displacement_pos_z.append(graph.edge_attr[:, 8])
+                    # Norm
+                    eda_obj.displacement_norm.append(graph.edge_attr[:, 11])
                     # Stress tensor
                     eda_obj.stress_tensor_sum.append(graph.y_sig_t.sum(dim=1))
                     eda_obj.stress_tensor.append(graph.y_sig_t)
@@ -182,6 +190,13 @@ class EdaObj:
     force_z: list
     von_mises_log: list
     stress_tensor_sum: list
+    displacement_pos_x: list
+    displacement_pos_y: list
+    displacement_pos_z: list
+    displacement_norm: list
+    rest_pos_x: list
+    rest_pos_y: list
+    rest_pos_z: list
 
     def __init__(self):
         (self.acceleration_x, self.acceleration_y, self.acceleration_z, self.von_mises, self.velocity_x,
@@ -189,8 +204,10 @@ class EdaObj:
          self.relative_pos_x, self.relative_pos_y, self.relative_pos_z, self.stress_tensor,
          self.relative_pos_norm, self.rest_relative_pos_x, self.rest_relative_pos_y,
          self.rest_relative_pos_z, self.rest_relative_pos_norm, self.force_x, self.force_y, self.force_z,
-         self.von_mises_log, self.stress_tensor_sum) = ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
-                                                        [], [], [], [], [], [], [], [])
+         self.von_mises_log, self.stress_tensor_sum, self.displacement_pos_x, self.displacement_pos_y,
+         self.displacement_pos_z, self.displacement_norm, self.rest_pos_x, self.rest_pos_y, self.rest_pos_z) = ([], [],
+            [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
+            [], [])
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda")
 def main(cfg):
