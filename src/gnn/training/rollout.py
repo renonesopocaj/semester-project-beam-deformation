@@ -87,13 +87,15 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                      acceleration=graph_ground_truth.y_acc_t,
                                      von_mises=von_mises_true,
                                      edge_index=graph_ground_truth.edge_index,
-                                     x_element_connectivity=graph_ground_truth.x_element_connectivity))
+                                     x_element_connectivity=graph_ground_truth.x_element_connectivity,
+                                     rest_pos=rest_pos))
             pred_rollout.append(Data(x_pos_t=x_predict_tp1,
                                      x_vel_t=v_predict_tp1,
                                      acceleration=a,
                                      von_mises=von_mises,
                                      edge_index=graph_ground_truth.edge_index,
-                                     x_element_connectivity=graph_ground_truth.x_element_connectivity))
+                                     x_element_connectivity=graph_ground_truth.x_element_connectivity,
+                                     rest_pos=rest_pos))
     return true_rollout, pred_rollout
 
 def build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos, node_stats, edge_stats, normalizer,

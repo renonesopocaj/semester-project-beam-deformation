@@ -1,7 +1,14 @@
-from collections import Counter
+from collections import Counter, deque
 import torch
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+try:
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
 
 
 def to_numpy(value):
@@ -141,3 +148,187 @@ def volume(V, T):
     d = V[T[:, 3], :]
     vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
     return vols
+
+
+# ---------------------------------------------------------------------------
+#  Diagnostic helpers
+# ---------------------------------------------------------------------------
+
+def compute_shortest_path_distances(edge_index, source_nodes, num_nodes):
+    """
+    Multi-source BFS on an undirected graph.
+
+    Args:
+        edge_index: np.ndarray
+            (2, E) array of edge endpoints.
+        source_nodes: np.ndarray or list
+            Node indices used as BFS sources.
+        num_nodes: int
+            Total number of nodes in the graph.
+        return: np.ndarray
+            Integer hop-distance from each node to the nearest source.
+            Unreachable nodes get distance -1.
+    """
+    adjacency = [[] for _ in range(num_nodes)]
+    for src, dst in zip(edge_index[0], edge_index[1]):
+        adjacency[int(src)].append(int(dst))
+
+    distances = np.full(num_nodes, -1, dtype=np.int64)
+    queue = deque()
+    for s in source_nodes:
+        s = int(s)
+        if distances[s] == -1:
+            distances[s] = 0
+            queue.append(s)
+
+    while queue:
+        node = queue.popleft()
+        for neighbor in adjacency[node]:
+            if distances[neighbor] == -1:
+                distances[neighbor] = distances[node] + 1
+                queue.append(neighbor)
+
+    return distances
+
+
+def extract_boundary_node_set(element_connectivity):
+    """
+    Args:
+        element_connectivity: object
+            Tetrahedral connectivity stored in a graph.
+        return: np.ndarray
+            Sorted array of unique node indices that lie on boundary faces.
+    """
+    boundary_faces = extract_surface_faces(element_connectivity)
+    return np.unique(boundary_faces.ravel())
+
+
+def compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes):
+    """
+    Cotangent-weight Laplace-Beltrami mean curvature on a triangulated surface.
+    |H_i| = 0.5 * ||Laplacian(x)_i|| / A_mixed_i, approximated via the cotangent
+    scheme.  Returns absolute mean curvature at each boundary node.
+
+    Args:
+        positions: np.ndarray
+            (N, 3) node coordinates.
+        boundary_faces: np.ndarray
+            (F, 3) triangle faces on the surface.
+        boundary_nodes: np.ndarray
+            Sorted array of boundary node indices.
+        return: (np.ndarray, np.ndarray)
+            (boundary_node_indices, curvature_values) -- arrays of equal length.
+    """
+    boundary_set = set(boundary_nodes.tolist())
+    node_to_idx = {int(n): i for i, n in enumerate(boundary_nodes)}
+    num_boundary = len(boundary_nodes)
+
+    laplacian_vec = np.zeros((num_boundary, 3), dtype=np.float64)
+    area_mixed = np.zeros(num_boundary, dtype=np.float64)
+
+    for face in boundary_faces:
+        i, j, k = int(face[0]), int(face[1]), int(face[2])
+        pi, pj, pk = positions[i], positions[j], positions[k]
+
+        eij = pj - pi
+        eik = pk - pi
+        ejk = pk - pj
+        eji = pi - pj
+        eki = pi - pk
+        ekj = pj - pk
+
+        cross_area = np.linalg.norm(np.cross(eij, eik))
+        triangle_area = 0.5 * max(cross_area, 1e-30)
+
+        def _cot_angle(u, v):
+            dot = np.dot(u, v)
+            cross_mag = np.linalg.norm(np.cross(u, v))
+            return dot / max(cross_mag, 1e-30)
+
+        cot_i = _cot_angle(eij, eik)
+        cot_j = _cot_angle(eji, ejk)
+        cot_k = _cot_angle(eki, ekj)
+
+        for node, opp_cot, edge_vec in [
+            (i, cot_k, eij), (i, cot_j, eik),
+            (j, cot_i, ejk), (j, cot_k, eji),
+            (k, cot_j, eki), (k, cot_i, ekj),
+        ]:
+            if node in boundary_set:
+                idx = node_to_idx[node]
+                laplacian_vec[idx] += opp_cot * edge_vec
+                area_mixed[idx] += triangle_area / 3.0
+
+    area_mixed = np.maximum(area_mixed, 1e-30)
+    laplacian_vec /= (2.0 * area_mixed[:, None])
+    curvature = np.linalg.norm(laplacian_vec, axis=1)
+    return boundary_nodes, curvature
+
+
+def compute_dirichlet_energy(values, edge_index):
+    """
+    Graph Dirichlet energy: E(z) = sum_{(i,j) in E} ||z_i - z_j||^2.
+
+    Args:
+        values: np.ndarray
+            (N,) or (N, D) signal on nodes.
+        edge_index: np.ndarray
+            (2, E) edge endpoints.
+        return: float
+            Scalar energy value.
+    """
+    diff = values[edge_index[0]] - values[edge_index[1]]
+    if diff.ndim == 1:
+        return float(np.sum(diff ** 2))
+    return float(np.sum(diff ** 2))
+
+
+def compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
+    """
+    Project a node signal onto the first k graph Laplacian eigenvectors and
+    return the spectral coefficients.
+
+    Args:
+        edge_index: np.ndarray
+            (2, E) edge endpoints (undirected graph assumed).
+        signal: np.ndarray
+            (N,) scalar signal on nodes.
+        num_nodes: int
+            Number of nodes.
+        k: int
+            Number of smallest eigenvalues/vectors to compute.
+        return: (np.ndarray, np.ndarray) or None
+            (eigenvalues, squared_spectral_coefficients) of length k,
+            or None if scipy is unavailable or k > num_nodes.
+    """
+    if not _HAS_SCIPY:
+        print("scipy not available -- skipping spectral analysis.")
+        return None
+    k = min(k, num_nodes - 2)
+    if k < 2:
+        return None
+
+    row = np.concatenate([edge_index[0], edge_index[1]])
+    col = np.concatenate([edge_index[1], edge_index[0]])
+    data = np.ones(len(row), dtype=np.float64)
+    adj = sp.csr_matrix((data, (row, col)), shape=(num_nodes, num_nodes))
+    adj.eliminate_zeros()
+    adj = (adj + adj.T) / 2.0
+
+    degree = np.array(adj.sum(axis=1)).ravel()
+    degree_inv_sqrt = np.where(degree > 0, 1.0 / np.sqrt(degree), 0.0)
+    D_inv_sqrt = sp.diags(degree_inv_sqrt)
+    laplacian_norm = sp.eye(num_nodes) - D_inv_sqrt @ adj @ D_inv_sqrt
+    laplacian_norm = (laplacian_norm + laplacian_norm.T) / 2.0
+
+    try:
+        eigenvalues, eigenvectors = spla.eigsh(laplacian_norm, k=k, which="SM")
+    except Exception:
+        return None
+
+    order = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[order]
+    eigenvectors = eigenvectors[:, order]
+
+    coefficients = eigenvectors.T @ signal
+    return eigenvalues, coefficients ** 2

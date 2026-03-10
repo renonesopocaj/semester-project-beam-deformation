@@ -7,7 +7,8 @@ import wandb
 
 from src.gnn.training.rollout import do_rollout
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
-                                             plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep)
+                                             plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep,
+                                             plot_mesh_diagnostics)
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout
 
@@ -377,6 +378,9 @@ class Trainer:
         plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
                                               output_dir= path_split_name,
                                               filename_prefix=split_name)
+        print("\tPlotting mesh diagnostics...")
+        plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                              output_dir=path_split_name, filename_prefix=split_name)
 
         # Save
         data = {f"{split_name}/loss": test_metrics["loss"],
