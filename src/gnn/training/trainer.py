@@ -150,18 +150,18 @@ class Trainer:
             metrics[f"{target_name}_mae"] = F.l1_loss(pred[:, target_idx], target[:, target_idx]).item()
         return metrics
 
-    def train(self, graph):
+    def train(self, batch):
         """
         Perform one training step.
         Args:
-            graph: Data
+            batch: Data
                 graph object
         """
         self.model.train()
 
         # Forward pass: the input is the whole graph
-        pred = self.model(graph)
-        target = graph.y.to(self.device)
+        pred = self.model(batch)
+        target = batch.y.to(self.device)
         # Compute loss
         loss = self.loss_fn(pred, target)
         # Backward pass
@@ -169,7 +169,7 @@ class Trainer:
         loss.backward()
         self.optimizer.step()
 
-        # Compute alternative metrics (also different from loss) on training set, i.e. pred vs targets, such as loss
+        # Compute alternative metrics (also different from loss) on training set, i.e., pred vs targets, such as loss
         # and relative mae (no rollout). NOTE: it's not validation yet
         batch_metrics = self._collect_batch_metrics(pred, target)
         # Store histories of no-rollout loss and metrics (eg relative mae)
@@ -379,8 +379,11 @@ class Trainer:
                                               output_dir= path_split_name,
                                               filename_prefix=split_name)
         print("\tPlotting mesh diagnostics...")
-        plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                              output_dir=path_split_name, filename_prefix=split_name)
+        try:
+            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                  output_dir=path_split_name, filename_prefix=split_name)
+        except Exception as e:
+            print(f"Error while plotting mesh diagnostics: {e}")
 
         # Save
         data = {f"{split_name}/loss": test_metrics["loss"],

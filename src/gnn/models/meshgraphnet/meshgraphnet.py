@@ -54,7 +54,7 @@ class GraphNetBlock(torch.nn.Module):
         :return: (new_node_embedding, new_edge_embedding)
             forward pass of node and edge embedding
         """
-        senders, receivers = edge_index # FIXME: understand what is this as object (2, @edges)?
+        senders, receivers = edge_index
         num_nodes = node_embedding.shape[0]
 
         # Update edge embeddings: pass both node_embeddings

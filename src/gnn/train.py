@@ -127,7 +127,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         for batch in tqdm(train_dataloader, desc="Batches", leave=False):
             # One train step + collect necessary metrics on training set
             batch = batch.to(device)
-            trainer.train(graph=batch)
+            trainer.train(batch=batch)
 
         # Log non-rollout metrics such as relative mae and loss at the end of each epoch.
         # Also update scheduler.
@@ -152,8 +152,8 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             # tell me if it's correct
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
                                    "rollout_error": f"{trainer.rollout_all_step_error:.6f}",
-                                   "learning rate": f"{trainer.optimizer.param_groups[0]['lr']}",
-                                   "error": f"{trainer.val_epoch_relative_mae_history[-1]}"
+                                   "lr": f"{trainer.optimizer.param_groups[0]['lr']}",
+                                   "error": f"{trainer.val_epoch_relative_mae_history[-1]:.6f}"
                                    })
         else:
             epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
@@ -184,10 +184,11 @@ def main(cfg):
         = train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
     # Plot loss, lr, metric on test set
+    print("=" * 60 + "\nPlot training history..." + "=" * 60 + "\n")
     plot_training_history(trainer)
 
     # Test model on a new trajectory (test set)
-    print("\nTest dataset:")
+    print("="*60+"\nTest dataset plots and evaluation..."+"="*60+"\n")
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     final_rollout_error = trainer.final_test(test_dataloader=test_dataloader, node_stats=node_stats,
@@ -196,7 +197,7 @@ def main(cfg):
     print(f"Final evaluation rollout error: {final_rollout_error:.6f}")
 
     # Test model on a new trajectory (validation set)
-    print("\nValidation dataset:")
+    print("="*60+"\nValidation dataset plots and evaluation...\n"+"="*60+"\n")
     final_rollout_error = trainer.final_test(test_dataloader=validation_dataloader, node_stats=node_stats,
                                              edge_stats=edge_stats, target_stats=target_stats, dt=dt,
                                              split_name="validation")

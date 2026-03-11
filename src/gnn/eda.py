@@ -356,8 +356,10 @@ def generate_ground_truth_gif_all(preprocessor):
     traj_idx_list = preprocessor.traj_idx_list
     out_graphs = preprocessor.out_graphs
 
-    pbar = tqdm(sorted(set(traj_idx_list)), desc="Ground truth GIFs")
-    for traj in pbar:
+    pbar = tqdm(enumerate(sorted(set(traj_idx_list))), desc="Ground truth GIFs")
+    for i, traj in pbar:
+        if i % 15 != 0:
+            continue
         traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
 
         for graph in traj_graphs:
