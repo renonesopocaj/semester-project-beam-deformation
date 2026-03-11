@@ -1,103 +1,91 @@
 from pathlib import Path
 
-import numpy as np
+import lightning as L
 import torch
 import torch.nn.functional as F
 import wandb
+from lightning.pytorch.loggers import WandbLogger
 
-from src.gnn.training.rollout import do_rollout
-from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_volume_change,
-                                             plot_validation_diagnostics_rollout, plot_rollout_error_vs_timestep,
-                                             plot_mesh_diagnostics)
-from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout
+from src.gnn.preprocessing.normalizer import NormalizerFactory
+from src.gnn.training.rollout import do_rollout
+from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
+                                             plot_rollout_error_vs_timestep, plot_validation_diagnostics_rollout,
+                                             plot_volume_change)
+
 
 def loss_factory(loss_type):
     """
-    Factory pattern, returns the proper function
+    Args:
+        loss_type: str
+            Name of the loss function.
+        return: callable
+            PyTorch loss function.
     """
-    # Set loss function
     if loss_type == "mse":
         return F.mse_loss
-    elif loss_type == "mae":
+    if loss_type == "mae":
         return F.l1_loss
-    elif loss_type == "huber":
+    if loss_type == "huber":
         return F.huber_loss
-    else:
-        raise NotImplementedError("Unsupported loss function")
+    raise NotImplementedError("Unsupported loss function")
 
-class Trainer:
-    """
-    Trainer class for training and evaluating the MeshGraphNet model.
 
-    Manages:
-    - Training process using graph-based data
-    - Model evaluation through test rollouts
-    - Model checkpointing and saving
-    - Experiment tracking with wandb
+class LitModule(L.LightningModule):
     """
-    training_id: str
-    run: wandb.sdk.wandb_run.Run
+    LightningModule that handles:
+    - train/validation/test batch metrics
+    - custom rollout evaluation at epoch end
+    - W&B media logging for final evaluation
+    - manual stepping of the existing custom scheduler wrapper
+    """
+
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
-    device: torch.device
+    scheduler: object
     loss_fn: callable
-    train_history: list[float]
-    train_acc_history: list[float]
-    train_stress_history: list[float]
+    training_id: str
     model_dir: Path
-    loss: float
-    rollout_all_step_error: float
-    epoch_losses: list[float]
-    train_acc_loss: list[float]
-    train_stress_loss: list[float]
+    training_plots_dir: Path
+    model_evaluation_dir: Path
+    target_names: list[str]
+    eval_split_name: str
 
-    def __init__(self, model, optimizer, device, loss_type, use_wandb, preprocess_cfg, scheduler, training_id, run,
-                 model_root):
+    def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root):
         """
-        Pure constructor: receives all identity and external resources from the
-        caller.  Does NOT generate training_id, call wandb.init(), or decide
-        its own directory.
-
         Args:
             model: torch.nn.Module
-                The GNN model to be trained.
+                The GNN model.
             optimizer: torch.optim.Optimizer
-                Optimizer for training.
-            device: torch.device
-                Target computing device (CPU/GPU).
+                Optimizer used by Lightning automatic optimization.
+            scheduler: object
+                Existing custom scheduler wrapper.
             loss_type: str
-                Loss function type ('mse', 'mae', or 'huber').
-            use_wandb: bool
-                Whether W&B logging is enabled.
+                Loss name: mse, mae, or huber.
             preprocess_cfg: object
                 Preprocessing configuration with attribute-style access.
-            scheduler: SchedulerWrapper or None
-                LR scheduler wrapper; None disables scheduling entirely.
             training_id: str
                 Stable identifier for this training session.
-            run: wandb.sdk.wandb_run.Run
-                Already-initialised W&B run (or disabled run).
             model_root: str or pathlib.Path
-                Root directory that contains all saved-training folders.
+                Root directory that contains saved training folders.
+            return: None
+                Initializes the module.
         """
-        self.training_id = training_id
-        self.device = device
-        self.use_wandb = use_wandb
-        self.run = run
+        super().__init__()
         self.model = model
         self.optimizer = optimizer
-        self.loss_type = loss_type
-        self.loss_fn = loss_factory(loss_type)
         self.scheduler = scheduler
+        self.loss_fn = loss_factory(loss_type)
+
+        self.training_id = training_id
+        self.target_names = ["acc_x", "acc_y", "acc_z", "von_mises"]
+
         self.normalizer_method = preprocess_cfg.normalizer_method
         self.isotropic_normalizer = preprocess_cfg.isotropic_normalizer
         self.used_dataset_normalizer = NormalizerFactory.create_normalizer(self.normalizer_method,
                                                                            self.isotropic_normalizer)
         self.rest_minus_nonrest_pos = preprocess_cfg.displacement
-        self.target_names = ["acc_x", "acc_y", "acc_z", "von_mises"]
 
-        # Allocate all directories
         self.model_dir = Path(model_root) / self.training_id
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.training_plots_dir = self.model_dir / "training"
@@ -105,297 +93,312 @@ class Trainer:
         self.model_evaluation_dir = self.model_dir / "model_evaluation"
         self.model_evaluation_dir.mkdir(parents=True, exist_ok=True)
 
-        # Accumulated training history (across all epochs)
-        self.train_history, self.train_acc_history, self.train_stress_history = [], [], []
-        (self.train_epoch_loss_history, self.val_epoch_loss_history, self.val_epochs_history,
-         self.val_rollout_error_history, self.train_epoch_relative_mae_history, self.val_epoch_relative_mae_history,
-         self.lr_history) = [], [], [], [], [], [], []
-        self.train_component_loss_history = {target_name: [] for target_name in self.target_names}
-        self.train_component_mae_history = {target_name: [] for target_name in self.target_names}
-        self.val_component_loss_history = {target_name: [] for target_name in self.target_names}
-        self.val_component_mae_history = {target_name: [] for target_name in self.target_names}
-        # Scalar metrics
-        self.loss = 0.0
+        self.node_stats = None
+        self.edge_stats = None
+        self.target_stats = None
+        self.dt = None
+        self.validation_loader = None
+        self.test_loader = None
+        self.eval_split_name = "test"
+        self.should_log_test_media = False
         self.rollout_all_step_error = 0.0
-        self.should_stop = False
-        # Per-epoch buffers (reset at end of each epoch)
-        self.epoch_losses, self.train_relative_mae_losses, self.train_acc_loss, self.train_stress_loss = [], [],[], []
-        self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
-        self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
 
-    def _collect_batch_metrics(self, pred, target):
+    def forward(self, batch):
         """
-        Collects metrics on a train/validation set, about pred vs target, so it's actually agnostic and is not as
-        validation necessarily but in general as pred vs target.
-        No rollout.
+        Args:
+            batch: Data
+                PyG batch.
+            return: torch.Tensor
+                Model prediction.
+        """
+        return self.model(batch)
 
+    def configure_optimizers(self):
+        """
+        Args:
+            return: torch.optim.Optimizer
+                Optimizer used by Lightning.
+        """
+        return self.optimizer
+
+    def on_save_checkpoint(self, checkpoint):
+        """
+        Args:
+            checkpoint: dict
+                Lightning checkpoint dictionary.
+            return: None
+                Adds custom scheduler state if available.
+        """
+        if self.scheduler is not None:
+            checkpoint["custom_scheduler_state_dict"] = self.scheduler.state_dict()
+
+    def on_load_checkpoint(self, checkpoint):
+        """
+        Args:
+            checkpoint: dict
+                Lightning checkpoint dictionary.
+            return: None
+                Restores custom scheduler state if available.
+        """
+        if self.scheduler is not None and "custom_scheduler_state_dict" in checkpoint:
+            self.scheduler.load_state_dict(checkpoint["custom_scheduler_state_dict"])
+
+    def set_rollout_context(self, validation_loader, node_stats, edge_stats, target_stats, dt):
+        """
+        Args:
+            validation_loader: pyg.DataLoader
+                Validation loader used for rollout.
+            node_stats: Stats
+                Node feature statistics.
+            edge_stats: Stats
+                Edge feature statistics.
+            target_stats: Stats
+                Target statistics.
+            dt: float
+                Time step size.
+            return: None
+                Stores rollout-related state in the module.
+        """
+        self.validation_loader = validation_loader
+        self.node_stats = node_stats
+        self.edge_stats = edge_stats
+        self.target_stats = target_stats
+        self.dt = dt
+
+    def set_test_context(self, test_loader, split_name, log_media):
+        """
+        Args:
+            test_loader: pyg.DataLoader
+                Loader used for final evaluation rollout.
+            split_name: str
+                Prefix used for test logging.
+            log_media: bool
+                Whether to create and log media artifacts.
+            return: None
+                Stores test-time rollout settings.
+        """
+        self.test_loader = test_loader
+        self.eval_split_name = split_name
+        self.should_log_test_media = log_media
+
+    def _collect_batch_metrics(self, pred, target, prefix):
+        """
         Args:
             pred: torch.Tensor
                 Model prediction with shape `(num_nodes, 4)`.
             target: torch.Tensor
                 Ground-truth tensor with shape `(num_nodes, 4)`.
+            prefix: str
+                Metric namespace prefix, for example `train`, `val`, or `test`.
             return: dict
-                Loss and MAE metrics for the full target and each scalar component.
+                Tensor metrics keyed by full logger name.
         """
         denominator = torch.clamp(torch.abs(target), min=1e-12)
-        relative_mae = torch.mean(torch.abs(pred - target) / denominator).item()
+        relative_mae = torch.mean(torch.abs(pred - target) / denominator)
+
         metrics = {
-            "loss": self.loss_fn(pred, target).item(),
-            "relative_mae": relative_mae,
-            "acc_loss": self.loss_fn(pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()).item(),
-            "stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()).item(),
+            f"{prefix}/loss": self.loss_fn(pred, target),
+            f"{prefix}/relative_mae": relative_mae,
+            f"{prefix}/acc_loss": self.loss_fn(pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()),
+            f"{prefix}/stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()),
         }
+
         for target_idx, target_name in enumerate(self.target_names):
-            metrics[f"{target_name}_loss"] = self.loss_fn(pred[:, target_idx], target[:, target_idx]).item()
-            metrics[f"{target_name}_mae"] = F.l1_loss(pred[:, target_idx], target[:, target_idx]).item()
+            metrics[f"{prefix}/{target_name}_loss"] = self.loss_fn(pred[:, target_idx].contiguous(),
+                                                                   target[:, target_idx].contiguous())
+            metrics[f"{prefix}/{target_name}_mae"] = F.l1_loss(pred[:, target_idx].contiguous(),
+                                                               target[:, target_idx].contiguous())
+
         return metrics
 
-    def train(self, batch):
+    def _log_metrics(self, metrics, prog_bar_keys):
         """
-        Perform one training step.
+        Args:
+            metrics: dict
+                Dictionary of tensor metrics.
+            prog_bar_keys: list[str]
+                Metrics that should also appear in Lightning's progress bar.
+            return: None
+                Logs metrics with epoch reduction.
+        """
+        prog_bar_key_set = set(prog_bar_keys)
+        plain_metrics = {}
+
+        for metric_name, metric_value in metrics.items():
+            if metric_name in prog_bar_key_set:
+                self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=True,
+                         batch_size=1)
+            else:
+                plain_metrics[metric_name] = metric_value
+
+        if len(plain_metrics) > 0:
+            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=1)
+
+    def training_step(self, batch, batch_idx):
+        """
         Args:
             batch: Data
-                graph object
+                Graph batch.
+            batch_idx: int
+                Batch index.
+            return: torch.Tensor
+                Training loss.
         """
-        self.model.train()
+        pred = self(batch)
+        target = batch.y
+        metrics = self._collect_batch_metrics(pred, target, "train")
+        self._log_metrics(metrics, ["train/loss", "train/relative_mae"])
+        return metrics["train/loss"]
 
-        # Forward pass: the input is the whole graph
-        pred = self.model(batch)
-        target = batch.y.to(self.device)
-        # Compute loss
-        loss = self.loss_fn(pred, target)
-        # Backward pass
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        # Compute alternative metrics (also different from loss) on training set, i.e., pred vs targets, such as loss
-        # and relative mae (no rollout). NOTE: it's not validation yet
-        batch_metrics = self._collect_batch_metrics(pred, target)
-        # Store histories of no-rollout loss and metrics (eg relative mae)
-        self.train_acc_loss.append(batch_metrics["acc_loss"])
-        self.train_stress_loss.append(batch_metrics["stress_loss"])
-        self.loss = batch_metrics["loss"]
-        self.train_history.append(self.loss)
-        self.epoch_losses.append(self.loss)
-        self.train_relative_mae_losses.append(batch_metrics["relative_mae"])
-        for target_name in self.target_names:
-            self.epoch_component_loss[target_name].append(batch_metrics[f"{target_name}_loss"])
-            self.epoch_component_mae[target_name].append(batch_metrics[f"{target_name}_mae"])
-
-    def epoch_end_log_metrics_scheduler(self, numepoch):
+    def validation_step(self, batch, batch_idx):
         """
-        Log non-rollout metrics such as realtive mae and loss at the end of each epoch.
-
         Args:
-            numepoch: int
+            batch: Data
+                Graph batch.
+            batch_idx: int
+                Batch index.
+            return: None
+                Logs validation metrics.
         """
-        # Compute mean from loss of batches inside the given epoch, to return as final value the "mean of that metric
-        # in that epoch"
-        epoch_loss = float(np.mean(self.epoch_losses))
-        epoch_relative_mae = float(np.mean(self.train_relative_mae_losses))
-        self.train_epoch_loss_history.append(epoch_loss)
-        self.train_epoch_relative_mae_history.append(epoch_relative_mae)
-        self.train_acc_history.append(float(np.mean(self.train_acc_loss)))
-        self.train_stress_history.append(float(np.mean(self.train_stress_loss)))
+        pred = self(batch)
+        target = batch.y
+        metrics = self._collect_batch_metrics(pred, target, "val")
+        self._log_metrics(metrics, ["val/loss", "val/relative_mae"])
 
-        data = {"train/loss": epoch_loss,
-                "train/relative_mae": epoch_relative_mae,
-                "train/acc_loss": self.train_acc_history[-1],
-                "train/stress_loss": self.train_stress_history[-1]}
-
-        for target_name in self.target_names:
-            component_loss = float(np.mean(self.epoch_component_loss[target_name]))
-            component_mae = float(np.mean(self.epoch_component_mae[target_name]))
-            self.train_component_loss_history[target_name].append(component_loss)
-            self.train_component_mae_history[target_name].append(component_mae)
-            data[f"train/{target_name}_loss"] = component_loss
-            data[f"train/{target_name}_mae"] = component_mae
-
-        data = self._update_scheduler(epoch_loss, numepoch, data)
-
-        # Log everything in wandb
-        self.run.log(data, step=numepoch)
-
-        # Reset epoch losses
-        self.epoch_losses, self.train_relative_mae_losses, self.train_acc_loss, self.train_stress_loss = [], [], [], []
-        self.epoch_component_loss = {target_name: [] for target_name in self.target_names}
-        self.epoch_component_mae = {target_name: [] for target_name in self.target_names}
-
-    def _update_scheduler(self, epoch_loss, numepoch, data):
-        # Scheduler updates
-        self.scheduler.step(metric=epoch_loss, epoch=numepoch)
-        current_lr = self.scheduler.get_last_lr()[0]
-        self.should_stop = self.scheduler.stop
-        self.lr_history.append(current_lr)
-        data["train/lr"] = current_lr
-        return data
-
-    def _validation_metrics_norollout(self, validation_loader):
+    def test_step(self, batch, batch_idx):
         """
-        Compute all non-rollout validation matrics (loss, relative mae, etc)
-
         Args:
-            validation_loader: pyg.DataLoader
-                Validation dataloader.
-            return: dict
-                Averaged loss and MAE metrics on the validation set.
+            batch: Data
+                Graph batch.
+            batch_idx: int
+                Batch index.
+            return: None
+                Logs test metrics using the active split prefix.
         """
-        aggregated_metrics = {"loss": [], "relative_mae": [], "acc_loss": [], "stress_loss": []}
-        for target_name in self.target_names: # example of self.target_names: ["acc_x", "acc_y", "acc_z", "von_mises"]
-            aggregated_metrics[f"{target_name}_loss"] = []
-            aggregated_metrics[f"{target_name}_mae"] = []
+        pred = self(batch)
+        target = batch.y
+        metrics = self._collect_batch_metrics(pred, target, self.eval_split_name)
+        self._log_metrics(metrics, [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/relative_mae"])
 
-        with torch.no_grad():
-            for graph in validation_loader:
-                graph = graph.to(self.device)
-                pred = self.model(graph)
-                target = graph.y.to(self.device)
-                batch_metrics = self._collect_batch_metrics(pred, target)
-                for metric_name, metric_value in batch_metrics.items():
-                    aggregated_metrics[metric_name].append(metric_value)
+    def predict_step(self, batch, batch_idx):
+        """
+        Args:
+            batch: Data
+                Graph batch.
+            batch_idx: int
+                Batch index.
+            return: torch.Tensor
+                Model prediction.
+        """
+        return self(batch)
 
-        return {metric_name: float(np.mean(metric_values)) for metric_name, metric_values in aggregated_metrics.items()}
+    def on_train_epoch_end(self):
+        """
+        Args:
+            return: None
+                Steps the custom scheduler and logs the learning rate.
+        """
+        if self.scheduler is None:
+            return
 
-    def _run_rollout(self, data_loader, node_stats, edge_stats, target_stats, dt):
+        epoch_loss = self.trainer.callback_metrics["train/loss"]
+        epoch_loss_value = float(epoch_loss.detach().cpu())
+        self.scheduler.step(metric=epoch_loss_value, epoch=self.current_epoch)
+
+        current_lr = float(self.optimizer.param_groups[0]["lr"])
+        self.log("train/lr", current_lr, prog_bar=True, logger=True)
+
+        if self.scheduler.stop:
+            self.trainer.should_stop = True
+
+    def _run_rollout(self, data_loader):
         """
         Args:
             data_loader: pyg.DataLoader
                 Dataloader used for rollout evaluation.
-            node_stats: Stats
-                stats object of node features
-            edge_stats: Stats
-                stats object of edge features
-            target_stats: Stats
-                stats object of target
-            dt: float
-                time interval
-            return: tuple
+            return: (list, list, float)
                 Ground-truth rollout, predicted rollout, and final-step rollout MAE.
         """
-        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=data_loader, device=self.device,
-                                                node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
-                                                dt=dt, skip_first=0, rollout_steps=999999,
+        self.target_stats.to(self.device)
+        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=data_loader, node_stats=self.node_stats,
+                                                edge_stats=self.edge_stats, target_stats=self.target_stats,
+                                                dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
                                                 rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
-        mae = lambda target, pred: torch.mean(torch.abs(target - pred))
-        rollout_error = mae(true_rollout[-1].x_pos_t, pred_rollout[-1].x_pos_t).item()
+        rollout_error = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, rollout_error
 
-    def validation(self, validation_loader, node_stats, edge_stats, target_stats, dt, epoch):
-        """
-        Perform validation metrics tracking during training. Perform also rollout.
-
-        Args:
-            validation_loader: pyg.DataLoader
-                dataloader of validation dataset
-            node_stats: Stats
-                stats object of node features
-            edge_stats: Stats
-                stats object of edge features
-            target_stats: Stats
-                stats object of target
-            dt: float
-                time interval
-            epoch: int
-                number of peoch
-        """
-        # Set model
-        self.model.eval()
-        target_stats.to(self.device)
-        # Compute non rollout validation metrics on validation set
-        validation_metrics = self._validation_metrics_norollout(validation_loader)
-        self.val_epochs_history.append(epoch)
-        self.val_epoch_loss_history.append(validation_metrics["loss"])
-        self.val_epoch_relative_mae_history.append(validation_metrics["relative_mae"])
-        for target_name in self.target_names:
-            self.val_component_loss_history[target_name].append(validation_metrics[f"{target_name}_loss"])
-            self.val_component_mae_history[target_name].append(validation_metrics[f"{target_name}_mae"])
-        # Compute rollout validation metrics
-        _, _, rollout_error = self._run_rollout(validation_loader, node_stats, edge_stats, target_stats, dt)
-        self.val_rollout_error_history.append(rollout_error)
-        # Log to wandb
-        data = {"val/loss": validation_metrics["loss"],
-                "val/relative_mae": validation_metrics["relative_mae"],
-                "val/gen_rollout_error": rollout_error,
-                "val/acc_loss": validation_metrics["acc_loss"],
-                "val/stress_loss": validation_metrics["stress_loss"]}
-        for target_name in self.target_names:
-            data[f"val/{target_name}_loss"] = validation_metrics[f"{target_name}_loss"]
-            data[f"val/{target_name}_mae"] = validation_metrics[f"{target_name}_mae"]
-        self.run.log(data, step=epoch)
-        # Store rollout error
-        self.rollout_all_step_error = rollout_error
-
-    def final_test(self, test_dataloader, node_stats, edge_stats, target_stats, dt, split_name):
+    def _log_rollout_media(self, split_name, true_rollout, pred_rollout):
         """
         Args:
-            test_dataloader: pyg.DataLoader
-                Dataloader used for the final evaluation split.
-            node_stats: Stats
-                stats object of node features
-            edge_stats: Stats
-                stats object of edge features
-            target_stats: Stats
-                stats object of target
-            dt: float
-                time interval
             split_name: str
-                Name used for files and logging.
-            return: float
-                Final rollout MAE on the evaluation split.
+                Prefix used for files and W&B keys.
+            true_rollout: list
+                Ground-truth rollout.
+            pred_rollout: list
+                Predicted rollout.
+            return: None
+                Creates plots and logs them to W&B when available.
         """
-        # Evaluate model (no plots, only computing rollout)
-        self.model.eval()
-        target_stats.to(self.device)
-        # Compute pred vs target (no rollout) metrics (loss, relative mae)
-        test_metrics = self._validation_metrics_norollout(test_dataloader)
-        # Compute rollout on given dataloader
-        true_rollout, pred_rollout, rollout_error = self._run_rollout(test_dataloader, node_stats, edge_stats,
-                                                                      target_stats, dt)
-        # make sure exists
         path_split_name = self.model_evaluation_dir / split_name
-        path_split_name.mkdir(parents=True, exist_ok = True)
-        # Create plots of rollout
+        path_split_name.mkdir(parents=True, exist_ok=True)
+
         gif_path = path_split_name / f"{split_name}_beam_comparison.gif"
         volume_png_path = path_split_name / f"{split_name}_volume_change.png"
-        print("\tPlotting volume change...")
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
-        print("\tPlotting comparison gif...")
-        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
-                                 L=1.0, W=0.1, D=0.04, # FIXME: hardcoded
-                                 gif_path=gif_path,
-                                 fps=4, bbox_only_on_true=False, verbose=False)
-        print("\tPlotting rollout error vs timestep...")
         rollout_error_path = path_split_name / f"{split_name}_rollout_error_vs_timestep.png"
-        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path)
-        # Plot non rollout values
-        print("\tPlotting non rollout values...")
-        plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir= path_split_name,
-                                              filename_prefix=split_name)
-        print("\tPlotting rollout values...")
-        plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir= path_split_name,
-                                              filename_prefix=split_name)
-        print("\tPlotting mesh diagnostics...")
-        try:
-            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                  output_dir=path_split_name, filename_prefix=split_name)
-        except Exception as e:
-            print(f"Error while plotting mesh diagnostics: {e}")
 
-        # Save
-        data = {f"{split_name}/loss": test_metrics["loss"],
-                f"{split_name}/relative_mae": test_metrics["relative_mae"],
-                f"{split_name}/gen_rollout_error": rollout_error,
-                f"{split_name}/acc_loss": test_metrics["acc_loss"],
-                f"{split_name}/stress_loss": test_metrics["stress_loss"],
-                f"{split_name}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                f"{split_name}/volume_change_png": wandb.Image(str(volume_png_path))}
-        for target_name in self.target_names:
-            data[f"{split_name}/{target_name}_loss"] = test_metrics[f"{target_name}_loss"]
-            data[f"{split_name}/{target_name}_mae"] = test_metrics[f"{target_name}_mae"]
-        self.run.log(data)
+        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
+                                 L=1.0, W=0.1, D=0.04,
+                                 gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False)
+        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path)
+        plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                              output_dir=path_split_name, filename_prefix=split_name)
+        plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                            output_dir=path_split_name, filename_prefix=split_name)
+
+        try:
+            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
+                                  filename_prefix=split_name)
+        except Exception as error:
+            print(f"Error while plotting mesh diagnostics: {error}")
+
+        if isinstance(self.logger, WandbLogger):
+            self.logger.experiment.log(
+                {f"{split_name}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
+                 f"{split_name}/volume_change_png": wandb.Image(str(volume_png_path)),
+                 "trainer/global_step": self.global_step})
+
+    def on_validation_epoch_end(self):
+        """
+        Args:
+            return: None
+                Runs sequence-level rollout on the validation split.
+        """
+        if self.trainer.sanity_checking:
+            return
+        if self.validation_loader is None:
+            return
+        if self.node_stats is None or self.edge_stats is None or self.target_stats is None or self.dt is None:
+            return
+
+        _, _, rollout_error = self._run_rollout(self.validation_loader)
         self.rollout_all_step_error = rollout_error
-        return rollout_error
+        self.log("val/gen_rollout_error", torch.tensor(rollout_error, device=self.device), prog_bar=True, logger=True)
+
+    def on_test_epoch_end(self):
+        """
+        Args:
+            return: None
+                Runs final rollout on the active test split and optionally logs media.
+        """
+        if (self.node_stats is None or self.edge_stats is None or self.target_stats is None or self.dt is None or
+            self.test_loader is None):
+            return
+        true_rollout, pred_rollout, rollout_error = self._run_rollout(self.test_loader)
+        self.rollout_all_step_error = rollout_error
+        self.log(f"{self.eval_split_name}/gen_rollout_error", torch.tensor(rollout_error, device=self.device),
+                 prog_bar=True, logger=True)
+
+        if self.should_log_test_media and self.trainer.is_global_zero:
+            self._log_rollout_media(self.eval_split_name, true_rollout, pred_rollout)

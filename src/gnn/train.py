@@ -1,69 +1,54 @@
 import os
 import time
 import yaml
-import torch
-import wandb
-from torch_geometric.loader import DataLoader
-from tqdm import tqdm
 from pathlib import Path
+
+import hydra
+import lightning as L
 import matplotlib
 import matplotlib.pyplot as plt
+import torch
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
-import hydra
+from torch_geometric.loader import DataLoader
 
+from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.training.trainer import Trainer
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.training.scheduler import scheduler_factory
-from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-from src.gnn.misc_helpers.yamlobject import TrainYaml, PreprocessYaml
-from src.gnn.validation.train_plots import plot_training_history
-from src.gnn.training.checkpointing import (save_checkpoint_bundle, build_trainer_from_checkpoint, model_builder,
-                                            optimizer_builder)
+from src.gnn.training.trainer import LitModule
 
 matplotlib.use("Agg")
 plt.ioff()
 
 
-def _build_config_dicts(cfg, preprocess_cfg):
-    """
-    Args:
-        cfg: TrainYaml
-            Parsed training configuration.
-        preprocess_cfg: PreprocessYaml
-            Parsed preprocessing configuration.
-        return: (dict, dict, dict or None)
-            model_cfg, optimizer_cfg, scheduler_cfg -- all JSON-serialisable.
-    """
-    model_cfg = {"node_channels": preprocess_cfg.node_channels, "edge_channels": preprocess_cfg.edge_channels,
-                 "latent_size": cfg.latent_dim, "num_msgs": cfg.num_messages}
-    optimizer_cfg = {"initial_lr": cfg.initial_lr}
-    scheduler_cfg = cfg.scheduler_cfg
-    return model_cfg, optimizer_cfg, scheduler_cfg
-
 def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     """
-    Note: need dict version of train_cfg and preprocess_cfg in order to save them with OmegaConf.
-
     Args:
         cfg: TrainYaml
             Parsed training configuration.
         preprocess_cfg: PreprocessYaml
             Parsed preprocessing configuration.
         device: torch.device
+            Target device.
         train_dict: dict
-            dict of cfg
+            Hydra/OmegaConf training config.
         preprocess_dict: dict
-            dict of preprocess_cfg
-
-    return: (Trainer, Stats, Stats, Stats, float, dict, dict, dict)
+            Preprocess config.
+        return: tuple
+            Lightning module, Lightning trainer, stats, dt, and validation loader.
     """
     model_root = Path(os.getcwd()) / "saved_models"
-    model_cfg, optimizer_cfg, scheduler_cfg = _build_config_dicts(cfg, preprocess_cfg)
+    model_root.mkdir(parents=True, exist_ok=True)
+
+    validation_dataloader = None
 
     print("Train dataset:")
     train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
+
     if cfg.enable_val:
         print("Validation dataset:")
         validation_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
@@ -77,89 +62,105 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
-    start_epoch = 0
+    torch.manual_seed(cfg.seed)
 
-    # Init model, either resuming a previous train or from scratch
-    if cfg.resume_from is not None:
-        # Resume previous training
-        print(f"Resuming training from checkpoint: {cfg.resume_from}")
-        trainer, start_epoch = build_trainer_from_checkpoint(
-            checkpoint_dir=cfg.resume_from, model_builder=model_builder,
-            optimizer_builder=optimizer_builder, scheduler_builder=scheduler_factory,
-            device=device, model_root=model_root,
+    model = MeshGraphNet(
+        node_channels=preprocess_cfg.node_channels,
+        edge_channels=preprocess_cfg.edge_channels,
+        latent_size=cfg.latent_dim,
+        num_msgs=cfg.num_messages,
+    )
+    total_params = sum(parameter.numel() for parameter in model.parameters())
+    print(f"Total parameters: {total_params:,}")
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.initial_lr)
+    scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg)
+
+    training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
+    lightning_module = MeshGraphNetLightningModule(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_type=cfg.loss_type,
+        preprocess_cfg=preprocess_cfg,
+        training_id=training_id,
+        model_root=model_root,
+    )
+    lightning_module.set_rollout_context(
+        validation_loader=validation_dataloader,
+        node_stats=node_stats,
+        edge_stats=edge_stats,
+        target_stats=target_stats,
+        dt=dt,
+    )
+
+    OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml")
+    OmegaConf.save(preprocess_dict, lightning_module.model_dir / "preprocess.yaml")
+
+    if cfg.use_wandb:
+        logger = WandbLogger(
+            project="meshgraphnet",
+            name=training_id,
+            save_dir=str(lightning_module.model_dir),
+            log_model=False,
         )
-        total_params = sum(p.numel() for p in trainer.model.parameters())
-        print(f"Total parameters: {total_params:,}")
     else:
-        # Init new training
-        torch.manual_seed(cfg.seed)
-        model = MeshGraphNet(node_channels=preprocess_cfg.node_channels,
-                             edge_channels=preprocess_cfg.edge_channels,
-                             latent_size=cfg.latent_dim,
-                             num_msgs=cfg.num_messages)
-        model = model.to(device)
-        total_params = sum(p.numel() for p in model.parameters())
-        print(f"Total parameters: {total_params:,}")
+        logger = False
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.initial_lr)
-        scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg)
+    callbacks = []
 
-        training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
-        run = wandb.init() if cfg.use_wandb else wandb.init(mode="disabled")
+    if cfg.enable_val:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=str(lightning_module.model_dir / "checkpoints"),
+                filename="best",
+                monitor="val/loss",
+                mode="min",
+                save_top_k=1,
+            )
+        )
 
-        trainer = Trainer(model=model, optimizer=optimizer, device=device, loss_type=cfg.loss_type,
-                          use_wandb=cfg.use_wandb, preprocess_cfg=preprocess_cfg, scheduler=scheduler,
-                          training_id=training_id, run=run, model_root=model_root)
+    if cfg.checkpoint_interval > 0:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=str(lightning_module.model_dir / "checkpoints"),
+                filename="epoch-{epoch:04d}",
+                every_n_epochs=cfg.checkpoint_interval,
+                save_top_k=-1,
+            )
+        )
 
-        OmegaConf.save(train_dict, trainer.model_dir / "train.yaml")
-        OmegaConf.save(preprocess_dict, trainer.model_dir / "preprocess.yaml")
+    fit_trainer = L.Trainer(
+        max_epochs=cfg.total_epochs,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        logger=logger,
+        callbacks=callbacks,
+        default_root_dir=str(lightning_module.model_dir),
+        check_val_every_n_epoch=cfg.validation_interval,
+        log_every_n_steps=1,
+        enable_checkpointing=len(callbacks) > 0,
+    )
 
-    sched_type = cfg.scheduler_cfg["type"]
-    print(f"Training ID: {trainer.training_id}\n\tInitial learning rate: {cfg.initial_lr}\n\tLR scheduler: {sched_type}"
-          f"\n\tTotal epochs: {cfg.total_epochs}\n\tStart epoch: {start_epoch}\n\t"
-          f"Validation interval: {cfg.validation_interval}\n\t"
-          f"Loss type: {cfg.loss_type}\n\tUsing wandb: {cfg.use_wandb}\n\tModel directory: {trainer.model_dir}")
+    print(
+        f"Training ID: {lightning_module.training_id}\n\t"
+        f"Initial learning rate: {cfg.initial_lr}\n\t"
+        f"LR scheduler: {cfg.scheduler_cfg['type']}\n\t"
+        f"Total epochs: {cfg.total_epochs}\n\t"
+        f"Validation interval: {cfg.validation_interval}\n\t"
+        f"Loss type: {cfg.loss_type}\n\t"
+        f"Using wandb: {cfg.use_wandb}\n\t"
+        f"Model directory: {lightning_module.model_dir}"
+    )
 
-    # Main training and validation loop
-    epoch_bar = tqdm(range(start_epoch, cfg.total_epochs), desc="Epochs")
-    for epoch in epoch_bar:
-        # For all batches
-        for batch in tqdm(train_dataloader, desc="Batches", leave=False):
-            # One train step + collect necessary metrics on training set
-            batch = batch.to(device)
-            trainer.train(batch=batch)
+    fit_trainer.fit(
+        model=lightning_module,
+        train_dataloaders=train_dataloader,
+        val_dataloaders=validation_dataloader,
+        ckpt_path=cfg.resume_from,
+    )
 
-        # Log non-rollout metrics such as relative mae and loss at the end of each epoch.
-        # Also update scheduler.
-        trainer.epoch_end_log_metrics_scheduler(numepoch=epoch)
-
-        # Scheduler-triggered save (e.g. before cosine warm-restart)
-        if trainer.scheduler.save:
-            print(f"Epoch {epoch}: saving checkpoint before cosine warm-restart.")
-            ckpt_dir = trainer.model_dir / f"checkpoint_epoch_{epoch}"
-            save_checkpoint_bundle(trainer, ckpt_dir, epoch, model_cfg, optimizer_cfg, scheduler_cfg)
-            trainer.scheduler.save = False
-
-        # Periodic checkpoint
-        if cfg.checkpoint_interval > 0 and (epoch + 1) % cfg.checkpoint_interval == 0:
-            ckpt_dir = trainer.model_dir / f"checkpoint_epoch_{epoch}"
-            save_checkpoint_bundle(trainer, ckpt_dir, epoch, model_cfg, optimizer_cfg, scheduler_cfg)
-
-        # Validation phase
-        if epoch % cfg.validation_interval == 0 and cfg.enable_val:
-            trainer.validation(validation_loader=validation_dataloader, node_stats=node_stats, edge_stats=edge_stats,
-                               target_stats=target_stats, dt=dt, epoch=epoch)
-            # tell me if it's correct
-            epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}",
-                                   "rollout_error": f"{trainer.rollout_all_step_error:.6f}",
-                                   "lr": f"{trainer.optimizer.param_groups[0]['lr']}",
-                                   "error": f"{trainer.val_epoch_relative_mae_history[-1]:.6f}"
-                                   })
-        else:
-            epoch_bar.set_postfix({"train_loss": f"{trainer.loss:.6f}"})
-
-    return (trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg,
-            validation_dataloader)
+    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
@@ -167,11 +168,12 @@ def main(cfg):
     """
     Args:
         cfg: omegaconf.DictConfig
-            Hydra-composed configuration. Run with --multirun to sweep over multiple values,
-            e.g.: python -m src.gnn.train --multirun training.lr=1e-3,5e-4,1e-4
+            Hydra-composed configuration.
+        return: None
+            Runs train and final evaluation.
     """
-    # Open configs
     train_cfg = TrainYaml(cfg)
+
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         preprocess_dict = yaml.safe_load(file)
 
@@ -179,34 +181,25 @@ def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Train, validation and log validation metrics
-    trainer, node_stats, edge_stats, target_stats, dt, model_cfg, optimizer_cfg, scheduler_cfg, validation_dataloader \
-        = train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
+    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader = train(
+        train_cfg,
+        preprocess_cfg,
+        device,
+        cfg,
+        preprocess_dict,
+    )
 
-    # Plot loss, lr, metric on test set
-    print("=" * 60 + "\nPlot training history..." + "=" * 60 + "\n")
-    plot_training_history(trainer)
-
-    # Test model on a new trajectory (test set)
-    print("="*60+"\nTest dataset plots and evaluation..."+"="*60+"\n")
+    print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
-    final_rollout_error = trainer.final_test(test_dataloader=test_dataloader, node_stats=node_stats,
-                                             edge_stats=edge_stats, target_stats=target_stats, dt=dt,
-                                             split_name="test")
-    print(f"Final evaluation rollout error: {final_rollout_error:.6f}")
 
-    # Test model on a new trajectory (validation set)
-    print("="*60+"\nValidation dataset plots and evaluation...\n"+"="*60+"\n")
-    final_rollout_error = trainer.final_test(test_dataloader=validation_dataloader, node_stats=node_stats,
-                                             edge_stats=edge_stats, target_stats=target_stats, dt=dt,
-                                             split_name="validation")
-    print(f"\nFinal evaluation rollout error: {final_rollout_error:.6f}")
+    lightning_module.set_test_context(test_loader=test_dataloader, split_name="test", log_media=True)
+    fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
-    # Final checkpoint
-    final_ckpt_dir = trainer.model_dir / f"checkpoint_epoch_{train_cfg.total_epochs - 1}"
-    save_checkpoint_bundle(trainer, final_ckpt_dir, train_cfg.total_epochs - 1,
-                           model_cfg, optimizer_cfg, scheduler_cfg)
+    if validation_dataloader is not None:
+        print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
+        lightning_module.set_test_context(test_loader=validation_dataloader, split_name="validation", log_media=True)
+        fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
 
 if __name__ == "__main__":
