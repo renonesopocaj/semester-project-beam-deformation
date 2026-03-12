@@ -45,22 +45,8 @@ class E_GCL_vel(nn.Module):
           temp: Softmax temperature.
     """
 
-    def __init__(
-        self,
-        input_node_nf,
-        input_edge_nf,
-        output_nf,
-        hidden_nf,
-        nodes_att_dim=0,
-        act_fn=nn.Softplus(),
-        recurrent=True,
-        coords_weight=1.0,
-        attention=False,
-        norm_diff=False,
-        tanh=False,
-        nhead=3,
-        n_points=5,
-    ):
+    def __init__(self, input_node_nf, input_edge_nf, output_nf, hidden_nf, nodes_att_dim=0, act_fn=nn.Softplus(),
+                 recurrent=True, coords_weight=1.0, attention=False, norm_diff=False, tanh=False, nhead=3, n_points=5):
         super(E_GCL_vel, self).__init__()
         self.coords_weight = coords_weight
         self.recurrent = recurrent
@@ -206,36 +192,22 @@ class E_GCL_vel(nn.Module):
         key = self.transpose_for_scores(
             self.fc_key(h_m)
         )  # [B, N*(N-1), C] -> [B, A, N*(N-1), C/A]
-        value = self.transpose_for_scores(
-            self.fc_value(edge_feat.reshape(B, N * (N - 1), C))
-        )  # [B, N*(N-1), C] -> [B, A, N*(N-1), C/A]
+        value = self.transpose_for_scores(self.fc_value(edge_feat.reshape(B, N * (N - 1), C)))  # [B, N*(N-1), C] -> [B, A, N*(N-1), C/A]
 
         key = key.reshape(B, self.nhead, N, N - 1, -1)  # [B, A, N, (N-1), C/A]
-        attention_scores = torch.matmul(
-            query.unsqueeze(-2), key.transpose(-1, -2)
-        ).squeeze(
-            -2
-        )  # [B, A, N, N-1]
+        attention_scores = torch.matmul(query.unsqueeze(-2), key.transpose(-1, -2)).squeeze(-2)  # [B, A, N, N-1]
         attention_scores = attention_scores / math.sqrt(C / self.nhead)
         attention_weights = F.softmax(attention_scores, dim=-1)  # [B, A, N, N-1]
-        m_update = (
-            attention_weights.reshape(B, self.nhead, -1).unsqueeze(-1) * value
-        )  # [B, A, N*(N-1), C/A]
+        m_update = (attention_weights.reshape(B, self.nhead, -1).unsqueeze(-1) * value)  # [B, A, N*(N-1), C/A]
         att_edge_feat = m_update.transpose(-3, -2)  # [B, A, N*(N-1), C/A]
-        att_edge_feat = att_edge_feat.reshape(
-            *att_edge_feat.shape[:-2], -1
-        )  # [B, N*(N-1), C]
+        att_edge_feat = att_edge_feat.reshape(*att_edge_feat.shape[:-2], -1)  # [B, N*(N-1), C]
         att_edge_feat = att_edge_feat.reshape(-1, C)  # [B*N*(N-1), C]
         h, agg = self.node_model(h, edge_index, att_edge_feat, node_attr)
 
         # Equivariant message aggregation
         edge_feat = edge_feat + self.edge_model_enhance(h[row], h[col], edge_attr)
-        coord_diff, coord_cross, coord_vertical = self.coord2radial(
-            edge_index, coord_pre
-        )
-        acc1 = self.acc_model_inner(
-            coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat
-        )
+        coord_diff, coord_cross, coord_vertical = self.coord2radial(edge_index, coord_pre)
+        acc1 = self.acc_model_inner(coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat)
 
         if short_cut:
             ACC = coord + acc1
