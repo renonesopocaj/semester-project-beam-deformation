@@ -98,7 +98,7 @@ class TrainYaml:
         self.use_wandb = flattened_cfg["use_wandb"]
         self.batch_size = flattened_cfg["batch_size"]
         self.num_workers = flattened_cfg["num_workers"]
-        self.name = flattened_cfg["name"]
+        self.model_name = flattened_cfg["model_name"]
         self.num_messages = flattened_cfg["num_messages"]
         self.latent_dim = flattened_cfg["latent_dim"]
         self.initial_lr = float(flattened_cfg["initial_lr"])
@@ -116,7 +116,6 @@ class TrainYaml:
         self.resume_from = flattened_cfg.get("resume_from")
         self.checkpoint_interval = flattened_cfg.get("checkpoint_interval")
         self.training_type = flattened_cfg["training_type"]
-
 
 def _to_dict_flatten(data):
     """

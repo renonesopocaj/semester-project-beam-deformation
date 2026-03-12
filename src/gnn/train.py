@@ -24,11 +24,11 @@ matplotlib.use("Agg")
 plt.ioff()
 
 def create_model(train_cfg, preprocess_cfg, device):
-    if train_cfg.model_type == "meshgraphnet":
+    if train_cfg.model_name == "MGN":
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
                             latent_size=train_cfg.latent_dim,
                             num_msgs=train_cfg.num_messages)
-    elif train_cfg.model_type == "clofnet":
+    elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_type} not implemented")
