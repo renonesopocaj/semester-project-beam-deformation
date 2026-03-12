@@ -402,19 +402,23 @@ class LitModule(L.LightningModule):
         rollout_error_path = path_split_name / f"{self.eval_split_name}_rollout_error_vs_timestep.png"
 
         # ================ All rollout plots ================
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path)
+        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=self.eval_split_name)
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
                                  L=1.0, W=0.1, D=0.04,
-                                 gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False)
-        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path)
+                                 gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
+                                 split_name=self.eval_split_name)
+        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path,
+                                       split_name=self.eval_split_name)
         plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir=path_split_name, filename_prefix=self.eval_split_name)
+                                              output_dir=path_split_name, filename_prefix=self.eval_split_name,
+                                              split_name=self.eval_split_name)
         plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                            output_dir=path_split_name, filename_prefix=self.eval_split_name)
+                                            output_dir=path_split_name, filename_prefix=self.eval_split_name,
+                                            split_name=self.eval_split_name)
 
         try:
             plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
-                                  filename_prefix=self.eval_split_name)
+                                  filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
         except Exception as error:
             print(f"Error while plotting mesh diagnostics: {error}")
 

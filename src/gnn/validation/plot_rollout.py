@@ -21,7 +21,7 @@ TARGET_FIELDS = [
     ("von_mises", "von Mises"),
 ]
 
-def plot_volume_change(pred_rollout, true_rollout, path):
+def plot_volume_change(pred_rollout, true_rollout, path, split_name):
     """
     Plot volume change over time for predicted vs ground truth.
 
@@ -52,11 +52,12 @@ def plot_volume_change(pred_rollout, true_rollout, path):
     ax.plot(pred_volumes_list, label="Predicted Volumes")
     plt.xlabel("Time Step")
     plt.ylabel("Volume")
+    ax.set_title(f"Volume Change\n[{split_name}, 1 sample, {len(pred_rollout)} timesteps]")
     ax.legend()
     plt.savefig(path)
     plt.close()
 
-def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose):
+def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
 
@@ -112,6 +113,7 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
     cbar_ax = fig.add_axes([0.92, 0.2, 0.02, 0.6])
     cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cbar_ax)
     cbar.set_label("von Mises Stress")
+    fig.suptitle(f"Beam Comparison\n[{split_name}, 1 sample, {len(pred_rollout)} timesteps]", fontsize=13)
 
     polycoll_true = None
     polycoll_pred = None
@@ -154,7 +156,7 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
     print(f"\tGIF saved => {gif_path}")
 
 
-def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose):
+def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name="eda"):
     """
     Create a single-panel GIF showing ground truth mesh colored by von Mises stress.
 
@@ -208,7 +210,7 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose):
         coords = to_numpy(graph.x_pos_t)
         vm = to_numpy(graph.von_mises).reshape(-1)
         poly_collection = update_surface_collection(ax, faces, coords, vm, cmap, norm, poly_collection)
-        ax.set_title(f"Ground Truth, step {i}")
+        ax.set_title(f"Ground Truth, step {i}\n[{split_name}, 1 sample, {len(trajectory_graphs)} timesteps]")
 
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
@@ -353,7 +355,7 @@ def _build_rollout_summary(true_rollout, pred_rollout):
     return summary
 
 
-def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path):
+def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, num_timesteps):
     """
     Args:
         rollout_summary: dict
@@ -401,7 +403,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     for timestep, (coordinates, error_values) in enumerate(zip(coordinates_per_step, error_per_step)):
         error_values = np.clip(error_values, vmin, vmax)
         poly_collection = update_surface_collection(ax, faces, coordinates, error_values, cmap, norm, poly_collection)
-        ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}")
+        ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
@@ -409,7 +411,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
     imageio.mimsave(output_path, frames, fps=4, loop=0)
 
 
-def _plot_prediction_target_scatter(field_summary, output_path):
+def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -429,14 +431,14 @@ def _plot_prediction_target_scatter(field_summary, output_path):
     ax.plot([min_value, max_value], [min_value, max_value], linestyle="--", color="black", linewidth=1.5)
     ax.set_xlabel("Target")
     ax.set_ylabel("Prediction")
-    ax.set_title(f"{field_summary['label']} Prediction vs Target")
+    ax.set_title(f"{field_summary['label']} Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def _plot_edge_error_correlation(field_summary, output_path):
+def _plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -459,13 +461,13 @@ def _plot_edge_error_correlation(field_summary, output_path):
     colorbar.set_label("Edge count")
     ax.set_xlabel("error_i")
     ax.set_ylabel("error_j")
-    ax.set_title(f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})")
+    ax.set_title(f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
-def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path):
+def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path, split_name):
     """
     Plot position MAE at each rollout timestep.
 
@@ -488,14 +490,14 @@ def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path):
     ax.plot(timesteps, errors, linewidth=2.0, marker="o", markersize=3)
     ax.set_xlabel("Timestep")
     ax.set_ylabel("Position MAE")
-    ax.set_title("Rollout Position Error vs Timestep")
+    ax.set_title(f"Rollout Position Error vs Timestep\n[{split_name}, 1 sample, {len(errors)} timesteps]")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix):
+def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
     which corresponds to the signed relative error
@@ -518,9 +520,9 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
-            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
+            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout))
 
-def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, output_path):
+def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, output_path, split_name, num_timesteps):
     """
     Diagnostic 5.1 -- scatter of absolute error on neighboring nodes.
 
@@ -550,14 +552,14 @@ def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, 
     fig.colorbar(hexbin, ax=ax, label="Edge count")
     ax.set_xlabel("Absolute error node i")
     ax.set_ylabel("Absolute error node j")
-    ax.set_title(f"{field_label} Neighbor Abs-Error (corr={correlation:.4f})")
+    ax.set_title(f"{field_label} Neighbor Abs-Error (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num_nodes, field_label, output_path):
+def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num_nodes, field_label, output_path, split_name, num_timesteps):
     """
     Diagnostic 5.2 -- scatter of absolute error vs hop-distance from the
     worst-error node.
@@ -585,14 +587,14 @@ def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num
     ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
     ax.set_xlabel(f"Hop distance from worst node (node {worst_node})")
     ax.set_ylabel("Absolute error")
-    ax.set_title(f"{field_label} Error vs Distance from Worst Node")
+    ax.set_title(f"{field_label} Error vs Distance from Worst Node\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_path):
+def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_path, split_name, num_timesteps):
     """
     Diagnostic 7.1 -- grouped bar chart of Dirichlet energy E(y) vs E(y_hat)
     for all target fields, computed at a single timestep.
@@ -626,7 +628,7 @@ def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_pa
     ax.set_xticks(x_pos)
     ax.set_xticklabels(field_labels, rotation=15, ha="right")
     ax.set_ylabel("Dirichlet Energy")
-    ax.set_title("Dirichlet Energy: True vs Predicted")
+    ax.set_title(f"Dirichlet Energy: True vs Predicted\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.legend()
     ax.grid(True, alpha=0.3, axis="y")
     fig.tight_layout()
@@ -634,7 +636,7 @@ def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_pa
     plt.close(fig)
 
 
-def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_path, k):
+def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_path, k, split_name, num_timesteps):
     """
     Diagnostic 7.2 -- line plots comparing spectral content (graph Laplacian)
     of true vs predicted fields. One subplot per target field.
@@ -681,13 +683,13 @@ def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_pat
         ax.grid(True, alpha=0.3)
         ax.set_yscale("log", nonpositive="clip")
 
-    fig.suptitle("Low-Frequency vs High-Frequency Content", fontsize=14)
+    fig.suptitle(f"Low-Frequency vs High-Frequency Content\n[{split_name}, 1 sample, {num_timesteps} timesteps]", fontsize=14)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def _plot_error_vs_curvature(true_values, pred_values, positions, element_connectivity, field_label, output_path):
+def _plot_error_vs_curvature(true_values, pred_values, positions, element_connectivity, field_label, output_path, split_name, num_timesteps):
     """
     Diagnostic 8.3 -- scatter of absolute error vs mean curvature at
     surface (boundary) nodes.
@@ -717,7 +719,7 @@ def _plot_error_vs_curvature(true_values, pred_values, positions, element_connec
     ax.scatter(curvature, error_at_boundary, s=8, alpha=0.3)
     ax.set_xlabel("Mean Curvature")
     ax.set_ylabel("Absolute Error")
-    ax.set_title(f"{field_label} Error vs Curvature (surface nodes)")
+    ax.set_title(f"{field_label} Error vs Curvature (surface nodes)\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -725,7 +727,7 @@ def _plot_error_vs_curvature(true_values, pred_values, positions, element_connec
 
 
 def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_nodes, element_connectivity,
-                                     field_label, output_path):
+                                     field_label, output_path, split_name, num_timesteps):
     """
     Diagnostic 8.4 -- scatter of absolute error vs hop-distance to the
     nearest surface (boundary) node.
@@ -756,14 +758,14 @@ def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_n
     ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
     ax.set_xlabel("Hop distance to boundary")
     ax.set_ylabel("Absolute Error")
-    ax.set_title(f"{field_label} Error vs Distance to Boundary")
+    ax.set_title(f"{field_label} Error vs Distance to Boundary\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefix):
+def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Orchestrator that runs all six mesh diagnostics (5.1, 5.2, 7.1, 7.2,
     8.3, 8.4) on the last rollout timestep.
@@ -783,6 +785,7 @@ def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefi
 
     true_graph = true_rollout[-1]
     pred_graph = pred_rollout[-1]
+    num_timesteps = len(true_rollout)
     edge_index = to_numpy(true_graph.edge_index).astype(np.int64)
     positions = to_numpy(true_graph.x_pos_t)
     num_nodes = positions.shape[0]
@@ -794,31 +797,37 @@ def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefi
         # 5.1 Neighbor absolute error
         print(f"\t\tDiag 5.1 ({field_name})...")
         _plot_neighbor_abs_error(true_vals, pred_vals, edge_index, field_label,
-                                 diag_dir / f"{filename_prefix}_{field_name}_neighbor_abs_error.png")
+                                 diag_dir / f"{filename_prefix}_{field_name}_neighbor_abs_error.png",
+                                 split_name, num_timesteps)
 
         # 5.2 Error vs distance from worst node
         print(f"\t\tDiag 5.2 ({field_name})...")
         _plot_error_vs_distance_from_worst(true_vals, pred_vals, edge_index, num_nodes, field_label,
-                                           diag_dir / f"{filename_prefix}_{field_name}_error_vs_dist_worst.png")
+                                           diag_dir / f"{filename_prefix}_{field_name}_error_vs_dist_worst.png",
+                                           split_name, num_timesteps)
 
         # 8.3 Error vs curvature
         print(f"\t\tDiag 8.3 ({field_name})...")
         _plot_error_vs_curvature(true_vals, pred_vals, positions, true_graph.x_element_connectivity,
                                  field_label,
-                                 diag_dir / f"{filename_prefix}_{field_name}_error_vs_curvature.png")
+                                 diag_dir / f"{filename_prefix}_{field_name}_error_vs_curvature.png",
+                                 split_name, num_timesteps)
 
         # 8.4 Error vs boundary distance
         print(f"\t\tDiag 8.4 ({field_name})...")
         _plot_error_vs_boundary_distance(true_vals, pred_vals, edge_index, num_nodes,
                                          true_graph.x_element_connectivity, field_label,
-                                         diag_dir / f"{filename_prefix}_{field_name}_error_vs_boundary_dist.png")
+                                         diag_dir / f"{filename_prefix}_{field_name}_error_vs_boundary_dist.png",
+                                         split_name, num_timesteps)
 
     # 7.1 Dirichlet energy (single combined plot)
     print("\t\tDiag 7.1 (Dirichlet energy)...")
     _plot_dirichlet_energy_bar(true_graph, pred_graph,
-                               diag_dir / f"{filename_prefix}_dirichlet_energy.png")
+                               diag_dir / f"{filename_prefix}_dirichlet_energy.png",
+                               split_name, num_timesteps)
 
     # 7.2 Spectral comparison (single combined figure)
     print("\t\tDiag 7.2 (spectral comparison)...")
     _plot_spectral_comparison(true_graph, pred_graph,
-                              diag_dir / f"{filename_prefix}_spectral_comparison.png", k=50)
+                              diag_dir / f"{filename_prefix}_spectral_comparison.png", k=50,
+                              split_name=split_name, num_timesteps=num_timesteps)

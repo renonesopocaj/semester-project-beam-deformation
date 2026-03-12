@@ -3,7 +3,7 @@ from src.gnn.validation.plot_rollout import (_build_rollout_summary, _plot_predi
                                              _plot_edge_error_correlation)
 import torch
 
-def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix):
+def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Plot
     1. scatter plots: prediction vs target, where every p[oint is one node
@@ -23,12 +23,13 @@ def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir
     """
     output_dir = Path(output_dir)
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
+    num_timesteps = len(true_rollout)
     for field_name, field_label in TARGET_FIELDS:
         scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
         correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
         field_summary = rollout_summary["fields"][field_name]
-        _plot_prediction_target_scatter(field_summary, scatter_path)
-        _plot_edge_error_correlation(field_summary, correlation_path)
+        _plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps)
+        _plot_edge_error_correlation(field_summary, correlation_path, split_name, num_timesteps)
 
 def compute_mean_relative_mae(pred, target):
     return torch.mean(compute_relative_mae(pred, target))

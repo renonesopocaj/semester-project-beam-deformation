@@ -63,7 +63,7 @@ def _draw_dual_axis_loss_rollout(ax_left, train_epochs, train_loss, val_epochs, 
         ax_right.set_ylabel("Rollout Error")
         lines.append(line_rollout)
 
-    ax_left.set_title("Loss & Rollout Error vs Epoch")
+    ax_left.set_title("Loss & Rollout Error vs Epoch\n[training]")
     ax_left.legend(handles=lines, loc="best")
 
 
@@ -99,7 +99,7 @@ def _draw_lr_curve(ax, epochs, lr_values):
     ax.plot(epochs, lr_values, linewidth=2.0, color="tab:purple")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Learning Rate")
-    ax.set_title("Learning Rate vs Epoch")
+    ax.set_title("Learning Rate vs Epoch\n[training]")
     ax.grid(True, alpha=0.3)
 
 
@@ -175,7 +175,7 @@ def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, ti
         ax.plot(val_epochs, val_values, label=val_label, linewidth=2.0, marker="o")
     ax.set_xlabel("Epoch")
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_title(f"{title}\n[training]")
     ax.grid(True, alpha=0.3)
     ax.legend()
 
