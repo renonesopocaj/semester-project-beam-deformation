@@ -114,7 +114,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
-                                limit_train_batches=5, limit_val_batches=5)
+                                limit_train_batches=5, limit_val_batches=5, limit_test_batches=5)
     elif cfg.training_type == "slurm":
         raise NotImplementedError("Slurm training not implemented")
     elif cfg.training_type == "default":

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from dataclasses import dataclass
 from pathlib import Path
 import json
@@ -22,6 +23,37 @@ class Stats:
         self.mean = self.mean.to(device)
         self.std = self.std.to(device)
         return self
+
+
+class StatsModule(nn.Module):
+    """
+    A torch.nn.Module wrapper for Stats that registers mean and std as buffers.
+    This ensures the tensors automatically move to the correct device when the
+    parent module is moved (e.g., to GPU).
+    """
+
+    def __init__(self, stats: Stats):
+        """
+        Args:
+            stats: Stats
+                Stats dataclass containing mean and std tensors.
+        """
+        super().__init__()
+        self.register_buffer("mean", stats.mean.clone())
+        self.register_buffer("std", stats.std.clone())
+
+    @classmethod
+    def from_stats(cls, stats: Stats) -> "StatsModule":
+        """
+        Create a StatsModule from a Stats dataclass.
+
+        Args:
+            stats: Stats
+                Stats dataclass to convert.
+            return: StatsModule
+                Module with registered buffers.
+        """
+        return cls(stats)
 
 def load_stats(train_save_dir):
     """

@@ -8,7 +8,7 @@ from lightning.pytorch.loggers import WandbLogger
 from typing import Any
 from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout, compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
-from src.gnn.preprocessing.stats import Stats
+from src.gnn.preprocessing.stats import Stats, StatsModule
 from torch_geometric.loader import DataLoader
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
@@ -177,6 +177,9 @@ class LitModule(L.LightningModule):
         Stores in the attributes statistics and the validation loader needed to run autoregressive rollout evaluations
         during training. Called before training right after initialization.
 
+        Stats are converted to StatsModule and registered as submodules so their tensors
+        (registered as buffers) automatically move to the correct device with the parent module.
+
         Args:
             validation_loader: pyg.DataLoader
                 Validation loader used for rollout.
@@ -190,9 +193,10 @@ class LitModule(L.LightningModule):
                 Time step size.
         """
         self.validation_loader = validation_loader
-        self.node_stats = node_stats
-        self.edge_stats = edge_stats
-        self.target_stats = target_stats
+        # Convert Stats to StatsModule and register as submodules for automatic device handling
+        self.node_stats = StatsModule.from_stats(node_stats)
+        self.edge_stats = StatsModule.from_stats(edge_stats)
+        self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
 
     def set_test_context(self, test_loader, split_name, log_media):
@@ -252,7 +256,7 @@ class LitModule(L.LightningModule):
                    )}
         return metrics
 
-    def _log_metrics(self, metrics, prog_bar_keys):
+    def _log_metrics(self, metrics, prog_bar_keys, sync_dist=False):
         """
         Logs a metrics dict to the lightning log, and a subset of keys to the progress bar.
         Called by training_step, validation_step, and test_step.
@@ -262,6 +266,9 @@ class LitModule(L.LightningModule):
                 Dictionary of tensor metrics.
             prog_bar_keys: list[str]
                 Metrics that should also appear in Lightning's progress bar.
+            sync_dist: bool
+                Whether to synchronize metrics across distributed processes. Should be True
+                for validation and test steps in distributed training.
         """
         prog_bar_key_set = set(prog_bar_keys)
         plain_metrics = {}
@@ -269,12 +276,13 @@ class LitModule(L.LightningModule):
             # distinction on the wanted
             if metric_name in prog_bar_key_set:
                 self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=True,
-                         batch_size=1)
+                         batch_size=1, sync_dist=sync_dist)
             else:
                 plain_metrics[metric_name] = metric_value
 
         if len(plain_metrics) > 0:
-            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=1)
+            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=1,
+                          sync_dist=sync_dist)
 
     def training_step(self, batch, batch_idx):
         """
@@ -310,7 +318,7 @@ class LitModule(L.LightningModule):
         target = batch.y
         # collects non rollout metrics
         metrics = self._collect_batch_metrics_norollout(pred, target, "val")
-        self._log_metrics(metrics, ["val/loss", "val/overall_relative_mae"])
+        self._log_metrics(metrics, ["val/loss", "val/overall_relative_mae"], sync_dist=True)
         # on_validation_epoch_end runs a full rollout and logs rollout
 
     def test_step(self, batch, batch_idx):
@@ -327,7 +335,8 @@ class LitModule(L.LightningModule):
         target = batch.y
         # non rollout metrics
         metrics = self._collect_batch_metrics_norollout(pred, target, self.eval_split_name)
-        self._log_metrics(metrics,[f"{self.eval_split_name}/loss", f"{self.eval_split_name}/relative_mae"])
+        self._log_metrics(metrics, [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/relative_mae"],
+                          sync_dist=True)
         # on_test_epoch_end logs ROLLOUT metrics
 
     def predict_step(self, batch, batch_idx):
@@ -372,7 +381,7 @@ class LitModule(L.LightningModule):
             return: (list, list, float)
                 Ground-truth rollout, predicted rollout, and final-step rollout MAE.
         """
-        self.target_stats.to(self.device)
+        # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=data_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats,
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
@@ -439,7 +448,7 @@ class LitModule(L.LightningModule):
         _, _, rollout_error = self._run_rollout(self.validation_loader)
         self.rollout_all_step_error = rollout_error
         self.log("val/gen_rollout_error", torch.tensor(rollout_error, device=self.device),
-                 prog_bar=True, logger=True)
+                 prog_bar=True, logger=True, sync_dist=True)
 
     def on_test_epoch_end(self):
         """
@@ -450,7 +459,8 @@ class LitModule(L.LightningModule):
         self.log(f"{self.eval_split_name}/gen_rollout_error",
                  torch.tensor(rollout_error, device=self.device),
                  prog_bar=True,
-                 logger=True)
+                 logger=True,
+                 sync_dist=True)
 
         # log iff it's rank 0 (main process)
         if self.should_log_test_media and self.trainer.is_global_zero:
