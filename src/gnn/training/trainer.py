@@ -18,13 +18,6 @@ from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh
                                              plot_volume_change, TARGET_FIELDS)
 
 class LitModule(L.LightningModule):
-    """
-    LightningModule that handles:
-    - train/validation/test batch metrics
-    - custom rollout evaluation at epoch end
-    - W&B media logging for final evaluation
-    - manual stepping of the existing custom scheduler wrapper
-    """
     # Model, optimizer
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
@@ -38,7 +31,7 @@ class LitModule(L.LightningModule):
     model_dir: Path
     training_plots_dir: Path
     model_evaluation_dir: Path
-    #
+    # Normalizer
     normalizer_method: str
     isotropic_normalizer: bool
     used_dataset_normalizer: NormalizerFactory
@@ -142,12 +135,10 @@ class LitModule(L.LightningModule):
 
         # Define all metrics with epoch as x-axis
         self._define_wandb_metrics()
-
         # Watch model gradients and parameters
         self.logger.watch(self.model, log="all", log_freq=100)
-
         # Log initial epoch value
-        self.logger.experiment.log({"epoch": 0})
+        # self.logger.experiment.log({"epoch": 0})
 
     def on_fit_end(self):
         """
@@ -306,6 +297,7 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         metrics = self._collect_batch_metrics_norollout(pred, target, "train")
+        # FIXME: delete train/overall_relative_mar from progress bar
         self._log_metrics(metrics, ["train/loss", "train/overall_relative_mae"])
         # on_train_epoch_end 1. Steps the custom LR scheduler using the epoch loss 2. Halts training early if the
         # scheduler signals stop.
@@ -325,6 +317,7 @@ class LitModule(L.LightningModule):
         target = batch.y
         # collects non rollout metrics
         metrics = self._collect_batch_metrics_norollout(pred, target, "val")
+        # FIXME: delete val/loss from progress bar
         self._log_metrics(metrics, ["val/loss", "val/overall_relative_mae"], sync_dist=True)
         # on_validation_epoch_end runs a full rollout and logs rollout
 
@@ -342,7 +335,8 @@ class LitModule(L.LightningModule):
         target = batch.y
         # non rollout metrics
         metrics = self._collect_batch_metrics_norollout(pred, target, self.eval_split_name)
-        self._log_metrics(metrics, [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/relative_mae"],
+        self._log_metrics(metrics, [f"{self.eval_split_name}/loss",
+                                    f"{self.eval_split_name}/overall_relative_mae"],
                           sync_dist=True)
         # on_test_epoch_end logs ROLLOUT metrics
 
@@ -367,8 +361,8 @@ class LitModule(L.LightningModule):
         3. Halts training early if the scheduler signals stop.
         """
         # Log epoch to W&B for x-axis alignment (only on rank 0)
-        if self._has_wandb_logger() and self.trainer.is_global_zero:
-            self.logger.experiment.log({"epoch": self.current_epoch})
+        # if self._has_wandb_logger() and self.trainer.is_global_zero:
+            # self.logger.experiment.log({"epoch": self.current_epoch})
 
         if self.scheduler is None:
             return
@@ -489,7 +483,8 @@ class LitModule(L.LightningModule):
 
         experiment = self.logger.experiment
         prefix = self.eval_split_name
-        wandb_logs = {"epoch": self.current_epoch}
+        wandb_logs = {}
+        # wandb_logs = {"epoch": self.current_epoch}
         # Main plots
         wandb_logs[f"{prefix}/beam_comparison_gif"] = wandb.Video(str(gif_path), fps=4, format="gif")
         wandb_logs[f"{prefix}/volume_change"] = wandb.Image(str(volume_png_path))
@@ -556,9 +551,9 @@ class LitModule(L.LightningModule):
         experiment = self.logger.experiment
 
         # Define epoch as the global step metric for x-axis
-        experiment.define_metric("epoch")
+        # experiment.define_metric("epoch")
         # All metrics use epoch as x-axis by default
-        experiment.define_metric("*", step_metric="epoch")
+        # experiment.define_metric("*", step_metric="epoch")
 
         # Training metrics - track last value (default)
         experiment.define_metric("train/loss", summary="min")
@@ -587,5 +582,5 @@ class LitModule(L.LightningModule):
         # Test/validation final metrics (dynamic prefix)
         for prefix in ["test", "validation"]:
             experiment.define_metric(f"{prefix}/loss", summary="min")
-            experiment.define_metric(f"{prefix}/relative_mae", summary="min")
+            experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
             experiment.define_metric(f"{prefix}/gen_rollout_error", summary="min")

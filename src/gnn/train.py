@@ -90,7 +90,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # =================== Wandb logger ===================
     if cfg.use_wandb:
-        logger = WandbLogger(project="meshgraphnet", name=training_id, save_dir=str(lightning_module.model_dir),
+        logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
                              log_model=False)
     else:
         logger = False
