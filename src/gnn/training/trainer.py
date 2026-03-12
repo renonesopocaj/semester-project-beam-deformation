@@ -150,6 +150,79 @@ class LitModule(L.LightningModule):
         """
         return self.optimizer
 
+    def _has_wandb_logger(self) -> bool:
+        """Check if we have a valid WandbLogger attached."""
+        return isinstance(self.logger, WandbLogger)
+
+    def _define_wandb_metrics(self):
+        """
+        Define all W&B metrics with epoch as the x-axis and appropriate summaries.
+        Should be called once at the start of training, only on rank 0.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+
+        experiment = self.logger.experiment
+
+        # Define epoch as the global step metric for x-axis
+        experiment.define_metric("epoch")
+        # All metrics use epoch as x-axis by default
+        experiment.define_metric("*", step_metric="epoch")
+
+        # Training metrics - track last value (default)
+        experiment.define_metric("train/loss", summary="min")
+        experiment.define_metric("train/overall_relative_mae", summary="min")
+        experiment.define_metric("train/acc_all_loss", summary="min")
+        experiment.define_metric("train/stress_loss", summary="min")
+        experiment.define_metric("train/acc_all_rel_mae", summary="min")
+        experiment.define_metric("train/acc_x_rel_mae", summary="min")
+        experiment.define_metric("train/acc_y_rel_mae", summary="min")
+        experiment.define_metric("train/acc_z_rel_mae", summary="min")
+        experiment.define_metric("train/stress_rel_mae", summary="min")
+        experiment.define_metric("train/lr", summary="last")
+
+        # Validation metrics
+        experiment.define_metric("val/loss", summary="min")
+        experiment.define_metric("val/overall_relative_mae", summary="min")
+        experiment.define_metric("val/acc_all_loss", summary="min")
+        experiment.define_metric("val/stress_loss", summary="min")
+        experiment.define_metric("val/acc_all_rel_mae", summary="min")
+        experiment.define_metric("val/acc_x_rel_mae", summary="min")
+        experiment.define_metric("val/acc_y_rel_mae", summary="min")
+        experiment.define_metric("val/acc_z_rel_mae", summary="min")
+        experiment.define_metric("val/stress_rel_mae", summary="min")
+        experiment.define_metric("val/gen_rollout_error", summary="min")
+
+        # Test/validation final metrics (dynamic prefix)
+        for prefix in ["test", "validation"]:
+            experiment.define_metric(f"{prefix}/loss", summary="min")
+            experiment.define_metric(f"{prefix}/relative_mae", summary="min")
+            experiment.define_metric(f"{prefix}/gen_rollout_error", summary="min")
+
+    def on_fit_start(self):
+        """
+        Called at the beginning of fit. Sets up W&B metric definitions and model watching.
+        Only executed on rank 0 for distributed training safety.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+
+        # Define all metrics with epoch as x-axis
+        self._define_wandb_metrics()
+
+        # Watch model gradients and parameters
+        self.logger.watch(self.model, log="all", log_freq=100)
+
+        # Log initial epoch value
+        self.logger.experiment.log({"epoch": 0})
+
+    def on_fit_end(self):
+        """
+        Called at the end of fit. Unwatches model to prevent memory leaks.
+        """
+        if self._has_wandb_logger() and self.trainer.is_global_zero:
+            self.logger.experiment.unwatch(self.model)
+
     def on_save_checkpoint(self, checkpoint):
         """
         Saves custom scheduler state dict into the Lightning checkpoint alongside model weights.
@@ -270,18 +343,19 @@ class LitModule(L.LightningModule):
                 Whether to synchronize metrics across distributed processes. Should be True
                 for validation and test steps in distributed training.
         """
+        has_logger = self._has_wandb_logger()
         prog_bar_key_set = set(prog_bar_keys)
         plain_metrics = {}
         for metric_name, metric_value in metrics.items():
             # distinction on the wanted
             if metric_name in prog_bar_key_set:
-                self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=True,
+                self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=has_logger,
                          batch_size=1, sync_dist=sync_dist)
             else:
                 plain_metrics[metric_name] = metric_value
 
         if len(plain_metrics) > 0:
-            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=1,
+            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=has_logger, batch_size=1,
                           sync_dist=sync_dist)
 
     def training_step(self, batch, batch_idx):
@@ -355,9 +429,14 @@ class LitModule(L.LightningModule):
 
     def on_train_epoch_end(self):
         """
-        1. Steps the custom LR scheduler using the epoch loss
-        2. Halts training early if the scheduler signals stop.
+        1. Logs current epoch to W&B for x-axis alignment
+        2. Steps the custom LR scheduler using the epoch loss
+        3. Halts training early if the scheduler signals stop.
         """
+        # Log epoch to W&B for x-axis alignment (only on rank 0)
+        if self._has_wandb_logger() and self.trainer.is_global_zero:
+            self.logger.experiment.log({"epoch": self.current_epoch})
+
         if self.scheduler is None:
             return
 
@@ -366,7 +445,7 @@ class LitModule(L.LightningModule):
         self.scheduler.step(metric=epoch_loss_value, epoch=self.current_epoch)
 
         current_lr = float(self.optimizer.param_groups[0]["lr"])
-        self.log("train/lr", current_lr, prog_bar=True, logger=True)
+        self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())
 
         if self.scheduler.stop:
             self.trainer.should_stop = True
@@ -393,11 +472,9 @@ class LitModule(L.LightningModule):
     def _log_rollout_media(self, true_rollout, pred_rollout):
         """
         Generates and saves diagnostic plots and GIFs for a completed rollout, then uploads them to W&B if available.
-        Called by on_test_epoch_end.
+        Called by on_test_epoch_end. Only runs on rank 0 for distributed training.
 
         Args:
-            split_name: str
-                Prefix used for files and W&B keys.
             true_rollout: list
                 Ground-truth rollout.
             pred_rollout: list
@@ -410,7 +487,7 @@ class LitModule(L.LightningModule):
         volume_png_path = path_split_name / f"{self.eval_split_name}_volume_change.png"
         rollout_error_path = path_split_name / f"{self.eval_split_name}_rollout_error_vs_timestep.png"
 
-        # ================ All rollout plots ================
+        # ================ Generate all rollout plots ================
         plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=self.eval_split_name)
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
                                  L=1.0, W=0.1, D=0.04,
@@ -431,13 +508,75 @@ class LitModule(L.LightningModule):
         except Exception as error:
             print(f"Error while plotting mesh diagnostics: {error}")
 
-        if isinstance(self.logger, WandbLogger):
-            self.logger.experiment.log(
-                {f"{self.eval_split_name}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                 f"{self.eval_split_name}/volume_change_png": wandb.Image(str(volume_png_path)),
-                 # global_step is epoch
-                 "trainer/global_step": self.global_step}
-            )
+        # ================ Log all plots to W&B ================
+        if not self._has_wandb_logger():
+            return
+
+        experiment = self.logger.experiment
+        prefix = self.eval_split_name
+        wandb_logs = {"epoch": self.current_epoch}
+
+        # Main plots
+        wandb_logs[f"{prefix}/beam_comparison_gif"] = wandb.Video(str(gif_path), fps=4, format="gif")
+        wandb_logs[f"{prefix}/volume_change"] = wandb.Image(str(volume_png_path))
+        wandb_logs[f"{prefix}/rollout_error_vs_timestep"] = wandb.Image(str(rollout_error_path))
+
+        # Per-field diagnostic plots from plot_validation_diagnostics_norollout
+        target_fields = [("acc_x", "Acceleration X"), ("acc_y", "Acceleration Y"),
+                         ("acc_z", "Acceleration Z"), ("von_mises", "von Mises")]
+
+        for field_name, _ in target_fields:
+            # Prediction vs target scatter
+            scatter_path = path_split_name / f"{prefix}_{field_name}_prediction_vs_target.png"
+            if scatter_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_prediction_vs_target"] = wandb.Image(str(scatter_path))
+
+            # Edge error correlation
+            corr_path = path_split_name / f"{prefix}_{field_name}_edge_error_correlation.png"
+            if corr_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_edge_error_correlation"] = wandb.Image(str(corr_path))
+
+            # Signed relative error GIF from plot_validation_diagnostics_rollout
+            error_gif_path = path_split_name / f"{prefix}_{field_name}_signed_relative_error.gif"
+            if error_gif_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_signed_relative_error"] = wandb.Video(
+                    str(error_gif_path), fps=4, format="gif")
+
+        # Mesh diagnostics (in diagnostics/ subdirectory)
+        diag_dir = path_split_name / "diagnostics"
+        if diag_dir.exists():
+            for field_name, _ in target_fields:
+                # Neighbor absolute error
+                diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
+
+                # Error vs distance from worst node
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
+
+                # Error vs curvature
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
+
+                # Error vs boundary distance
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
+
+            # Combined diagnostics
+            dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
+            if dirichlet_path.exists():
+                wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
+
+            spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
+            if spectral_path.exists():
+                wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
+
+        # Log all at once
+        experiment.log(wandb_logs)
 
     def on_validation_epoch_end(self):
         """
@@ -448,7 +587,7 @@ class LitModule(L.LightningModule):
         _, _, rollout_error = self._run_rollout(self.validation_loader)
         self.rollout_all_step_error = rollout_error
         self.log("val/gen_rollout_error", torch.tensor(rollout_error, device=self.device),
-                 prog_bar=True, logger=True, sync_dist=True)
+                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=True)
 
     def on_test_epoch_end(self):
         """
@@ -459,7 +598,7 @@ class LitModule(L.LightningModule):
         self.log(f"{self.eval_split_name}/gen_rollout_error",
                  torch.tensor(rollout_error, device=self.device),
                  prog_bar=True,
-                 logger=True,
+                 logger=self._has_wandb_logger(),
                  sync_dist=True)
 
         # log iff it's rank 0 (main process)
