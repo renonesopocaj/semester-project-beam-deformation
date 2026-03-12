@@ -68,7 +68,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
-    # ========================= Model and trainer stuff =================
+    # ========================= Model and Lightning wrapper =================
     torch.manual_seed(cfg.seed)
     model = create_model(cfg, preprocess_cfg, device)
     total_params = sum(parameter.numel() for parameter in model.parameters())
@@ -82,7 +82,6 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root)
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
-
     # Save configs via hydra
     OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml")
     OmegaConf.save(preprocess_dict, lightning_module.model_dir / "preprocess.yaml")
@@ -93,6 +92,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                              log_model=False)
     else:
         logger = False
+
     # ============ Set checkpointing rules (note: also scheduler is saved properly) =============
     callbacks = []
     checkpoint_str_dir = str(lightning_module.model_dir / "checkpoints")
@@ -107,12 +107,23 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="epoch-{epoch:04d}",
                                          every_n_epochs=cfg.checkpoint_interval, save_top_k=-1))
 
+    # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-    # FIXME: implement a "SLURM" mode
-    fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, accelerator=accelerator, devices=1, logger=logger,
-                            callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
-                            check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
-                            enable_checkpointing=len(callbacks) > 0)
+    if cfg.training_type == "sanity":
+        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, accelerator=accelerator, devices=1, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0,
+                                limit_train_batches=5, limit_val_batches=5)
+    elif cfg.training_type == "slurm":
+        raise NotImplementedError("Slurm training not implemented")
+    elif cfg.training_type == "default":
+        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, accelerator=accelerator, devices=1, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0)
+    else:
+        raise NotImplementedError("Default")
 
     print(f"Training ID: {lightning_module.training_id}\n\t Initial learning rate: {cfg.initial_lr}\n\t"
           f"LR scheduler: {cfg.scheduler_cfg['type']}\n\t Total epochs: {cfg.total_epochs}\n\t"
@@ -120,8 +131,8 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
           f"Using wandb: {cfg.use_wandb}\n\t Model directory: {lightning_module.model_dir}")
 
     # ================== Train ==================
-    fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader, val_dataloaders=validation_dataloader,
-                    ckpt_path=cfg.resume_from)
+    fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
+                    val_dataloaders=validation_dataloader, ckpt_path=cfg.resume_from)
 
     return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader
 

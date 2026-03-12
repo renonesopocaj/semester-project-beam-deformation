@@ -1,4 +1,5 @@
-total_epochs: 3
+training_type: sanity
+total_epochs: 5
 loss_type: "mse"
 resume_from: null
-checkpoint_interval: 500
+checkpoint_interval: 2
