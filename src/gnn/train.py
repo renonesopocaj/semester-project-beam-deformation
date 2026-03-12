@@ -56,11 +56,13 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     validation_dataloader = None
     print("Train dataset:")
     train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
-    train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
+    train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, 
+                                  num_workers=cfg.num_workers, persistent_workers=cfg.num_workers > 0)
     if cfg.enable_val:
         print("Validation dataset:")
         validation_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
-        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False)
+        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
+                                           num_workers=cfg.num_workers, persistent_workers=cfg.num_workers > 0)
     print(f"Loading stats from {cfg.train_dir}...")
     node_stats, edge_stats, target_stats = load_stats(cfg.train_dir)
     dt = preprocess_cfg.dt
@@ -169,7 +171,9 @@ def main(cfg):
     print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
     # Test dataset
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
-    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
+                                 num_workers=train_cfg.num_workers, 
+                                 persistent_workers=train_cfg.num_workers > 0)
     # Test
     lightning_module.set_test_context(test_loader=test_dataloader, split_name="test", log_media=True)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
