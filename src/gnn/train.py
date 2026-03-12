@@ -157,7 +157,7 @@ def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # =================== Train ===================
+    # =================== Train + validation ===================
     lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader = \
         train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
@@ -169,12 +169,10 @@ def main(cfg):
 
     # =================== Testing ===================
     print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
-    # Test dataset
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                  num_workers=train_cfg.num_workers, 
                                  persistent_workers=train_cfg.num_workers > 0)
-    # Test
     lightning_module.set_test_context(test_loader=test_dataloader, split_name="test", log_media=True)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 

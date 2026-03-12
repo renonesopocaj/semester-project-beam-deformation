@@ -128,7 +128,6 @@ def _to_dict_flatten(data):
     if isinstance(data, DictConfig):
         data = OmegaConf.to_container(data, resolve=True)
     flat = {}
-
     for key, value in data.items():
         if isinstance(value, dict):
             nested_flat = _to_dict_flatten(value)
@@ -136,5 +135,4 @@ def _to_dict_flatten(data):
                 flat[nested_key] = nested_value
         else:
             flat[key] = value
-
     return flat

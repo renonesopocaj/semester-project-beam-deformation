@@ -10,30 +10,12 @@ from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout, com
 from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
 from src.gnn.preprocessing.stats import Stats, StatsModule
 from torch_geometric.loader import DataLoader
+from src.gnn.misc_helpers.misc import loss_factory
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
                                              plot_rollout_error_vs_timestep, plot_validation_diagnostics_rollout,
-                                             plot_volume_change)
-
-def loss_factory(loss_type):
-    """
-    Maps a loss type string to the corresponding PyTorch loss function.
-
-    Args:
-        loss_type: str
-            Name of the loss function.
-        return: callable
-            PyTorch loss function.
-    """
-    if loss_type == "mse":
-        return F.mse_loss
-    if loss_type == "mae":
-        return F.l1_loss
-    if loss_type == "huber":
-        return F.huber_loss
-    raise NotImplementedError("Unsupported loss function")
-
+                                             plot_volume_change, TARGET_FIELDS)
 
 class LitModule(L.LightningModule):
     """
@@ -149,55 +131,6 @@ class LitModule(L.LightningModule):
                 Optimizer used by Lightning.
         """
         return self.optimizer
-
-    def _has_wandb_logger(self) -> bool:
-        """Check if we have a valid WandbLogger attached."""
-        return isinstance(self.logger, WandbLogger)
-
-    def _define_wandb_metrics(self):
-        """
-        Define all W&B metrics with epoch as the x-axis and appropriate summaries.
-        Should be called once at the start of training, only on rank 0.
-        """
-        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
-            return
-
-        experiment = self.logger.experiment
-
-        # Define epoch as the global step metric for x-axis
-        experiment.define_metric("epoch")
-        # All metrics use epoch as x-axis by default
-        experiment.define_metric("*", step_metric="epoch")
-
-        # Training metrics - track last value (default)
-        experiment.define_metric("train/loss", summary="min")
-        experiment.define_metric("train/overall_relative_mae", summary="min")
-        experiment.define_metric("train/acc_all_loss", summary="min")
-        experiment.define_metric("train/stress_loss", summary="min")
-        experiment.define_metric("train/acc_all_rel_mae", summary="min")
-        experiment.define_metric("train/acc_x_rel_mae", summary="min")
-        experiment.define_metric("train/acc_y_rel_mae", summary="min")
-        experiment.define_metric("train/acc_z_rel_mae", summary="min")
-        experiment.define_metric("train/stress_rel_mae", summary="min")
-        experiment.define_metric("train/lr", summary="last")
-
-        # Validation metrics
-        experiment.define_metric("val/loss", summary="min")
-        experiment.define_metric("val/overall_relative_mae", summary="min")
-        experiment.define_metric("val/acc_all_loss", summary="min")
-        experiment.define_metric("val/stress_loss", summary="min")
-        experiment.define_metric("val/acc_all_rel_mae", summary="min")
-        experiment.define_metric("val/acc_x_rel_mae", summary="min")
-        experiment.define_metric("val/acc_y_rel_mae", summary="min")
-        experiment.define_metric("val/acc_z_rel_mae", summary="min")
-        experiment.define_metric("val/stress_rel_mae", summary="min")
-        experiment.define_metric("val/gen_rollout_error", summary="min")
-
-        # Test/validation final metrics (dynamic prefix)
-        for prefix in ["test", "validation"]:
-            experiment.define_metric(f"{prefix}/loss", summary="min")
-            experiment.define_metric(f"{prefix}/relative_mae", summary="min")
-            experiment.define_metric(f"{prefix}/gen_rollout_error", summary="min")
 
     def on_fit_start(self):
         """
@@ -508,75 +441,10 @@ class LitModule(L.LightningModule):
         except Exception as error:
             print(f"Error while plotting mesh diagnostics: {error}")
 
-        # ================ Log all plots to W&B ================
         if not self._has_wandb_logger():
             return
 
-        experiment = self.logger.experiment
-        prefix = self.eval_split_name
-        wandb_logs = {"epoch": self.current_epoch}
-
-        # Main plots
-        wandb_logs[f"{prefix}/beam_comparison_gif"] = wandb.Video(str(gif_path), fps=4, format="gif")
-        wandb_logs[f"{prefix}/volume_change"] = wandb.Image(str(volume_png_path))
-        wandb_logs[f"{prefix}/rollout_error_vs_timestep"] = wandb.Image(str(rollout_error_path))
-
-        # Per-field diagnostic plots from plot_validation_diagnostics_norollout
-        target_fields = [("acc_x", "Acceleration X"), ("acc_y", "Acceleration Y"),
-                         ("acc_z", "Acceleration Z"), ("von_mises", "von Mises")]
-
-        for field_name, _ in target_fields:
-            # Prediction vs target scatter
-            scatter_path = path_split_name / f"{prefix}_{field_name}_prediction_vs_target.png"
-            if scatter_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_prediction_vs_target"] = wandb.Image(str(scatter_path))
-
-            # Edge error correlation
-            corr_path = path_split_name / f"{prefix}_{field_name}_edge_error_correlation.png"
-            if corr_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_edge_error_correlation"] = wandb.Image(str(corr_path))
-
-            # Signed relative error GIF from plot_validation_diagnostics_rollout
-            error_gif_path = path_split_name / f"{prefix}_{field_name}_signed_relative_error.gif"
-            if error_gif_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_signed_relative_error"] = wandb.Video(
-                    str(error_gif_path), fps=4, format="gif")
-
-        # Mesh diagnostics (in diagnostics/ subdirectory)
-        diag_dir = path_split_name / "diagnostics"
-        if diag_dir.exists():
-            for field_name, _ in target_fields:
-                # Neighbor absolute error
-                diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
-
-                # Error vs distance from worst node
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
-
-                # Error vs curvature
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
-
-                # Error vs boundary distance
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
-
-            # Combined diagnostics
-            dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
-            if dirichlet_path.exists():
-                wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
-
-            spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
-            if spectral_path.exists():
-                wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
-
-        # Log all at once
-        experiment.log(wandb_logs)
+        self._log_all_wandb_media(path_split_name, gif_path, volume_png_path, rollout_error_path)
 
     def on_validation_epoch_end(self):
         """
@@ -600,7 +468,124 @@ class LitModule(L.LightningModule):
                  prog_bar=True,
                  logger=self._has_wandb_logger(),
                  sync_dist=True)
-
         # log iff it's rank 0 (main process)
         if self.should_log_test_media and self.trainer.is_global_zero:
             self._log_rollout_media(true_rollout, pred_rollout)
+
+    # =============================================================================================================
+    #                                   BOILERPLATE WANDB CODE
+    # ==============================================================================================================
+
+    def _log_all_wandb_media(self, path_split_name, gif_path, volume_png_path, rollout_error_path):
+        """
+        Log all plots to W&B
+
+        Args:
+            path_split_name:
+            gif_path:
+            volume_png_path:
+            rollout_error_path:
+        """
+
+        experiment = self.logger.experiment
+        prefix = self.eval_split_name
+        wandb_logs = {"epoch": self.current_epoch}
+        # Main plots
+        wandb_logs[f"{prefix}/beam_comparison_gif"] = wandb.Video(str(gif_path), fps=4, format="gif")
+        wandb_logs[f"{prefix}/volume_change"] = wandb.Image(str(volume_png_path))
+        wandb_logs[f"{prefix}/rollout_error_vs_timestep"] = wandb.Image(str(rollout_error_path))
+        # Per-field diagnostic plots from plot_validation_diagnostics_norollout
+        for field_name, _ in TARGET_FIELDS:
+            # Prediction vs target scatter
+            scatter_path = path_split_name / f"{prefix}_{field_name}_prediction_vs_target.png"
+            if scatter_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_prediction_vs_target"] = wandb.Image(str(scatter_path))
+            # Edge error correlation
+            corr_path = path_split_name / f"{prefix}_{field_name}_edge_error_correlation.png"
+            if corr_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_edge_error_correlation"] = wandb.Image(str(corr_path))
+            # Signed relative error GIF from plot_validation_diagnostics_rollout
+            error_gif_path = path_split_name / f"{prefix}_{field_name}_signed_relative_error.gif"
+            if error_gif_path.exists():
+                wandb_logs[f"{prefix}/{field_name}_signed_relative_error"] = wandb.Video(
+                    str(error_gif_path), fps=4, format="gif")
+        # Mesh diagnostics (in diagnostics/ subdirectory)
+        diag_dir = path_split_name / "diagnostics"
+        if diag_dir.exists():
+            for field_name, _ in TARGET_FIELDS:
+                # Neighbor absolute error
+                diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
+                # Error vs distance from worst node
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
+                # Error vs curvature
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
+                # Error vs boundary distance
+                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
+                if diag_path.exists():
+                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
+            # Combined diagnostics
+            dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
+            if dirichlet_path.exists():
+                wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
+            spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
+            if spectral_path.exists():
+                wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
+        # Log all at once
+        experiment.log(wandb_logs)
+
+    def _has_wandb_logger(self):
+        """
+        Check if we have a valid WandbLogger attached.
+        """
+        return isinstance(self.logger, WandbLogger)
+
+    def _define_wandb_metrics(self):
+        """
+        Define all W&B metrics with epoch as the x-axis and appropriate summaries.
+        Should be called once at the start of training, only on rank 0.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+
+        experiment = self.logger.experiment
+
+        # Define epoch as the global step metric for x-axis
+        experiment.define_metric("epoch")
+        # All metrics use epoch as x-axis by default
+        experiment.define_metric("*", step_metric="epoch")
+
+        # Training metrics - track last value (default)
+        experiment.define_metric("train/loss", summary="min")
+        experiment.define_metric("train/overall_relative_mae", summary="min")
+        experiment.define_metric("train/acc_all_loss", summary="min")
+        experiment.define_metric("train/stress_loss", summary="min")
+        experiment.define_metric("train/acc_all_rel_mae", summary="min")
+        experiment.define_metric("train/acc_x_rel_mae", summary="min")
+        experiment.define_metric("train/acc_y_rel_mae", summary="min")
+        experiment.define_metric("train/acc_z_rel_mae", summary="min")
+        experiment.define_metric("train/stress_rel_mae", summary="min")
+        experiment.define_metric("train/lr", summary="last")
+
+        # Validation metrics
+        experiment.define_metric("val/loss", summary="min")
+        experiment.define_metric("val/overall_relative_mae", summary="min")
+        experiment.define_metric("val/acc_all_loss", summary="min")
+        experiment.define_metric("val/stress_loss", summary="min")
+        experiment.define_metric("val/acc_all_rel_mae", summary="min")
+        experiment.define_metric("val/acc_x_rel_mae", summary="min")
+        experiment.define_metric("val/acc_y_rel_mae", summary="min")
+        experiment.define_metric("val/acc_z_rel_mae", summary="min")
+        experiment.define_metric("val/stress_rel_mae", summary="min")
+        experiment.define_metric("val/gen_rollout_error", summary="min")
+
+        # Test/validation final metrics (dynamic prefix)
+        for prefix in ["test", "validation"]:
+            experiment.define_metric(f"{prefix}/loss", summary="min")
+            experiment.define_metric(f"{prefix}/relative_mae", summary="min")
+            experiment.define_metric(f"{prefix}/gen_rollout_error", summary="min")
