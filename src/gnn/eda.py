@@ -334,7 +334,7 @@ def main(cfg):
     print("="*60+"Starting to plot all distributions..."+"="*60+"\n")
     plot_all_distributions(all_eda_obj_arg, LABELS)
     print("="*60+"\nStarting to generate ground truth GIFs..\n"+"="*60+"\n")
-    # generate_ground_truth_gif_all(preprocessor_train_nonorm)
+    generate_ground_truth_gif_all(preprocessor_train_nonorm)
 
     del all_eda_obj_arg
     del preprocessor_train_nonorm

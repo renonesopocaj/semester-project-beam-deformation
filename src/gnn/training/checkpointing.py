@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import wandb
 
-from src.gnn.training.trainer import Trainer
+from src.gnn.training.trainer import LitModule
+
 
 def model_builder(model_cfg):
     """
@@ -208,7 +209,6 @@ def save_checkpoint_bundle(trainer, checkpoint_dir, epoch, model_cfg, optimizer_
     }
 
     trainer_state = trainer_state_to_dict(trainer, epoch, model_cfg, optimizer_cfg, scheduler_cfg)
-
     torch.save(torch_state, checkpoint_dir / "torch_state.pt")
 
     with open(checkpoint_dir / "trainer_state.json", "w", encoding="utf-8") as fh:
@@ -218,7 +218,8 @@ def save_checkpoint_bundle(trainer, checkpoint_dir, epoch, model_cfg, optimizer_
     return checkpoint_dir
 
 
-def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_builder, scheduler_builder, device, model_root):
+def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_builder, scheduler_builder, device,
+                                  model_root):
     """
     Fully reconstruct a Trainer (and scheduler) from a previously saved
     checkpoint bundle.  This is the inverse of save_checkpoint_bundle.
@@ -258,7 +259,7 @@ def build_trainer_from_checkpoint(checkpoint_dir, model_builder, optimizer_build
 
     run = create_wandb_run(trainer_state["use_wandb"], trainer_state["wandb_run_id"])
 
-    trainer = Trainer(
+    trainer = LitModule(
         model=model, optimizer=optimizer, device=device,
         loss_type=trainer_state["loss_type"], use_wandb=trainer_state["use_wandb"],
         preprocess_cfg=preprocess_cfg, scheduler=scheduler,
@@ -310,7 +311,7 @@ def load_trainer_for_eval(checkpoint_path, preprocess_cfg, device, model_root, m
 
     run = wandb.init(mode="disabled")
 
-    trainer = Trainer(
+    trainer = LitModule(
         model=model, optimizer=None, device=device,
         loss_type=loss_type, use_wandb=False,
         preprocess_cfg=preprocess_cfg, scheduler=None,

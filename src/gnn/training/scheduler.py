@@ -95,8 +95,6 @@ class PlateauEarlyStoppingWrapper(SchedulerWrapper):
         self.plateau_threshold = plateau_threshold
         self.best_metric = float("inf")
         self.no_improve_count = 0
-        self.stop = False
-        self.save = False
 
     def step(self, metric, epoch):
         self.scheduler.step(metric)

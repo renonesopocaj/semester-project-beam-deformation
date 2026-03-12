@@ -2,14 +2,8 @@ from collections import Counter, deque
 import torch
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-try:
-    import scipy.sparse as sp
-    import scipy.sparse.linalg as spla
-    _HAS_SCIPY = True
-except ImportError:
-    _HAS_SCIPY = False
-
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
 
 def to_numpy(value):
     """
@@ -301,9 +295,6 @@ def compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
             (eigenvalues, squared_spectral_coefficients) of length k,
             or None if scipy is unavailable or k > num_nodes.
     """
-    if not _HAS_SCIPY:
-        print("scipy not available -- skipping spectral analysis.")
-        return None
     k = min(k, num_nodes - 2)
     if k < 2:
         return None
@@ -323,7 +314,8 @@ def compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
 
     try:
         eigenvalues, eigenvectors = spla.eigsh(laplacian_norm, k=k, which="SM")
-    except Exception:
+    except Exception as e:
+        print(f"Error computing spectral analysis: {e}")
         return None
 
     order = np.argsort(eigenvalues)

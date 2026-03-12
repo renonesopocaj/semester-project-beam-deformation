@@ -1,6 +1,7 @@
 from pathlib import Path
 from src.gnn.validation.plot_rollout import (_build_rollout_summary, _plot_prediction_target_scatter, TARGET_FIELDS,
                                              _plot_edge_error_correlation)
+import torch
 
 def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix):
     """
@@ -28,3 +29,9 @@ def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir
         field_summary = rollout_summary["fields"][field_name]
         _plot_prediction_target_scatter(field_summary, scatter_path)
         _plot_edge_error_correlation(field_summary, correlation_path)
+
+def compute_mean_relative_mae(pred, target):
+    return torch.mean(compute_relative_mae(pred, target))
+
+def compute_relative_mae(pred, target):
+    return torch.abs(pred - target) / torch.clamp(torch.abs(target), min=1e-12)

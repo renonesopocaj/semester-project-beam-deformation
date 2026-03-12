@@ -21,7 +21,6 @@ TARGET_FIELDS = [
     ("von_mises", "von Mises"),
 ]
 
-
 def plot_volume_change(pred_rollout, true_rollout, path):
     """
     Plot volume change over time for predicted vs ground truth.
@@ -520,11 +519,6 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path)
-
-
-# ---------------------------------------------------------------------------
-#  Mesh diagnostics (5.1, 5.2, 7.1, 7.2, 8.3, 8.4)
-# ---------------------------------------------------------------------------
 
 def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, output_path):
     """
