@@ -1,3 +1,8 @@
+"""
+trainer.py
+Implements a LightningModule subclass to use training
+"""
+
 from pathlib import Path
 
 import lightning as L

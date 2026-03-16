@@ -1,3 +1,7 @@
+"""
+clof.py
+"""
+
 import torch
 from torch import nn
 import numpy as np
@@ -7,20 +11,28 @@ from src.gnn.models.clofnet.layers import GaussianLayer
 
 class ClofNet(nn.Module):
 
-    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device='cpu', act_fn=nn.SiLU(), n_layers=4,
-        coords_weight=1.0, recurrent=True, norm_diff=True, tanh=False):
+    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device, act_fn, n_layers,
+                 coords_weight, recurrent, norm_diff, tanh):
         """
         Args:
-            in_node_nf:
+            in_node_nf: int
+
             in_edge_nf:
+
             hidden_nf:
-            device:
+
+            device: st
             act_fn:
-            n_layers:
-            coords_weight:
+                activation function default = nn.SiLU()
+            n_layers: int
+            coords_weight: float
+                default=1.0
             recurrent:
+                default = True
             norm_diff:
+                default =True
             tanh:
+                default=False
         """
         super(ClofNet, self).__init__()
         self.hidden_nf = hidden_nf
@@ -61,9 +73,15 @@ class ClofNet(nn.Module):
         return str(params)
 
     def coord2localframe(self, edge_index, coord):
+        """
+
+        :param edge_index:
+        :param coord:
+        :return:
+        """
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
-        radial = torch.sum((coord_diff)**2, 1).unsqueeze(1)
+        radial = torch.sum(coord_diff ** 2, 1).unsqueeze(1)
         coord_cross = torch.cross(coord[row], coord[col])
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
@@ -75,6 +93,12 @@ class ClofNet(nn.Module):
         return coord_diff.unsqueeze(1), coord_cross.unsqueeze(1), coord_vertical.unsqueeze(1)
 
     def scalarization(self, edges, x):
+        """
+
+        :param edges:
+        :param x:
+        :return:
+        """
         coord_diff, coord_cross, coord_vertical = self.coord2localframe(edges, x)
         # Geometric Vectors Scalarization
         row, col = edges
@@ -94,6 +118,18 @@ class ClofNet(nn.Module):
         return coff_feat
 
     def forward(self, h, x, edges, vel, edge_attr, node_attr=None, n_nodes=5):
+        """
+
+        Args:
+            h:
+            x:
+            edges:
+            vel:
+            edge_attr:
+            node_attr:
+            n_nodes:
+        :return:
+        """
         h = self.embedding_node(h)
         x = x.reshape(-1, n_nodes, 3)
         centroid = torch.mean(x, dim=1, keepdim=True)
@@ -111,11 +147,11 @@ class ClofNet(nn.Module):
         return x
 
 
-class ClofNet_vel(nn.Module):
+class ClofNetVel(nn.Module):
 
     def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device='cpu', act_fn=nn.SiLU(), n_layers=4,
         coords_weight=1.0, recurrent=True, norm_diff=True, tanh=False):
-        super(ClofNet_vel, self).__init__()
+        super(ClofNetVel, self).__init__()
         self.hidden_nf = hidden_nf
         self.device = device
         self.n_layers = n_layers

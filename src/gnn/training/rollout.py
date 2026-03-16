@@ -1,3 +1,8 @@
+"""
+rollout.py
+Takes care of doing rollout.
+"""
+
 import torch
 from torch_geometric.data import Data
 from src.gnn.preprocessing.build_features import build_edge_features, build_valued_node_features
@@ -77,10 +82,10 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             x_predict_tp1[boundary_condition == 1] = x[boundary_condition == 1]
             v_predict_tp1[boundary_condition == 1] = 0.0
             # Prepare input for next timestep
-            input_graph = build_next_graph(ground_truth_graph=graph_ground_truth, x_predict_tp1=x_predict_tp1,
-                                           v_predict_tp1=v_predict_tp1, rest_pos=rest_pos, node_stats=node_stats,
-                                           edge_stats=edge_stats, normalizer=normalizer,
-                                           rest_minus_nonrest_pos=rest_minus_nonrest_pos)
+            input_graph = _build_next_graph(ground_truth_graph=graph_ground_truth, x_predict_tp1=x_predict_tp1,
+                                            v_predict_tp1=v_predict_tp1, rest_pos=rest_pos, node_stats=node_stats,
+                                            edge_stats=edge_stats, normalizer=normalizer,
+                                            rest_minus_nonrest_pos=rest_minus_nonrest_pos)
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
@@ -98,10 +103,10 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                      rest_pos=rest_pos))
     return true_rollout, pred_rollout
 
-def build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos, node_stats, edge_stats, normalizer,
+def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos, node_stats, edge_stats, normalizer,
                      rest_minus_nonrest_pos):
     """
-    Builds a graph for building the graph of next timestep from predicted state (used in rollout).
+    Builds a graph for building the graph of next timestep from predicted state. Helper for do_rollout.
 
     Args:
         ground_truth_graph: Data
@@ -131,8 +136,8 @@ def build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos,
                                                       rest_minus_nonrest_pos)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
-    # Keep force node features unchanged FIXME: why?
-    _x[-1] = ground_truth_graph.x[-1]
+    # Keep force node features unchanged
+    # _x[-1] = ground_truth_graph.x[-1]
     # --------------- Edges ----------------------
     edge_features = build_edge_features(x_predict_tp1, rest_pos, ground_truth_graph.edge_index, rest_minus_nonrest_pos)
     _edge_attr_normalized = normalizer.normalize(edge_features, edge_stats)

@@ -1,3 +1,8 @@
+"""
+plot_rollout.py
+Contains all files that plot metrics or diagnostics for the rollout.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio
@@ -285,7 +290,7 @@ def _compute_limits(all_values, error_mode):
     return 0.0, vmax
 
 
-def _build_rollout_summary(true_rollout, pred_rollout):
+def build_rollout_summary(true_rollout, pred_rollout):
     """
     Args:
         true_rollout: list
@@ -411,7 +416,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
     imageio.mimsave(output_path, frames, fps=4, loop=0)
 
 
-def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
+def plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -438,7 +443,7 @@ def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_
     plt.close(fig)
 
 
-def _plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
+def plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -516,7 +521,7 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
             Saves all requested validation plots.
     """
     output_dir = Path(output_dir)
-    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
+    rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"

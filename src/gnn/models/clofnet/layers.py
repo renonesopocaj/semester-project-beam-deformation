@@ -1,3 +1,7 @@
+"""
+layers.py
+"""
+
 from torch import nn
 import torch
 import pickle
@@ -39,10 +43,10 @@ class E_GCL_vel(nn.Module):
     Graph Neural Net with global state and fixed number of nodes per graph.
 
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+        hidden_dim: Number of hidden units.
+        num_nodes: Maximum number of nodes (for self-attentive pooling).
+        global_agg: Global aggregation function ('attn' or 'sum').
+        temp: Softmax temperature.
     """
 
     def __init__(self, input_node_nf, input_edge_nf, output_nf, hidden_nf, nodes_att_dim=0, act_fn=nn.Softplus(),

@@ -1,6 +1,8 @@
+"""
+gcl.py
+"""
 from torch import nn
 import torch
-
 
 class MLP(nn.Module):
     """
@@ -51,12 +53,18 @@ class GCL_basic(nn.Module):
 
 
 class GCL(GCL_basic):
-    """Graph Neural Net with global state and fixed number of nodes per graph.
+    """
+    Graph Neural Net with global state and fixed number of nodes per graph.
+
     Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
+        hidden_dim: int
+            Number of hidden units.
+        num_nodes: int
+            Maximum number of nodes (for self-attentive pooling).
+        global_agg: int
+            Global aggregation function ('attn' or 'sum').
+        temp: float
+            Softmax temperature.
     """
 
     def __init__(self, input_nf, output_nf, hidden_nf, edges_in_nf=0, act_fn=nn.ReLU(), bias=True, attention=False,

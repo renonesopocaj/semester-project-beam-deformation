@@ -1,3 +1,8 @@
+"""
+eda.py
+Main file to run in order to do Exploratory Data Analysis.
+"""
+
 import torch
 import hydra
 import os

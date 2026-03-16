@@ -5,6 +5,7 @@ from pathlib import Path
 
 import hydra
 import lightning as L
+from lightning.pytorch.profilers import AdvancedProfiler
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
@@ -111,19 +112,28 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+    profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
     if cfg.training_type == "sanity":
-        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, accelerator=accelerator, devices=1, logger=logger,
+        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
-                                limit_train_batches=5, limit_val_batches=5, limit_test_batches=5)
+                                limit_train_batches=5, limit_val_batches=5, limit_test_batches=5,
+                                accelerator=accelerator, devices=1, profiler=profiler)
     elif cfg.training_type == "slurm":
-        raise NotImplementedError("Slurm training not implemented")
-    elif cfg.training_type == "default":
-        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, accelerator=accelerator, devices=1, logger=logger,
+        # devices=8, num_nodes=4, strategy="ddp"
+        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
-                                enable_checkpointing=len(callbacks) > 0)
+                                enable_checkpointing=len(callbacks) > 0,
+                                # FIXME: devices? num_nodes?
+                                accelerator=accelerator, devices=4, num_nodes=4, strategy="ddp", profiler=profiler) # device
+    elif cfg.training_type == "default":
+        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0,
+                                accelerator=accelerator, devices=1, profiler=profiler)
     else:
         raise NotImplementedError("Default")
 
