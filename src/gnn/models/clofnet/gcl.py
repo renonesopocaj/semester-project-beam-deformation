@@ -1,15 +1,13 @@
-"""
-gcl.py
-"""
+"""Message-passing blocks used by ClofNet and related GNN baselines."""
+from typing import Optional, Tuple
+
 from torch import nn
 import torch
 
 class MLP(nn.Module):
-    """
-    A simple 4-layer MLP
-    """
+    """A simple 4-layer MLP used for small adapters."""
 
-    def __init__(self, nin, nout, nh):
+    def __init__(self, nin: int, nout: int, nh: int):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(nin, nh),
@@ -21,54 +19,37 @@ class MLP(nn.Module):
             nn.Linear(nh, nout),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
 
 class GCL_basic(nn.Module):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
-
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
-    """
+    """Base interface for edge/node update blocks."""
 
     def __init__(self):
         super(GCL_basic, self).__init__()
 
-    def edge_model(self, source, target, edge_attr):
-        pass
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: Optional[torch.Tensor]):
+        raise NotImplementedError
 
-    def node_model(self, h, edge_index, edge_attr):
-        pass
+    def node_model(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], edge_attr: torch.Tensor):
+        raise NotImplementedError
 
-    def forward(self, x, edge_index, edge_attr=None):
+    def forward(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                edge_attr: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         row, col = edge_index
+        # Compute edge features then aggregate back to nodes.
         edge_feat = self.edge_model(x[row], x[col], edge_attr)
         x = self.node_model(x, edge_index, edge_feat)
         return x, edge_feat
 
 
 class GCL(GCL_basic):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Edge MLP + node residual block used in baseline GNNs."""
 
-    Args:
-        hidden_dim: int
-            Number of hidden units.
-        num_nodes: int
-            Maximum number of nodes (for self-attentive pooling).
-        global_agg: int
-            Global aggregation function ('attn' or 'sum').
-        temp: float
-            Softmax temperature.
-    """
-
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_nf=0, act_fn=nn.ReLU(), bias=True, attention=False,
-                 t_eq=False, recurrent=True):
+    def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_nf: int = 0,
+                 act_fn: nn.Module = nn.ReLU(), bias: bool = True, attention: bool = False,
+                 t_eq: bool = False, recurrent: bool = True):
         super(GCL, self).__init__()
         self.attention = attention
         self.t_eq = t_eq
@@ -94,7 +75,7 @@ class GCL(GCL_basic):
         # if recurrent:
         # self.gru = nn.GRUCell(hidden_nf, hidden_nf)
 
-    def edge_model(self, source, target, edge_attr):
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
         edge_in = torch.cat([source, target], dim=1)
         if edge_attr is not None:
             edge_in = torch.cat([edge_in, edge_attr], dim=1)
@@ -104,29 +85,23 @@ class GCL(GCL_basic):
             out = out * att
         return out
 
-    def node_model(self, h, edge_index, edge_attr):
+    def node_model(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                  edge_attr: torch.Tensor) -> torch.Tensor:
         row, col = edge_index
         agg = unsorted_segment_sum(edge_attr, row, num_segments=h.size(0))
-        out = torch.cat([h, agg], dim=1)
+        out = torch.cat([h, agg], dim=1)  # Concatenate aggregated messages to node state.
         out = self.node_mlp(out)
         if self.recurrent:
-            out = out + h
+            out = out + h  # Residual connection to stabilize deeper stacks.
             # out = self.gru(out, h)
         return out
 
 
 class GCL_rf(GCL_basic):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Radial force-style coordinate update without learned features."""
 
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
-    """
-
-    def __init__(self, nf=64, edge_attr_nf=0, reg=0, act_fn=nn.LeakyReLU(0.2), clamp=False):
+    def __init__(self, nf: int = 64, edge_attr_nf: int = 0, reg: float = 0, act_fn: nn.Module = nn.LeakyReLU(0.2),
+                 clamp: bool = False):
         super(GCL_rf, self).__init__()
 
         self.clamp = clamp
@@ -137,7 +112,7 @@ class GCL_rf(GCL_basic):
                                  layer)
         self.reg = reg
 
-    def edge_model(self, source, target, edge_attr):
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor:
         x_diff = source - target
         radial = torch.sqrt(torch.sum(x_diff ** 2, dim=1)).unsqueeze(1)
         e_input = torch.cat([radial, edge_attr], dim=1)
@@ -147,25 +122,19 @@ class GCL_rf(GCL_basic):
             m_ij = torch.clamp(m_ij, min=-100, max=100)
         return m_ij
 
-    def node_model(self, x, edge_index, edge_attr):
+    def node_model(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                  edge_attr: torch.Tensor) -> torch.Tensor:
         row, col = edge_index
         agg = unsorted_segment_mean(edge_attr, row, num_segments=x.size(0))
-        x_out = x + agg - x * self.reg
+        x_out = x + agg - x * self.reg  # Simple damping term via reg.
         return x_out
 
 
 class GCL_rf_vel(nn.Module):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Radial-force block that injects velocity into coordinate updates."""
 
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
-    """
-
-    def __init__(self, nf=64, edge_attr_nf=0, act_fn=nn.LeakyReLU(0.2), coords_weight=1.0):
+    def __init__(self, nf: int = 64, edge_attr_nf: int = 0, act_fn: nn.Module = nn.LeakyReLU(0.2),
+                 coords_weight: float = 1.0):
         super(GCL_rf_vel, self).__init__()
         self.coords_weight = coords_weight
         self.coord_mlp_vel = nn.Sequential(
@@ -179,14 +148,16 @@ class GCL_rf_vel(nn.Module):
         # we had to add the tanh to keep this method stable
         self.phi = nn.Sequential(nn.Linear(1 + edge_attr_nf, nf), act_fn, layer, nn.Tanh())
 
-    def forward(self, x, vel_norm, vel, edge_index, edge_attr=None):
+    def forward(self, x: torch.Tensor, vel_norm: torch.Tensor, vel: torch.Tensor,
+                edge_index: Tuple[torch.Tensor, torch.Tensor], edge_attr: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         row, col = edge_index
         edge_m = self.edge_model(x[row], x[col], edge_attr)
         x = self.node_model(x, edge_index, edge_m)
         x += vel * self.coord_mlp_vel(vel_norm)
         return x, edge_attr
 
-    def edge_model(self, source, target, edge_attr):
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor:
         x_diff = source - target
         radial = torch.sqrt(torch.sum(x_diff ** 2, dim=1)).unsqueeze(1)
         e_input = torch.cat([radial, edge_attr], dim=1)
@@ -194,7 +165,8 @@ class GCL_rf_vel(nn.Module):
         m_ij = x_diff * e_out
         return m_ij
 
-    def node_model(self, x, edge_index, edge_m):
+    def node_model(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], edge_m: torch.Tensor
+                  ) -> torch.Tensor:
         row, col = edge_index
         agg = unsorted_segment_mean(edge_m, row, num_segments=x.size(0))
         x_out = x + agg * self.coords_weight
@@ -202,18 +174,12 @@ class GCL_rf_vel(nn.Module):
 
 
 class E_GCL(nn.Module):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Equivariant coordinate updater with optional attention and clamping."""
 
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
-    """
-
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
-                 coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False, out_basis_dim=1):
+    def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_d: int = 0, nodes_att_dim: int = 0,
+                 act_fn: nn.Module = nn.ReLU(), recurrent: bool = True, coords_weight: float = 1.0,
+                 attention: bool = False, clamp: bool = False, norm_diff: bool = False, tanh: bool = False,
+                 out_basis_dim: int = 1):
         super(E_GCL, self).__init__()
         input_edge = input_nf * 2
         self.coords_weight = coords_weight
@@ -255,7 +221,8 @@ class E_GCL(nn.Module):
         # if recurrent:
         #    self.gru = nn.GRUCell(hidden_nf, hidden_nf)
 
-    def edge_model(self, source, target, radial, edge_attr):
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, radial: torch.Tensor,
+                  edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
         if edge_attr is None:  # Unused.
             out = torch.cat([source, target, radial], dim=1)
         else:
@@ -266,7 +233,8 @@ class E_GCL(nn.Module):
             out = out * att_val
         return out
 
-    def node_model(self, x, edge_index, edge_attr, node_attr):
+    def node_model(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], edge_attr: torch.Tensor,
+                  node_attr: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         row, col = edge_index
         agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
         if node_attr is not None:
@@ -278,7 +246,8 @@ class E_GCL(nn.Module):
             out = x + out
         return out, agg
 
-    def coord_model(self, coord, edge_index, coord_diff, edge_feat):
+    def coord_model(self, coord: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                   coord_diff: torch.Tensor, edge_feat: torch.Tensor) -> torch.Tensor:
         row, col = edge_index
         trans = coord_diff * self.coord_mlp(edge_feat)
         trans = torch.clamp(trans, min=-100,
@@ -287,7 +256,8 @@ class E_GCL(nn.Module):
         coord += agg * self.coords_weight
         return coord
 
-    def coord2radial(self, edge_index, coord):
+    def coord2radial(self, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor
+                    ) -> Tuple[torch.Tensor, torch.Tensor]:
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum((coord_diff) ** 2, 1).unsqueeze(1)
@@ -298,7 +268,9 @@ class E_GCL(nn.Module):
 
         return radial, coord_diff
 
-    def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
+    def forward(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor,
+                edge_attr: Optional[torch.Tensor] = None, node_attr: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
@@ -311,18 +283,11 @@ class E_GCL(nn.Module):
 
 
 class E_GCL_vel(E_GCL):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Equivariant block that adds velocity-driven coordinate shifts."""
 
-    Args:
-          hidden_dim: Number of hidden units.
-          num_nodes: Maximum number of nodes (for self-attentive pooling).
-          global_agg: Global aggregation function ('attn' or 'sum').
-          temp: Softmax temperature.
-    """
-
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
-                 coords_weight=1.0, attention=False, norm_diff=False, tanh=False):
+    def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_d: int = 0, nodes_att_dim: int = 0,
+                 act_fn: nn.Module = nn.ReLU(), recurrent: bool = True, coords_weight: float = 1.0,
+                 attention: bool = False, norm_diff: bool = False, tanh: bool = False):
         E_GCL.__init__(self, input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_att_dim,
                        act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention,
                        norm_diff=norm_diff, tanh=tanh)
@@ -332,7 +297,9 @@ class E_GCL_vel(E_GCL):
             act_fn,
             nn.Linear(hidden_nf, 1))
 
-    def forward(self, h, edge_index, coord, vel, edge_attr=None, node_attr=None):
+    def forward(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor,
+                vel: torch.Tensor, edge_attr: Optional[torch.Tensor] = None,
+                node_attr: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
@@ -347,12 +314,11 @@ class E_GCL_vel(E_GCL):
 
 
 class Clof_GCL(E_GCL):
-    """
-    Basic message passing module of ClofNet.
-    """
+    """ClofNet edge block mixing local-frame bases for coordinate updates."""
 
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
-                 coords_weight=1.0, attention=False, norm_diff=False, tanh=False):
+    def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_d: int = 0, nodes_att_dim: int = 0,
+                 act_fn: nn.Module = nn.ReLU(), recurrent: bool = True, coords_weight: float = 1.0,
+                 attention: bool = False, norm_diff: bool = False, tanh: bool = False):
         E_GCL.__init__(self, input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_att_dim,
                        act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention,
                        norm_diff=norm_diff, tanh=tanh, out_basis_dim=3)
@@ -371,7 +337,8 @@ class Clof_GCL(E_GCL):
             act_fn)
         self.layer_norm = nn.LayerNorm(hidden_nf)
 
-    def coord2localframe(self, edge_index, coord):
+    def coord2localframe(self, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor
+                        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum((coord_diff) ** 2, 1).unsqueeze(1)
@@ -387,7 +354,9 @@ class Clof_GCL(E_GCL):
 
         return radial, coord_diff, coord_cross, coord_vertical
 
-    def coord_model(self, coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat):
+    def coord_model(self, coord: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                   coord_diff: torch.Tensor, coord_cross: torch.Tensor, coord_vertical: torch.Tensor,
+                   edge_feat: torch.Tensor) -> torch.Tensor:
         row, col = edge_index
         coff = self.coord_mlp(edge_feat)
         trans = coord_diff * coff[:, :1] + coord_cross * coff[:, 1:2] + coord_vertical * coff[:, 2:3]
@@ -397,7 +366,9 @@ class Clof_GCL(E_GCL):
         coord += agg * self.coords_weight
         return coord
 
-    def forward(self, h, edge_index, coord, vel, edge_attr=None, node_attr=None):
+    def forward(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor,
+                vel: torch.Tensor, edge_attr: Optional[torch.Tensor] = None,
+                node_attr: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         row, col = edge_index
         residue = h
         # h = self.layer_norm(h)
@@ -412,21 +383,20 @@ class Clof_GCL(E_GCL):
         return h, coord, edge_attr
 
 
-def unsorted_segment_sum(data, segment_ids, num_segments):
-    """
-    Custom PyTorch op to replicate TensorFlow's `unsorted_segment_sum`.
-    """
+def unsorted_segment_sum(data: torch.Tensor, segment_ids: torch.Tensor, num_segments: int) -> torch.Tensor:
+    """TensorFlow-style unsorted_segment_sum implemented with scatter_add_."""
     result_shape = (num_segments, data.size(1))
-    result = data.new_full(result_shape, 0)  # Init empty result tensor.
+    result = data.new_full(result_shape, 0)
     segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
     result.scatter_add_(0, segment_ids, data)
     return result
 
 
-def unsorted_segment_mean(data, segment_ids, num_segments):
+def unsorted_segment_mean(data: torch.Tensor, segment_ids: torch.Tensor, num_segments: int) -> torch.Tensor:
+    """TensorFlow-style unsorted_segment_mean implemented with scatter_add_."""
     result_shape = (num_segments, data.size(1))
     segment_ids = segment_ids.unsqueeze(-1).expand(-1, data.size(1))
-    result = data.new_full(result_shape, 0)  # Init empty result tensor.
+    result = data.new_full(result_shape, 0)
     count = data.new_full(result_shape, 0)
     result.scatter_add_(0, segment_ids, data)
     count.scatter_add_(0, segment_ids, torch.ones_like(data))

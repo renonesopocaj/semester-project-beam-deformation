@@ -1,6 +1,10 @@
+"""Auxiliary layers used by ClofNet variants.
+
+Exposes GaussianLayer for edge basis expansion and an attention-heavy E_GCL_vel
+variant used in alternative experiments.
 """
-layers.py
-"""
+
+from typing import Optional, Tuple
 
 from torch import nn
 import torch
@@ -10,14 +14,18 @@ import math
 import torch.nn.functional as F
 from src.gnn.models.clofnet.gcl import unsorted_segment_sum, unsorted_segment_mean
 
-def gaussian(x, mean, std):
+
+def gaussian(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    """Compute Gaussian basis values with broadcasted mean/std."""
     pi = 3.14159
-    a = (2*pi) ** 0.5
+    a = (2 * pi) ** 0.5
     return torch.exp(-0.5 * (((x - mean) / std) ** 2)) / (a * std)
 
-class GaussianLayer(nn.Module):
 
-    def __init__(self, K=128, edge_types=1024):
+class GaussianLayer(nn.Module):
+    """Distance encoder using learnable Gaussian bases per edge type."""
+
+    def __init__(self, K: int = 128, edge_types: int = 1024):
         super().__init__()
         self.K = K
         self.means = nn.Embedding(1, K)
@@ -29,7 +37,8 @@ class GaussianLayer(nn.Module):
         nn.init.constant_(self.bias.weight, 0)
         nn.init.constant_(self.mul.weight, 1)
 
-    def forward(self, x, edge_types):
+    def forward(self, x: torch.Tensor, edge_types: torch.Tensor) -> torch.Tensor:
+        # Scale and shift distances per edge type then expand into K Gaussian bins.
         mul = self.mul(edge_types)
         bias = self.bias(edge_types)
         x = mul * x.unsqueeze(-1) + bias
@@ -38,26 +47,20 @@ class GaussianLayer(nn.Module):
         std = self.stds.weight.float().view(-1).abs() + 1e-5
         return gaussian(x.float(), mean, std).type_as(self.means.weight)
 
+
 class E_GCL_vel(nn.Module):
-    """
-    Graph Neural Net with global state and fixed number of nodes per graph.
+    """Attention-enhanced equivariant block (not the same as gcl.E_GCL_vel)."""
 
-    Args:
-        hidden_dim: Number of hidden units.
-        num_nodes: Maximum number of nodes (for self-attentive pooling).
-        global_agg: Global aggregation function ('attn' or 'sum').
-        temp: Softmax temperature.
-    """
-
-    def __init__(self, input_node_nf, input_edge_nf, output_nf, hidden_nf, nodes_att_dim=0, act_fn=nn.Softplus(),
-                 recurrent=True, coords_weight=1.0, attention=False, norm_diff=False, tanh=False, nhead=3, n_points=5):
+    def __init__(self, input_node_nf: int, input_edge_nf: int, output_nf: int, hidden_nf: int,
+                 nodes_att_dim: int = 0, act_fn: nn.Module = nn.Softplus(), recurrent: bool = True,
+                 coords_weight: float = 1.0, attention: bool = False, norm_diff: bool = False,
+                 tanh: bool = False, nhead: int = 3, n_points: int = 5):
         super(E_GCL_vel, self).__init__()
         self.coords_weight = coords_weight
         self.recurrent = recurrent
         self.attention = attention
         self.norm_diff = norm_diff
         self.tanh = tanh
-        self.norm_diff = norm_diff
         self.nhead = nhead
         self.n_points = n_points
         assert (hidden_nf % nhead) == 0
@@ -99,7 +102,7 @@ class E_GCL_vel(nn.Module):
         self.norm2 = nn.LayerNorm(hidden_nf)
         self.constant = 1
 
-    def edge_model(self, source, target, edge_attr):
+    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
         if edge_attr is None:
             out = torch.cat([source, target], dim=1)
         else:
@@ -110,7 +113,7 @@ class E_GCL_vel(nn.Module):
             out = out * att_val
         return out
 
-    def edge_model_enhance(self, source, target, edge_attr):
+    def edge_model_enhance(self, source: torch.Tensor, target: torch.Tensor, edge_attr: Optional[torch.Tensor]) -> torch.Tensor:
         if edge_attr is None:
             out = torch.cat([source, target], dim=1)
         else:
@@ -118,7 +121,8 @@ class E_GCL_vel(nn.Module):
         out = self.edge_mlp_enhance(out)
         return out
 
-    def node_model(self, x, edge_index, edge_attr, node_attr):
+    def node_model(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], edge_attr: torch.Tensor,
+                  node_attr: Optional[torch.Tensor]):
         row, col = edge_index
         agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
         agg = self.norm1(agg)
@@ -133,7 +137,8 @@ class E_GCL_vel(nn.Module):
 
         return out, agg
 
-    def coord2radial(self, edge_index, coord):
+    def coord2radial(self, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor
+                    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum((coord_diff) ** 2, 1).unsqueeze(1)
@@ -151,10 +156,10 @@ class E_GCL_vel(nn.Module):
         return coord_diff, coord_cross, coord_vertical
 
 
-    def acc_model_inner(self, coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat):
-        """
-        inner force field
-        """
+    def acc_model_inner(self, coord: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
+                        coord_diff: torch.Tensor, coord_cross: torch.Tensor, coord_vertical: torch.Tensor,
+                        edge_feat: torch.Tensor) -> torch.Tensor:
+        """Project edge features to basis coefficients and aggregate acceleration."""
         row, col = edge_index
         basis_coff = self.coord_mlp_inner(edge_feat)
         trans = (
@@ -168,16 +173,16 @@ class E_GCL_vel(nn.Module):
 
         return acc
 
-    def transpose_for_scores(self, x):
-        """
-        x has shape (B, N, C)
-        return shape (B, nhead, N, C/nhead)
-        """
+    def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
+        """Reshape to (B, nhead, N, C/nhead) for attention score computation."""
         new_shape = x.shape[:-1] + (self.nhead, -1)
         x = x.view(*new_shape)
         return x.transpose(-3, -2)
 
-    def forward(self, h, edge_index, coord, coord_pre, vel, edge_attr=None, node_attr=None, short_cut=False):
+    def forward(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], coord: torch.Tensor,
+                coord_pre: torch.Tensor, vel: torch.Tensor, edge_attr: Optional[torch.Tensor] = None,
+                node_attr: Optional[torch.Tensor] = None, short_cut: bool = False
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Message enhancement
         row, col = edge_index
         edge_feat = self.edge_model(h[row], h[col], edge_attr)
