@@ -1,3 +1,8 @@
+"""
+visualize_fea.py
+This file contains helper functions for visualizing FEA results.
+"""
+
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import imageio
 import numpy as np

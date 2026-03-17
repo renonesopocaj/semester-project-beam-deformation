@@ -1,6 +1,7 @@
 """
 eda.py
 Main file to run in order to do Exploratory Data Analysis.
+The del command are there to avoid out of memory errors.
 """
 
 import torch

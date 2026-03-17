@@ -1,9 +1,13 @@
+"""
+beam_fea_solver.py
+Implementation of a 3D beam finite element solver using FEniCS.
+"""
+
 import argparse
 import os
 
 import dolfin as df
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from fenics import project
@@ -347,12 +351,18 @@ def local_project(v, V_, uOut):
     return
 
 
-def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params, newmark_params, initial_force_x=0.0,
-                   initial_force_y=1.0, initial_force_z=0.0, cutoff_time_factor=1 / 5, total_time=4.0, num_steps=50,
-                   mode="train"):
+def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params, newmark_params, initial_force_x,
+                   initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode):
     """
     Run a transient 3D beam finite element simulation and convert each time step
     into a graph object suitable for graph learning workflows.
+    =0.0
+    =1.0
+    =0.0
+    =1 / 5
+    =4.0
+    =50,
+
 
     Args:
         L: float
@@ -505,7 +515,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     # Corner points used for optional displacement tracking.
     corners = [(0.0, 0.0, 0.0), (0.0, W, 0.0), (0.0, 0.0, D), (0.0, W, D)]
-    u_corners = np.zeros((Nsteps + 1, len(corners)))
+    u_corners = np.zeros((Nsteps + 1, len(corners))) # only assigned (later), never used
 
     # Store one graph snapshot per time step.
     lst_graph_tstep = []
@@ -589,13 +599,11 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         energies[i + 1, :] = np.array([E_elas, E_kin, E_damp, E_tot])
 
     # Create a descriptive name encoding the main simulation parameters.
-    simulation_name = (
-        f"L{L}_W{W}_D{D}_NL{NL}_NW{NW}_ND{ND}_"
-        f"E{E}_nu{nu}_rho{density}_"
-        f"em{eta_m_val}_ek{eta_k_val}"
-        f"_Pix{initial_force_x}_Piy{initial_force_y}_Piz{initial_force_z}_"
-        f"T{total_time}_Tc{cutoff_time_factor * total_time}_Nsteps{num_steps}"
-    )
+    simulation_name = (f"L{L}_W{W}_D{D}_NL{NL}_NW{NW}_ND{ND}_"
+                       f"E{E}_nu{nu}_rho{density}_"
+                       f"em{eta_m_val}_ek{eta_k_val}"
+                       f"_Pix{initial_force_x}_Piy{initial_force_y}_Piz{initial_force_z}_"
+                       f"T{total_time}_Tc{cutoff_time_factor * total_time}_Nsteps{num_steps}")
 
     # Define output folders.
     save_path = "./Results_large_10_pow_3"
@@ -619,12 +627,6 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
 
 if __name__ == "__main__":
-    """
-    Entry point for command-line execution.
-
-    The script parses user-provided simulation parameters, runs the transient FEA simulation, saves graph snapshots
-    and diagnostics, and then creates a GIF visualization of the beam deformation and stress field.
-    """
     # Create an argument parser describing the available command-line options.
     parser = argparse.ArgumentParser(description="FEA Simulation Parameters")
     # Geometrical and discretization parameters.

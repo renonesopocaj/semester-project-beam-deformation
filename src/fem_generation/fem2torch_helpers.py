@@ -1,3 +1,8 @@
+"""
+fem2torch_helpers.py
+This file contains helper functions for converting FEniCS meshes to PyTorch Geometric graphs.
+"""
+
 import numpy as np
 import torch
 
