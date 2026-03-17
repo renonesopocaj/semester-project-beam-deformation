@@ -21,11 +21,42 @@ EPS = 1e-6
 DT = 0.08
 LIMIT_TIMESTEPS = 50
 DEVICE = "cpu"
-SAVE_DIR = "eda_artifacts"
 LABELS = ["No norm", "Z isotr.", "Z anisotr.", "Robust isotr.", "Robust anisotr."]
 
+def generate_ground_truth_gif_all(preprocessor, SAVE_DIR):
+    """
+    Generate one GIF per trajectory from the no-norm preprocessor's raw graphs.
 
-def plot_all_distributions(eda_obj_list, labels):
+    Args:
+        preprocessor: EdaPreprocessor
+            The non-normalized preprocessor whose out_graphs hold raw x_pos_t and y_sig_t.
+    """
+    gif_dir = Path(SAVE_DIR) / "ground_truth_gifs"
+    os.makedirs(gif_dir, exist_ok=True)
+
+    traj_idx_list = preprocessor.traj_idx_list
+    out_graphs = preprocessor.out_graphs
+
+    pbar = tqdm(enumerate(sorted(set(traj_idx_list))), desc="Ground truth GIFs")
+    for i, traj in pbar:
+        if i % 15 != 0:
+            continue
+        traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
+
+        for graph in traj_graphs:
+            graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+
+        gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
+        # print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")xx
+        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
+        del gif_path
+        del traj_graphs
+
+    del traj_idx_list
+    del out_graphs
+    del gif_dir
+
+def plot_all_distributions(eda_obj_list, labels, SAVE_DIR):
     """
     Args:
         eda_obj_list: list[EdaObj]
@@ -39,10 +70,10 @@ def plot_all_distributions(eda_obj_list, labels):
         if len(getattr(eda_obj_list[0], key)) == 0:
             continue
         pbar.set_postfix({"key": key})
-        plot_distribution(key, eda_obj_list, labels)
+        plot_distribution(key, eda_obj_list, labels, SAVE_DIR)
 
 
-def plot_distribution(attr_name, eda_obj_list, labels):
+def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
     """
     Plots non-normalized distribution on the left y-axis and all
     normalized distributions on the right y-axis (shared scale).
@@ -283,6 +314,7 @@ def main(cfg):
         cfg: omegaconf.DictConfig
             Hydra-composed configuration.
     """
+
     cfg_obj_nonorm = PreprocessYaml(cfg)
     cfg_obj_z_isotr_norm = PreprocessYaml(cfg)
     cfg_obj_z_anisotr_norm = PreprocessYaml(cfg)
@@ -301,8 +333,11 @@ def main(cfg):
     cfg_obj_rob_isotr_norm.isotropic_normalizer = True
     cfg_obj_rob_anisotr_norm.isotropic_normalizer = False
 
-    print(f"Preprocessing {cfg_obj_nonorm.dataset_size} dataset\n" + "=" * 60)
-    print(f"\tSave dir of config.yaml = {cfg_obj_nonorm.save_dir}")
+    # NOTE: these are where plots are saved
+    SAVE_DIR = f"eda_artifacts/{str(cfg_obj_nonorm.dataset_type)}"
+
+    print(f"Preprocessing size={cfg_obj_nonorm.dataset_size} dataset\n" + "=" * 60)
+    print(f"\tSave dir of eda = {SAVE_DIR}")
     graphs_dir_train = Path(cfg_obj_nonorm.raw_data_dir) / "train" / "graphs"
 
     preprocessor_train_nonorm = EdaPreprocessor(cfg_obj_nonorm)
@@ -337,49 +372,15 @@ def main(cfg):
     del cfg_obj_rob_isotr_norm
     del cfg_obj_rob_anisotr_norm
 
-    print("="*60+"Starting to plot all distributions..."+"="*60+"\n")
-    plot_all_distributions(all_eda_obj_arg, LABELS)
-    print("="*60+"\nStarting to generate ground truth GIFs..\n"+"="*60+"\n")
-    generate_ground_truth_gif_all(preprocessor_train_nonorm)
+    print("=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
+    plot_all_distributions(all_eda_obj_arg, LABELS, SAVE_DIR)
+    print("=" * 60 + "\nStarting to generate ground truth GIFs..\n" + "=" * 60 + "\n")
+    generate_ground_truth_gif_all(preprocessor_train_nonorm, SAVE_DIR)
 
     del all_eda_obj_arg
     del preprocessor_train_nonorm
     del cfg_obj_nonorm
     del graphs_dir_train
-
-
-def generate_ground_truth_gif_all(preprocessor):
-    """
-    Generate one GIF per trajectory from the no-norm preprocessor's raw graphs.
-
-    Args:
-        preprocessor: EdaPreprocessor
-            The non-normalized preprocessor whose out_graphs hold raw x_pos_t and y_sig_t.
-    """
-    gif_dir = Path(SAVE_DIR) / "ground_truth_gifs"
-    os.makedirs(gif_dir, exist_ok=True)
-
-    traj_idx_list = preprocessor.traj_idx_list
-    out_graphs = preprocessor.out_graphs
-
-    pbar = tqdm(enumerate(sorted(set(traj_idx_list))), desc="Ground truth GIFs")
-    for i, traj in pbar:
-        if i % 15 != 0:
-            continue
-        traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
-
-        for graph in traj_graphs:
-            graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
-
-        gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
-        # print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")xx
-        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
-        del gif_path
-        del traj_graphs
-
-    del traj_idx_list
-    del out_graphs
-    del gif_dir
 
 
 if __name__ == "__main__":

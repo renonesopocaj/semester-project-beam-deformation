@@ -1,4 +1,4 @@
-mesh_type: single-direction-beam
+dataset_type: single_direction_beam
 base_dir: dataset
-raw_data_dir: ${paths.base_dir}/raw/raw/${paths.mesh_type}/${dataset.dataset_size}
+raw_data_dir: ${paths.base_dir}/raw/raw/${paths.dataset_type}/${dataset.dataset_size}
 save_dir: ${paths.base_dir}/processed
