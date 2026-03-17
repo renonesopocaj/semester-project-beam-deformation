@@ -18,6 +18,7 @@ dataset
 saved_models
 *.json
 *.pt
+eda_artifacts
 
 # Compiled Python files
 *.pyc

@@ -1,4 +1,3 @@
-# @package paths
 mesh_type: single-direction-beam
 base_dir: dataset
 raw_data_dir: ${paths.base_dir}/raw/raw/${paths.mesh_type}/${dataset.dataset_size}
