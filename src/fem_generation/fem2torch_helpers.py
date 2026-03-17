@@ -5,6 +5,7 @@ This file contains helper functions for converting FEniCS meshes to PyTorch Geom
 
 import numpy as np
 import torch
+import dolfin as df
 
 def evaluate_u_at_vertices(u, mesh):
     """

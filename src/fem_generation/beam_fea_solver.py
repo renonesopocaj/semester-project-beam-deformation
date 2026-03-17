@@ -1,6 +1,7 @@
 """
 beam_fea_solver.py
 Implementation of a 3D beam finite element solver using FEniCS.
+Note the idea is that one dataset has forces only in the y direction, while the "rotated" in various directions.
 """
 
 import argparse
@@ -87,7 +88,7 @@ def extract_node_masses(u_, du, rho):
 
     return lumps_vertex
 
-def save_graphs(lst_graph_tstep, save_path):
+def save_graphs(lst_graph_tstep, save_path, verbose):
     """
     Save a list of graph snapshots as a PyTorch DataLoader object.
 
@@ -102,7 +103,8 @@ def save_graphs(lst_graph_tstep, save_path):
     # Wrap graphs in a DataLoader so downstream code can load them directly.
     gph_dataloader = DataLoader(lst_graph_tstep, batch_size=1, shuffle=False)
     torch.save(gph_dataloader, save_path)
-    print(f"saved graphs(dataloader) to {save_path}")
+    if verbose:
+        print(f"saved graphs(dataloader) to {save_path}")
 
 
 def sigma(r, mu, lmbda):
@@ -200,7 +202,7 @@ def Wext(uA, p, dss):
     return df.dot(uA, p) * dss(3)
 
 
-def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, ufl):
+def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, use_ufl):
     """
     Compute the new acceleration from displacement update.
 
@@ -217,12 +219,12 @@ def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, ufl):
             Time step size.
         beta: dolfin.Constant or float
             Generalized-alpha / Newmark beta parameter.
-        ufl: bool
+        use_ufl: bool
             Whether to use symbolic FEniCS constants or plain Python floats.
         return: object
             Updated acceleration expression or array.
     """
-    if ufl:
+    if use_ufl:
         dt_ = dt
         beta_ = beta
     else:
@@ -232,7 +234,7 @@ def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, ufl):
     return (uNEW - uOLD - dt_ * vOLD) / (beta_ * dt_**2) - (1 - 2 * beta_) / (2 * beta_) * aOLD
 
 
-def update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, ufl):
+def update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, use_ufl):
     """
     Compute the new velocity from acceleration update.
 
@@ -249,12 +251,12 @@ def update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, ufl):
             Time step size.
         gamma: dolfin.Constant or float
             Generalized-alpha / Newmark gamma parameter.
-        ufl: bool
+        use_ufl: bool
             Whether to use symbolic FEniCS constants or plain Python floats.
         return: object
             Updated velocity expression or array.
     """
-    if ufl:
+    if use_ufl:
         dt_ = dt
         gamma_ = gamma
     else:
@@ -291,8 +293,8 @@ def update_fields(uNEW, uOLD, vOLD, aOLD, dt, beta, gamma):
     v0_vec, a0_vec = vOLD.vector(), aOLD.vector()
 
     # Update acceleration and velocity in algebraic form.
-    a_vec = update_a(u_vec, u0_vec, v0_vec, a0_vec, dt, beta, ufl=False)
-    v_vec = update_v(a_vec, u0_vec, v0_vec, a0_vec, dt, gamma, ufl=False)
+    a_vec = update_a(u_vec, u0_vec, v0_vec, a0_vec, dt, beta, use_ufl=False)
+    v_vec = update_v(a_vec, u0_vec, v0_vec, a0_vec, dt, gamma, use_ufl=False)
 
     # Copy updated values into the FEniCS functions.
     vOLD.vector()[:] = v_vec
@@ -352,7 +354,8 @@ def local_project(v, V_, uOut):
 
 
 def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params, newmark_params, initial_force_x,
-                   initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode):
+                   initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode, output_root,
+                   verbose):
     """
     Run a transient 3D beam finite element simulation and convert each time step
     into a graph object suitable for graph learning workflows.
@@ -404,6 +407,10 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
             - list of graph snapshots for all time steps
             - directory where graph data is stored
             - simulation name string used in output filenames
+        verbose: bool
+            enable verbose printing
+        output_root: str
+            output root
     """
     # Enable FEniCS form compiler optimizations.
     df.parameters["form_compiler"]["cpp_optimize"] = True
@@ -483,8 +490,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
                       t=0, tc=cutoff_Tc, p0x=p0_x, p0y=p0_y, p0z=p0_z, degree=0)
 
     # Build acceleration and velocity update expressions symbolically.
-    a_new = update_a(du, u_old, v_old, a_old, dt, beta, ufl=True)
-    v_new = update_v(a_new, u_old, v_old, a_old, dt, gamma, ufl=True)
+    a_new = update_a(du, u_old, v_old, a_old, dt, beta, use_ufl=True)
+    v_new = update_v(a_new, u_old, v_old, a_old, dt, gamma, use_ufl=True)
 
     # Residual of the semi-discrete dynamic system.
     res = (m(avg(a_old, a_new, alpha_m), u_, rho)
@@ -530,7 +537,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     for i in range(Nsteps):
         dt_i = time[i + 1] - time[i]
         t_now = time[i + 1]
-        print("Time: ", t_now)
+        if verbose:
+            print("Time: ", t_now)
 
         # Evaluate the force at t_{n+1-alpha_f}.
         p.t = t_now - float(alpha_f) * dt_i
@@ -606,7 +614,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
                        f"T{total_time}_Tc{cutoff_time_factor * total_time}_Nsteps{num_steps}")
 
     # Define output folders.
-    save_path = "./Results_large_10_pow_3"
+    save_path = output_root
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
@@ -620,78 +628,78 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     graph_file_path = os.path.join(save_path_graph, f"graphs{simulation_name}.pt")
 
     # Save diagnostics and graph dataset.
-    plot_check(time, u_tip, energies, plot_file_path)
-    save_graphs(lst_graph_tstep, graph_file_path)
+    plot_check(time, u_tip, energies, plot_file_path, verbose=False)
+    save_graphs(lst_graph_tstep, graph_file_path, verbose=False)
 
     return lst_graph_tstep, save_path_graph, simulation_name
 
 
-if __name__ == "__main__":
-    # Create an argument parser describing the available command-line options.
-    parser = argparse.ArgumentParser(description="FEA Simulation Parameters")
-    # Geometrical and discretization parameters.
-    parser.add_argument("--L", type=float, default=1.0, help="Length of the beam (default: 1.0)")
-    parser.add_argument("--W", type=float, default=0.1, help="Width of the beam (default: 0.1)")
-    parser.add_argument("--D", type=float, default=0.04, help="Depth of the beam (default: 0.04)")
-    parser.add_argument("--NL", type=int, default=8, help="Number of elements along length (default: 8)")
-    parser.add_argument("--NW", type=int, default=2, help="Number of elements along width (default: 2)")
-    parser.add_argument("--ND", type=int, default=2, help="Number of elements along depth (default: 2)")
-    # Material properties.
-    parser.add_argument("--E", type=float, default=1000.0, help="Young's modulus (default: 1000.0)")
-    parser.add_argument("--nu", type=float, default=0.3, help="Poisson's ratio (default: 0.3)")
-    parser.add_argument("--rho", type=float, default=1.0, help="Density (default: 1.0)")
-    # Rayleigh damping parameters.
-    parser.add_argument("--eta_m", type=float, default=0.01, help="Mass proportional damping (default: 0.01)")
-    parser.add_argument("--eta_k", type=float, default=0.01, help="Stiffness proportional damping (default: 0.01)")
-    # Generalized-alpha / Newmark parameters.
-    parser.add_argument("--alpha_m", type=float, default=0.0, help="Alpha mass (default: 0.0)")
-    parser.add_argument("--alpha_f", type=float, default=0.0, help="Alpha force (default: 0.0)")
-    # Simulation force and time parameters.
-    parser.add_argument("--initial_force_y", type=float, default=1.0, help="Initial force (default: 1.0)")
-    parser.add_argument("--initial_force_x", type=float, default=0.0, help="Initial force in x direction (default: 0.0)")
-    parser.add_argument("--initial_force_z", type=float, default=0.0, help="Initial force in z direction (default: 0.0)")
-    parser.add_argument("--cutoff_time_factor", type=float, default=1 / 5, help="Cutoff time factor (default: 0.2)")
-    parser.add_argument("--total_time", type=float, default=4.0, help="Total simulation time (default: 4.0)")
-    parser.add_argument("--num_steps", type=int, default=50, help="Number of time steps (default: 50)")
-    # Output mode used as subfolder name.
-    parser.add_argument("--mode", type=str, default="train", help="subfolder name e.g. test,train")
-    # Parse arguments from the command line.
-    args = parser.parse_args()
-
-    # Extract individual parameters from the parsed namespace.
-    L = args.L
-    W = args.W
-    D = args.D
-    NL = args.NL
-    NW = args.NW
-    ND = args.ND
-    E = args.E
-    nu = args.nu
-    rho = args.rho
-    eta_m = args.eta_m
-    eta_k = args.eta_k
-    alpha_m = args.alpha_m
-    alpha_f = args.alpha_f
-    initial_force_x = args.initial_force_x
-    initial_force_y = args.initial_force_y
-    initial_force_z = args.initial_force_z
-    cutoff_time_factor = args.cutoff_time_factor
-    total_time = args.total_time
-    num_steps = args.num_steps
-    mode = args.mode
-
-    # Pack related parameters into tuples expected by fea_simulation().
-    elastic_params = (E, nu)
-    density = rho
-    damping_params = (eta_m, eta_k)
-    newmark_params = (alpha_m, alpha_f)
-
-    # Run the transient simulation and collect graph snapshots.
-    lst_graphs, graph_save_path, simulation_name = fea_simulation(L, W, D, NL, NW, ND, elastic_params, density,
-                                                                  damping_params, newmark_params, initial_force_x,
-                                                                  initial_force_y, initial_force_z, cutoff_time_factor,
-                                                                  total_time, num_steps, mode)
-    # Build GIF output path.
-    out_gif = os.path.join(graph_save_path, "BEAM_" + simulation_name + ".gif")
-    # Render the animated visualization.
-    make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4)
+# if __name__ == "__main__":
+#     # Create an argument parser describing the available command-line options.
+#     parser = argparse.ArgumentParser(description="FEA Simulation Parameters")
+#     # Geometrical and discretization parameters.
+#     parser.add_argument("--L", type=float, default=1.0, help="Length of the beam (default: 1.0)")
+#     parser.add_argument("--W", type=float, default=0.1, help="Width of the beam (default: 0.1)")
+#     parser.add_argument("--D", type=float, default=0.04, help="Depth of the beam (default: 0.04)")
+#     parser.add_argument("--NL", type=int, default=8, help="Number of elements along length (default: 8)")
+#     parser.add_argument("--NW", type=int, default=2, help="Number of elements along width (default: 2)")
+#     parser.add_argument("--ND", type=int, default=2, help="Number of elements along depth (default: 2)")
+#     # Material properties.
+#     parser.add_argument("--E", type=float, default=1000.0, help="Young's modulus (default: 1000.0)")
+#     parser.add_argument("--nu", type=float, default=0.3, help="Poisson's ratio (default: 0.3)")
+#     parser.add_argument("--rho", type=float, default=1.0, help="Density (default: 1.0)")
+#     # Rayleigh damping parameters.
+#     parser.add_argument("--eta_m", type=float, default=0.01, help="Mass proportional damping (default: 0.01)")
+#     parser.add_argument("--eta_k", type=float, default=0.01, help="Stiffness proportional damping (default: 0.01)")
+#     # Generalized-alpha / Newmark parameters.
+#     parser.add_argument("--alpha_m", type=float, default=0.0, help="Alpha mass (default: 0.0)")
+#     parser.add_argument("--alpha_f", type=float, default=0.0, help="Alpha force (default: 0.0)")
+#     # Simulation force and time parameters.
+#     parser.add_argument("--initial_force_y", type=float, default=1.0, help="Initial force (default: 1.0)")
+#     parser.add_argument("--initial_force_x", type=float, default=0.0, help="Initial force in x direction (default: 0.0)")
+#     parser.add_argument("--initial_force_z", type=float, default=0.0, help="Initial force in z direction (default: 0.0)")
+#     parser.add_argument("--cutoff_time_factor", type=float, default=1 / 5, help="Cutoff time factor (default: 0.2)")
+#     parser.add_argument("--total_time", type=float, default=4.0, help="Total simulation time (default: 4.0)")
+#     parser.add_argument("--num_steps", type=int, default=50, help="Number of time steps (default: 50)")
+#     # Output mode used as subfolder name.
+#     parser.add_argument("--mode", type=str, default="train", help="subfolder name e.g. test,train")
+#     # Parse arguments from the command line.
+#     args = parser.parse_args()
+#
+#     # Extract individual parameters from the parsed namespace.
+#     L = args.L
+#     W = args.W
+#     D = args.D
+#     NL = args.NL
+#     NW = args.NW
+#     ND = args.ND
+#     E = args.E
+#     nu = args.nu
+#     rho = args.rho
+#     eta_m = args.eta_m
+#     eta_k = args.eta_k
+#     alpha_m = args.alpha_m
+#     alpha_f = args.alpha_f
+#     initial_force_x = args.initial_force_x
+#     initial_force_y = args.initial_force_y
+#     initial_force_z = args.initial_force_z
+#     cutoff_time_factor = args.cutoff_time_factor
+#     total_time = args.total_time
+#     num_steps = args.num_steps
+#     mode = args.mode
+#
+#     # Pack related parameters into tuples expected by fea_simulation().
+#     elastic_params = (E, nu)
+#     density = rho
+#     damping_params = (eta_m, eta_k)
+#     newmark_params = (alpha_m, alpha_f)
+#
+#     # Run the transient simulation and collect graph snapshots.
+#     lst_graphs, graph_save_path, simulation_name = fea_simulation(L, W, D, NL, NW, ND, elastic_params, density,
+#                                                                   damping_params, newmark_params, initial_force_x,
+#                                                                   initial_force_y, initial_force_z, cutoff_time_factor,
+#                                                                   total_time, num_steps, mode)
+#     # Build GIF output path.
+#     out_gif = os.path.join(graph_save_path, "BEAM_" + simulation_name + ".gif")
+#     # Render the animated visualization.
+#     make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4, verbose=False)

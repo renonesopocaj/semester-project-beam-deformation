@@ -131,8 +131,9 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     categorical_node_features = boundary_condition.unsqueeze(1)
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted
-    node_force = ground_truth_graph.node_force_next
-    valued_node_features = build_valued_node_features(x_predict_tp1, v_predict_tp1, rest_pos, node_force,
+    ground_truth_force_tp1 = ground_truth_graph.node_force_next
+    valued_node_features = build_valued_node_features(x_predict_tp1, v_predict_tp1, rest_pos,
+                                                      ground_truth_force_tp1,
                                                       rest_minus_nonrest_pos)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
@@ -147,6 +148,7 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     input_graph.edge_attr = _edge_attr_normalized
     input_graph.x_pos_t = x_predict_tp1
     input_graph.x_vel_t = v_predict_tp1
-    input_graph.node_force = node_force
+    # only thing from ground truth graph, i.e. is not predicted
+    input_graph.node_force = ground_truth_force_tp1
     return input_graph
 

@@ -1,4 +1,6 @@
-"""ClofNet variants used for Newtonian rollouts.
+"""
+clof.py
+ClofNet variants used for Newtonian rollouts.
 
 The module exposes three stacks sharing the same Clof_GCL backbone but
 different edge featurizations:

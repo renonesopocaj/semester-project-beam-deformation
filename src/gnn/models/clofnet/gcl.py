@@ -1,42 +1,78 @@
-"""Message-passing blocks used by ClofNet and related GNN baselines."""
+"""
+gcl.py
+Message-passing blocks used by ClofNet and related GNN baselines.
+"""
 from typing import Optional, Tuple
-
 from torch import nn
 import torch
+from abc import ABC, abstractmethod
 
 class MLP(nn.Module):
-    """A simple 4-layer MLP used for small adapters."""
+    """
+    A simple 4-layer MLP used for small adapters.
+    Activation: Leaky ReLU
+    """
 
     def __init__(self, nin: int, nout: int, nh: int):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(nin, nh),
-            nn.LeakyReLU(0.2),
-            nn.Linear(nh, nh),
-            nn.LeakyReLU(0.2),
-            nn.Linear(nh, nh),
-            nn.LeakyReLU(0.2),
-            nn.Linear(nh, nout),
-        )
+        self.net = nn.Sequential(nn.Linear(nin, nh),
+                                 nn.LeakyReLU(0.2),
+                                 nn.Linear(nh, nh),
+                                 nn.LeakyReLU(0.2),
+                                 nn.Linear(nh, nh),
+                                 nn.LeakyReLU(0.2),
+                                 nn.Linear(nh, nout))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor
+        :return: torch.Tensor
+        """
         return self.net(x)
 
 
-class GCL_basic(nn.Module):
-    """Base interface for edge/node update blocks."""
+class GCL_basic(nn.Module, ABC):
+    """
+    Base interface for edge/node update blocks.
+    """
 
     def __init__(self):
         super(GCL_basic, self).__init__()
 
-    def edge_model(self, source: torch.Tensor, target: torch.Tensor, edge_attr: Optional[torch.Tensor]):
+    @abstractmethod
+    def edge_model(self, source, target, edge_attr):
+        """
+
+        Args:
+            source: torch.Tensor
+            target: torch.Tensor
+            edge_attr: Optional[torch.Tensor]
+        """
         raise NotImplementedError
 
-    def node_model(self, h: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor], edge_attr: torch.Tensor):
+    @abstractmethod
+    def node_model(self, h, edge_index, edge_attr):
+        """
+
+        Args:
+            h: torch.Tensor
+            edge_index: Tuple[torch.Tensor, torch.Tensor]
+            edge_attr: torch.Tensor
+        :return:
+        """
         raise NotImplementedError
 
-    def forward(self, x: torch.Tensor, edge_index: Tuple[torch.Tensor, torch.Tensor],
-                edge_attr: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x, edge_index, edge_attr):
+        """
+
+        Args:
+            x: torch.Tensor
+            edge_index: Tuple[torch.Tensor, torch.Tensor]
+            edge_attr: Optional[torch.Tensor] = None
+        :return: Tuple[torch.Tensor, torch.Tensor]
+            a tuple of node and edge_features
+        """
         row, col = edge_index
         # Compute edge features then aggregate back to nodes.
         edge_feat = self.edge_model(x[row], x[col], edge_attr)
@@ -45,7 +81,9 @@ class GCL_basic(nn.Module):
 
 
 class GCL(GCL_basic):
-    """Edge MLP + node residual block used in baseline GNNs."""
+    """
+    Edge MLP + node residual block used in baseline GNNs.
+    """
 
     def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_nf: int = 0,
                  act_fn: nn.Module = nn.ReLU(), bias: bool = True, attention: bool = False,
@@ -131,16 +169,17 @@ class GCL_rf(GCL_basic):
 
 
 class GCL_rf_vel(nn.Module):
-    """Radial-force block that injects velocity into coordinate updates."""
+    """
+    Radial-force block that injects velocity into coordinate updates.
+    """
 
     def __init__(self, nf: int = 64, edge_attr_nf: int = 0, act_fn: nn.Module = nn.LeakyReLU(0.2),
                  coords_weight: float = 1.0):
         super(GCL_rf_vel, self).__init__()
         self.coords_weight = coords_weight
-        self.coord_mlp_vel = nn.Sequential(
-            nn.Linear(1, nf),
-            act_fn,
-            nn.Linear(nf, 1))
+        self.coord_mlp_vel = nn.Sequential(nn.Linear(1, nf),
+                                           act_fn,
+                                           nn.Linear(nf, 1))
 
         layer = nn.Linear(nf, 1, bias=False)
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
@@ -283,7 +322,9 @@ class E_GCL(nn.Module):
 
 
 class E_GCL_vel(E_GCL):
-    """Equivariant block that adds velocity-driven coordinate shifts."""
+    """
+    Equivariant block that adds velocity-driven coordinate shifts.
+    """
 
     def __init__(self, input_nf: int, output_nf: int, hidden_nf: int, edges_in_d: int = 0, nodes_att_dim: int = 0,
                  act_fn: nn.Module = nn.ReLU(), recurrent: bool = True, coords_weight: float = 1.0,

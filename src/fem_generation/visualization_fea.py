@@ -1,5 +1,5 @@
 """
-visualize_fea.py
+visualization_fea.py
 This file contains helper functions for visualizing FEA results.
 """
 
@@ -81,7 +81,7 @@ def find_boundary_triangles(tetra_connectivity):
     return np.array(boundary_faces, dtype=int)
 
 
-def make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4):
+def make_beam_gif(lst_graphs, L, W, D, out_gif, fps, verbose):
     """
     Render an animated GIF of the deformed beam surface colored by von Mises stress.
 
@@ -138,7 +138,8 @@ def make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4):
         vm_max = max(vm_max, np.max(vm))
 
     for i, graph in enumerate(lst_graphs):
-        print(f"Rendering frame {i}/{len(lst_graphs) - 1}")
+        if verbose:
+            print(f"Rendering frame {i}/{len(lst_graphs) - 1}")
 
         # Extract node coordinates and stress values for the current frame.
         coords = graph.x.cpu().numpy()
@@ -203,13 +204,15 @@ def make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4):
 
     # Combine all frames into a looping GIF.
     imageio.mimsave(out_gif, frames, fps=fps, loop=0)
-    print(f"GIF saved => {out_gif}")
+    if verbose:
+        print(f"GIF saved => {out_gif}")
 
     # Clean up temporary PNG files.
     shutil.rmtree(temp_dir)
-    print("Done.")
+    if verbose:
+        print("Done.")
 
-def plot_check(time, u_tip, energies, save_path):
+def plot_check(time, u_tip, energies, save_path, verbose):
     """
     Save a diagnostic plot showing tip displacement and energy evolution.
 
@@ -245,5 +248,7 @@ def plot_check(time, u_tip, energies, save_path):
 
         plt.tight_layout()
         plt.savefig(save_path)
-        print("plot saved to :", save_path)
+        plt.close(fig)
 
+        if verbose:
+            print("plot saved to :", save_path)
