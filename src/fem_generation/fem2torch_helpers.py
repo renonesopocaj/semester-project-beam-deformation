@@ -155,3 +155,49 @@ def extract_edges(mesh):
     bidir_edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
 
     return bidir_edge_index, mesh_connectivity
+
+def extract_mesh_bc_nodemask(bc, V):
+    """
+    Extract a binary node mask describing which mesh vertices are fixed by a Dirichlet boundary condition.
+    A node is marked as fixed if the corresponding degree of freedom in the first component belongs to the boundary
+     condition. Used only to pass it to the PyG object.
+
+    Args:
+        bc: dolfin.DirichletBC
+            Boundary condition applied on the vector function space.
+        V: dolfin.FunctionSpace
+            Vector function space on which the boundary condition is defined.
+        return: torch.Tensor
+            Tensor of shape (num_vertices, 1) with float values 0.0 or 1.0, where 1.0 indicates a constrained vertex.
+    """
+
+    # Retrieve the constrained DOFs from the boundary condition.
+    bc_dofs_dict = bc.get_boundary_values()
+    bc_dof_indices = np.array(list(bc_dofs_dict.keys()), dtype=int)
+
+    # Determine the number of vector components.
+    # If num_sub_spaces() is zero for some reason, fall back to element value size.
+    num_components = V.num_sub_spaces() or V.ufl_element().value_size()
+
+    # Keep only component-0 DOFs so we can identify the corresponding vertices.
+    # This assumes that if one component is fixed in a fully clamped BC, the
+    # others are fixed too, which is true in this script.
+    sub0_dofs = bc_dof_indices[bc_dof_indices % num_components == 0]
+    sub0_dofs = sub0_dofs // num_components
+
+    # Collapse subspace 0 to a scalar space and obtain DOF-to-vertex map.
+    V_sub0 = V.sub(0).collapse()
+    d2v = df.dof_to_vertex_map(V_sub0)
+
+    # Convert the constrained scalar DOFs into vertex indices.
+    pinned_vertices = d2v[sub0_dofs]
+    pinned_vertices = np.unique(pinned_vertices)
+
+    # Build a binary array marking fixed vertices.
+    nverts = V.mesh().num_vertices()
+    is_fixed = np.zeros(nverts, dtype=int)
+    is_fixed[pinned_vertices] = 1
+
+    # Return as a column tensor for graph node features.
+    node_scalar = torch.tensor(is_fixed, dtype=torch.float).reshape(-1, 1)
+    return node_scalar

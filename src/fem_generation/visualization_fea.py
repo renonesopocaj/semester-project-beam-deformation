@@ -5,7 +5,7 @@ import shutil
 import matplotlib.pyplot as plt
 import os
 from collections import defaultdict
-from mpi4py import MPI
+import dolfin as df
 
 def _compute_von_mises_3d(stress_9):
     """
@@ -222,7 +222,7 @@ def plot_check(time, u_tip, energies, save_path):
             Saves a plot to disk on rank 0.
     """
     # Only the root MPI process should save plots.
-    if MPI.comm_world.rank == 0:
+    if df.MPI.comm_world.rank == 0:
         fig, ax = plt.subplots(2, 1, figsize=(8, 6))
 
         # Plot tip displacement versus time.
