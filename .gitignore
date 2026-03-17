@@ -7,14 +7,10 @@ __pycache__
 *.iml
 .idea/
 jitfailure*/
-src/nonlinear_stokes_runs_2.csv
 .csv
 config.yaml
 .png
 .jpg
-src/sanity_newton_seeds
-sanity.yaml
-temp.yaml
 *.yaml
 # Python cache directories
 __pycache__/
