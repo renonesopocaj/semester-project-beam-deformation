@@ -11,11 +11,12 @@ from pathlib import Path
 
 import hydra
 import lightning as L
-from lightning.pytorch.profilers import AdvancedProfiler
+from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
@@ -58,12 +59,12 @@ def create_model(train_cfg, preprocess_cfg, device):
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     else:
-        raise NotImplementedError(f"Model type {train_cfg.model_type} not implemented")
+        raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
-def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
+def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     """
     Args:
-        cfg: TrainYaml
+        train_cfg: TrainYaml
             Parsed training configuration.
         preprocess_cfg: PreprocessYaml
             Parsed preprocessing configuration.
@@ -82,35 +83,44 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # ========================= Dataset stuff ===================
     validation_dataloader = None
     print("Train dataset:")
-    train_dataset = InMemoryTimeStepDataset(sample_dir=cfg.train_dir, device=device)
-    train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, 
-                                  num_workers=cfg.num_workers, persistent_workers=cfg.num_workers > 0)
-    if cfg.enable_val:
+    # device = "cpu" hardcoded for performance reason
+    train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
+    # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+    # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+    train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
+                                  num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                  pin_memory=True)
+    if train_cfg.enable_val:
         print("Validation dataset:")
-        validation_dataset = InMemoryTimeStepDataset(sample_dir=cfg.val_dir, device=device)
+        # device = "cpu" hardcoded for performance reason
+        validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
+        # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+        # recommend CPU tensors plus pin_memory=True for faster transfer instead.
         validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
-                                           num_workers=cfg.num_workers, persistent_workers=cfg.num_workers > 0)
-    print(f"Loading stats from {cfg.train_dir}...")
-    node_stats, edge_stats, target_stats = load_stats(cfg.train_dir)
+                                           num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                           pin_memory=True)
+    print(f"Loading stats from {train_cfg.train_dir}...")
+    node_stats, edge_stats, target_stats = load_stats(train_cfg.train_dir)
     dt = preprocess_cfg.dt
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
 
     # ========================= Model and Lightning wrapper =================
-    torch.manual_seed(cfg.seed)
-    model = create_model(cfg, preprocess_cfg, device)
-    model = maybe_compile_model(model, cfg)
+    #torch.manual_seed(cfg.seed)
+    model = create_model(train_cfg, preprocess_cfg, device)
+    model = maybe_compile_model(model, train_cfg)
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.initial_lr)
-    scheduler = scheduler_factory(optimizer, cfg.scheduler_cfg)
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
+    scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.
-    lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=cfg.loss_type,
+    lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=train_cfg.loss_type,
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
-                                 len_train_dataloader=len(train_dataloader))
+                                 len_train_dataloader=len(train_dataloader),
+                                 enable_wandb_watch=not train_cfg.torch_compile)
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
@@ -118,7 +128,10 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     OmegaConf.save(preprocess_dict, lightning_module.model_dir / "preprocess.yaml")
 
     # =================== Wandb logger ===================
-    if cfg.use_wandb:
+    if train_cfg.use_wandb:
+        # One important detail for your snippet: in Lightning, WandbLogger(log_model=True) or
+        # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
+        # MisconfigurationException.
         logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
                              log_model=False, offline=True)
     else:
@@ -128,53 +141,57 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     callbacks = []
     checkpoint_str_dir = str(lightning_module.model_dir / "checkpoints")
     # ALlocate a callback for checkpoints of model every time I get the "best model"
-    if cfg.enable_val:
+    if train_cfg.enable_val:
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="best",
                                          monitor="val/overall_relative_mae", mode="min",
                                          save_top_k=1))
     # periodic save every cfg.checkpoint_interval epoch
-    if cfg.checkpoint_interval > 0:
+    if train_cfg.checkpoint_interval > 0:
         # save_top_k = -1 --> do not take into account the loss, save anyway
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="epoch-{epoch:04d}",
-                                         every_n_epochs=cfg.checkpoint_interval, save_top_k=-1))
+                                         every_n_epochs=train_cfg.checkpoint_interval, save_top_k=-1))
 
     callbacks.append(ShortMetricProgressBar(refresh_rate=1, process_position=0, leave=False))
 
     # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-    profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
-    if cfg.training_type == "sanity":
-        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
+    # profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    profiler = SimpleProfiler(dirpath=str(lightning_module.model_dir / "profiles"),
+                              filename=f"simple_profiler_rank{local_rank}")
+    if train_cfg.training_type == "sanity":
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
-                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
                                 limit_train_batches=5, limit_val_batches=5, limit_test_batches=5,
                                 accelerator=accelerator, devices=1, profiler=profiler)
-    elif cfg.training_type == "slurm":
+    elif train_cfg.training_type == "slurm":
+        if not torch.cuda.is_available():
+            raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
         # devices=8, num_nodes=4, strategy="ddp"
-        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
-                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
-                                # FIXME: devices? num_nodes?
-                                accelerator=accelerator, devices=4, num_nodes=4, strategy="ddp", profiler=profiler) # device
-    elif cfg.training_type == "default":
-        fit_trainer = L.Trainer(max_epochs=cfg.total_epochs, logger=logger,
+                                accelerator=accelerator, devices=4, num_nodes=1, strategy="ddp", profiler=profiler) # device stuff
+    elif train_cfg.training_type == "default":
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
-                                check_val_every_n_epoch=cfg.validation_interval, log_every_n_steps=1,
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator, devices=1, profiler=profiler)
     else:
         raise NotImplementedError("Default")
 
-    print(f"Training ID: {lightning_module.training_id}\n\t Initial learning rate: {cfg.initial_lr}\n\t"
-          f"LR scheduler: {cfg.scheduler_cfg['type']}\n\t Total epochs: {cfg.total_epochs}\n\t"
-          f"Validation interval: {cfg.validation_interval}\n\t Loss type: {cfg.loss_type}\n\t"
-          f"Using wandb: {cfg.use_wandb}\n\t Model directory: {lightning_module.model_dir}")
+    print(f"Training ID: {lightning_module.training_id}\n\t Initial learning rate: {train_cfg.initial_lr}\n\t"
+          f"LR scheduler: {train_cfg.scheduler_cfg['type']}\n\t Total epochs: {train_cfg.total_epochs}\n\t"
+          f"Validation interval: {train_cfg.validation_interval}\n\t Loss type: {train_cfg.loss_type}\n\t"
+          f"Using wandb: {train_cfg.use_wandb}\n\t Model directory: {lightning_module.model_dir}")
 
     # ================== Train ==================
     fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
-                    val_dataloaders=validation_dataloader, ckpt_path=cfg.resume_from)
+                    val_dataloaders=validation_dataloader, ckpt_path=train_cfg.resume_from)
 
     return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader
 
@@ -191,6 +208,7 @@ def main(cfg):
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     train_cfg = TrainYaml(cfg)
+    seed_everything(train_cfg.seed, workers=True)  # Recommended by Lightning docs
 
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         preprocess_dict = yaml.safe_load(file)
@@ -211,10 +229,13 @@ def main(cfg):
 
     # =================== Testing ===================
     print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
-    test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device=device)
+    # device = "cpu" hardcoded for performance reason
+    test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device="cpu")
+    # pin memory = True for faster transfer instead.
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
-                                 num_workers=train_cfg.num_workers, 
-                                 persistent_workers=train_cfg.num_workers > 0)
+                                 num_workers=train_cfg.num_workers,
+                                 persistent_workers=train_cfg.num_workers > 0,
+                                 pin_memory=True)
     lightning_module.set_test_context(test_loader=test_dataloader, split_name="test", log_media=True)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 

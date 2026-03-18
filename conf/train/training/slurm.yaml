@@ -2,4 +2,4 @@ training_type: "slurm"
 total_epochs: 100
 loss_type: "mse"
 resume_from: null
-checkpoint_interval: 10
+checkpoint_interval: 20

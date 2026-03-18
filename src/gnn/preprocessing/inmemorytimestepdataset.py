@@ -1,3 +1,8 @@
+"""
+inmemroytimestepdataset.py
+In-memory dataset for graph data.
+"""
+
 from torch_geometric.data import Dataset
 import os
 import torch

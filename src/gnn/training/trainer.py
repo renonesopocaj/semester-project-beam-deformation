@@ -56,7 +56,7 @@ class LitModule(L.LightningModule):
     test_loader: DataLoader
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader):
+                 len_train_dataloader, enable_wandb_watch):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -108,6 +108,7 @@ class LitModule(L.LightningModule):
         self.eval_split_name = "test"
         self.should_log_test_media = False
         self.rollout_all_step_error = 0.0
+        self.enable_wandb_watch = enable_wandb_watch
 
         self.len_train_dataloader = len_train_dataloader
 
@@ -144,7 +145,8 @@ class LitModule(L.LightningModule):
         # Define all metrics with epoch as x-axis
         self._define_wandb_metrics()
         # Watch model gradients and parameters
-        self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
+        if self.enable_wandb_watch:
+            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
         # Log initial epoch value
         # self.logger.experiment.log({"epoch": 0})
 
@@ -299,7 +301,7 @@ class LitModule(L.LightningModule):
         }
         return metrics
 
-    def _log_metrics(self, metrics, prog_bar_keys, sync_dist=False):
+    def _log_metrics(self, metrics, prog_bar_keys, batch_size, sync_dist):
         """
         Logs a metrics dict to the lightning log, and a subset of keys to the progress bar.
         Called by training_step, validation_step, and test_step.
@@ -310,8 +312,8 @@ class LitModule(L.LightningModule):
             prog_bar_keys: list[str]
                 Metrics that should also appear in Lightning's progress bar.
             sync_dist: bool
-                Whether to synchronize metrics across distributed processes. Should be True
-                for validation and test steps in distributed training.
+                Whether to synchronize metrics across distributed processes. Should be True for validation and test
+                 steps in distributed training.
         """
         has_logger = self._has_wandb_logger()
         prog_bar_key_set = set(prog_bar_keys)
@@ -320,13 +322,13 @@ class LitModule(L.LightningModule):
             # distinction on the wanted
             if metric_name in prog_bar_key_set:
                 self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=has_logger,
-                         batch_size=1, sync_dist=sync_dist)
+                         batch_size=batch_size, sync_dist=sync_dist)
             else:
                 plain_metrics[metric_name] = metric_value
 
         if len(plain_metrics) > 0:
-            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=has_logger, batch_size=1,
-                          sync_dist=sync_dist)
+            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=has_logger,
+                          batch_size=batch_size, sync_dist=sync_dist)
 
     def training_step(self, batch, batch_idx):
         """
@@ -343,7 +345,7 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         metrics = self._collect_train_batch_metrics_noroll(pred, target)
-        self._log_metrics(metrics, ["train/loss"])
+        self._log_metrics(metrics, ["train/loss"], batch_size=batch.num_graphs, sync_dist=False)
         # on_train_epoch_end 1. Steps the custom LR scheduler using the epoch loss 2. Halts training early if the
         # scheduler signals stop.
         return metrics["train/loss"]
@@ -362,7 +364,7 @@ class LitModule(L.LightningModule):
         target = batch.y
         # collects non rollout metrics
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
-        self._log_metrics(metrics, ["val/overall_relative_mae"], sync_dist=True)
+        self._log_metrics(metrics, ["val/overall_relative_mae"], batch_size=batch.num_graphs, sync_dist=True)
         # on_validation_epoch_end runs a full rollout and logs rollout
 
     def test_step(self, batch, batch_idx):
@@ -381,7 +383,7 @@ class LitModule(L.LightningModule):
         metrics = self._collect_test_batch_metrics_noroll(pred, target, self.eval_split_name)
         self._log_metrics(metrics, [f"{self.eval_split_name}/loss",
                                     f"{self.eval_split_name}/overall_relative_mae"],
-                          sync_dist=True)
+                          batch_size=batch.num_graphs, sync_dist=True)
         # on_test_epoch_end logs ROLLOUT metrics
 
     def predict_step(self, batch, batch_idx):
@@ -486,28 +488,41 @@ class LitModule(L.LightningModule):
 
     def on_validation_epoch_end(self):
         """
-        Runs a full rollout on the validation split at the end of each validation epoch and logs the positional error.
+        Runs a full rollout on the validation split only on rank 0 and logs the positional error.
+        This metric is for reporting only and is not used by checkpoint callbacks.
         """
         if self.trainer.sanity_checking:
             return
+        # This flag is for distributed training: ensure rollout is not done in parallel (would be the default ddp
+        # strategy by lightning)
+        if not self.trainer.is_global_zero:
+            return
         _, _, rollout_error = self._run_rollout(self.validation_loader)
         self.rollout_all_step_error = rollout_error
-        self.log("val/gen_rollout_error", torch.tensor(rollout_error, device=self.device),
-                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=True)
+        self.log("val/gen_rollout_error",
+                 torch.tensor(rollout_error, device=self.device),
+                 prog_bar=True,
+                 logger=self._has_wandb_logger(),
+                 sync_dist=False,
+                 rank_zero_only=True)
 
     def on_test_epoch_end(self):
         """
-        Runs a full rollout on the active test split, logs the positional error, and optionally saves media artifacts.
+        Runs a full rollout on the active test split only on rank 0, logs the positional error,
+        and optionally saves media artifacts.
         """
+        if not self.trainer.is_global_zero:
+            return
+
         true_rollout, pred_rollout, rollout_error = self._run_rollout(self.test_loader)
         self.rollout_all_step_error = rollout_error
         self.log(f"{self.eval_split_name}/gen_rollout_error",
                  torch.tensor(rollout_error, device=self.device),
                  prog_bar=True,
                  logger=self._has_wandb_logger(),
-                 sync_dist=True)
-        # log iff it's rank 0 (main process)
-        if self.should_log_test_media and self.trainer.is_global_zero:
+                 sync_dist=False,
+                 rank_zero_only=True)
+        if self.should_log_test_media:
             self._log_rollout_media(true_rollout, pred_rollout)
 
     # =============================================================================================================

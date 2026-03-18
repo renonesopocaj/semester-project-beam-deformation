@@ -2,4 +2,4 @@ training_type: "default"
 total_epochs: 60
 loss_type: "mse"
 resume_from: null
-checkpoint_interval: 50
+checkpoint_interval: 10
