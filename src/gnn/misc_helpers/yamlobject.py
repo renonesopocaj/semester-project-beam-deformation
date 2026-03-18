@@ -124,6 +124,8 @@ class TrainYaml:
         self.training_type = flattened_cfg["training_type"]
         self.torch_compile = flattened_cfg["torch_compile"]
         self.profiling = flattened_cfg["profiling"]
+        self.profile_loss_stress_vs_acceleration = flattened_cfg["profile_loss_stress_vs_acceleration"]
+        self.enable_wandb_watch = flattened_cfg["enable_wandb_watch"]
 
 def _to_dict_flatten(data):
     """

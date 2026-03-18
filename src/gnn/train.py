@@ -120,7 +120,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=train_cfg.loss_type,
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
-                                 enable_wandb_watch=not train_cfg.torch_compile)
+                                 enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
+                                 profile_loss_stress_vs_acceleration=train_cfg.profile_loss_stress_vs_acceleration)
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra

@@ -1,3 +1,8 @@
+"""
+scheduler.py
+Learning rate schedulers
+"""
+
 import torch
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts
 from abc import ABC, abstractmethod

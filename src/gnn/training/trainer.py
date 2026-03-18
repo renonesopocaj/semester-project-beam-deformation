@@ -56,7 +56,7 @@ class LitModule(L.LightningModule):
     test_loader: DataLoader
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch):
+                 len_train_dataloader, enable_wandb_watch, profile_loss_stress_vs_acceleration):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -111,6 +111,7 @@ class LitModule(L.LightningModule):
         self.enable_wandb_watch = enable_wandb_watch
 
         self.len_train_dataloader = len_train_dataloader
+        self.profile_loss_stress_vs_acceleration = profile_loss_stress_vs_acceleration
 
     def forward(self, batch):
         """
@@ -154,7 +155,7 @@ class LitModule(L.LightningModule):
         """
         Called at the end of fit. Unwatches model to prevent memory leaks.
         """
-        if self._has_wandb_logger() and self.trainer.is_global_zero:
+        if self._has_wandb_logger() and self.trainer.is_global_zero and self.enable_wandb_watch:
             self.logger.experiment.unwatch(self.model)
 
     def on_save_checkpoint(self, checkpoint):
@@ -277,7 +278,7 @@ class LitModule(L.LightningModule):
 
     def _collect_val_batch_metrics_noroll(self, pred, target, prefix):
         """
-        Collects the richer evaluation metrics used for test.
+        Collects the richer evaluation metrics used for validation.
 
         Args:
             pred: torch.Tensor
@@ -293,42 +294,38 @@ class LitModule(L.LightningModule):
         target_acc = target[:, 0:3].contiguous()
         pred_stress = pred[:, 3].contiguous()
         target_stress = target[:, 3].contiguous()
-
-        metrics = {
-            f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
-            f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
-            f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-        }
+        if self.profile_loss_stress_vs_acceleration:
+            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                       f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
+                       f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
+            }
+        else:
+            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target)}
         return metrics
 
-    def _log_metrics(self, metrics, prog_bar_keys, batch_size, sync_dist):
+    def _log_metrics(self, metrics, prog_bar_keys, batch_size, sync_dist_keys):
         """
-        Logs a metrics dict to the lightning log, and a subset of keys to the progress bar.
-        Called by training_step, validation_step, and test_step.
+        Logs metrics one by one so only selected keys are synchronized across ranks.
 
         Args:
             metrics: dict
                 Dictionary of tensor metrics.
             prog_bar_keys: list[str]
-                Metrics that should also appear in Lightning's progress bar.
-            sync_dist: bool
-                Whether to synchronize metrics across distributed processes. Should be True for validation and test
-                 steps in distributed training.
+                Metrics that should appear in the progress bar.
+            batch_size: int
+                Batch size for Lightning aggregation.
+            sync_dist_keys: list[str]
+                Metric names that must be synchronized across ranks.
         """
         has_logger = self._has_wandb_logger()
         prog_bar_key_set = set(prog_bar_keys)
-        plain_metrics = {}
-        for metric_name, metric_value in metrics.items():
-            # distinction on the wanted
-            if metric_name in prog_bar_key_set:
-                self.log(metric_name, metric_value, on_step=False, on_epoch=True, prog_bar=True, logger=has_logger,
-                         batch_size=batch_size, sync_dist=sync_dist)
-            else:
-                plain_metrics[metric_name] = metric_value
+        sync_dist_key_set = set(sync_dist_keys)
 
-        if len(plain_metrics) > 0:
-            self.log_dict(plain_metrics, on_step=False, on_epoch=True, prog_bar=False, logger=has_logger,
-                          batch_size=batch_size, sync_dist=sync_dist)
+        for metric_name, metric_value in metrics.items():
+            self.log(metric_name, metric_value, on_step=False, on_epoch=True,
+                     prog_bar=metric_name in prog_bar_key_set,
+                     logger=has_logger, batch_size=batch_size,
+                     sync_dist=metric_name in sync_dist_key_set)
 
     def training_step(self, batch, batch_idx):
         """
@@ -345,9 +342,11 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         metrics = self._collect_train_batch_metrics_noroll(pred, target)
-        self._log_metrics(metrics, ["train/loss"], batch_size=batch.num_graphs, sync_dist=False)
-        # on_train_epoch_end 1. Steps the custom LR scheduler using the epoch loss 2. Halts training early if the
-        # scheduler signals stop.
+        self._log_metrics(metrics, prog_bar_keys=["train/loss"], batch_size=batch.num_graphs,
+                          sync_dist_keys=["train/loss"])
+        # on_train_epoch_end
+        # 1. Steps the custom LR scheduler using the epoch loss
+        # 2. Halts training early if the scheduler signals stop.
         return metrics["train/loss"]
 
     def validation_step(self, batch, batch_idx):
@@ -362,14 +361,14 @@ class LitModule(L.LightningModule):
         """
         pred = self(batch)
         target = batch.y
-        # collects non rollout metrics
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
-        self._log_metrics(metrics, ["val/overall_relative_mae"], batch_size=batch.num_graphs, sync_dist=True)
-        # on_validation_epoch_end runs a full rollout and logs rollout
+        self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], batch_size=batch.num_graphs,
+                          sync_dist_keys=["val/overall_relative_mae"])
 
     def test_step(self, batch, batch_idx):
         """
         Computes and logs metrics for one batch during final evaluation, using the active split name as prefix.
+        Syncs everything: we don't care about performance in testing phase.
 
         Args:
             batch: Data
@@ -379,11 +378,11 @@ class LitModule(L.LightningModule):
         """
         pred = self(batch)
         target = batch.y
-        # non rollout metrics
         metrics = self._collect_test_batch_metrics_noroll(pred, target, self.eval_split_name)
-        self._log_metrics(metrics, [f"{self.eval_split_name}/loss",
-                                    f"{self.eval_split_name}/overall_relative_mae"],
-                          batch_size=batch.num_graphs, sync_dist=True)
+        self._log_metrics(metrics,
+            [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/overall_relative_mae"],
+            batch_size=batch.num_graphs,
+            sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
 
     def predict_step(self, batch, batch_idx):
