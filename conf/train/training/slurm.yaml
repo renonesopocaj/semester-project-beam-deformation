@@ -2,4 +2,5 @@ training_type: "slurm"
 total_epochs: 100
 loss_type: "mse"
 resume_from: null
+torch_compile: false
 checkpoint_interval: 20
