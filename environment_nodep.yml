@@ -1,0 +1,19 @@
+name: semesterproject
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - fenics
+  - mpi4py
+  - petsc4py
+  - slepc4py
+  - pytorch
+  - pyvista
+  - notebook
+  - ipykernel
+  - wandb
+  - hydra-core
+  - optuna
+  - lightning=2.5
+  - pip

@@ -1,0 +1,39 @@
+name: semesterproject
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - fenics
+  - mpi4py
+  - petsc4py
+  - slepc4py
+  - pytorch
+  - pyvista
+  - notebook
+  - ipykernel
+  - ipywidgets
+  - wandb
+  - hydra-core
+  - optuna
+  - lightning=2.5
+  - h5py
+  - imageio
+  - pandas
+  - pyarrow
+  - pytest
+  - scikit-learn
+  - scipy
+  - pip
+  - pip:
+      - gmsh==4.15.0
+      - hydra-optuna-sweeper==1.2.0
+      - jax==0.6.2
+      - jaxlib==0.6.2
+      - jax-fem==0.0.11
+      - meshio==5.3.5
+      - polars==1.38.1
+      - prettytable==3.17.0
+      - rich==14.3.1
+      - xxhash==3.6.0
