@@ -1,6 +1,7 @@
 import os
 import time
 import yaml
+import logging
 from pathlib import Path
 
 import hydra
@@ -23,6 +24,32 @@ from src.gnn.training.trainer import LitModule
 
 matplotlib.use("Agg")
 plt.ioff()
+
+def maybe_compile_model(model, train_cfg):
+    """
+    Optionally wraps the model with torch.compile and enables graph-break logs.
+
+    Args:
+        model: torch.nn.Module
+            Instantiated model to compile.
+        train_cfg: TrainYaml
+            Training configuration containing the torch_compile flag.
+        return: torch.nn.Module
+            Original model if compilation is disabled, otherwise compiled model.
+    """
+    if not train_cfg.torch_compile:
+        return model
+    if not hasattr(torch, "compile"):
+        raise RuntimeError("torch.compile is not available in this PyTorch version.")
+
+    # Enable verbose Dynamo diagnostics so graph breaks are reported with details.
+    if hasattr(torch, "_dynamo"):
+        torch._dynamo.config.verbose = True
+    if hasattr(torch, "_logging") and hasattr(torch._logging, "set_logs"):
+        torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
+
+    print("torch.compile enabled with graph-break logging")
+    return torch.compile(model)
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
@@ -74,6 +101,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # ========================= Model and Lightning wrapper =================
     torch.manual_seed(cfg.seed)
     model = create_model(cfg, preprocess_cfg, device)
+    model = maybe_compile_model(model, cfg)
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
