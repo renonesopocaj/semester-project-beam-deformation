@@ -10,6 +10,7 @@ defaults:
 seed: 42
 use_wandb: true
 initial_lr: 1e-3
+profiling: False
 
 hydra:
   run:

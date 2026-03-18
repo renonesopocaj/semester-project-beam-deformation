@@ -49,7 +49,7 @@ def maybe_compile_model(model, train_cfg):
     # Enable verbose Dynamo diagnostics so graph breaks are reported with details.
     torch._dynamo.config.verbose = True
     torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
-    return torch.compile(model) # FIXME: dynamic flag?
+    return torch.compile(model, fullgraph=True)
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
@@ -156,9 +156,10 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
     # profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    profiler = SimpleProfiler(dirpath=str(lightning_module.model_dir / "profiles"),
-                              filename=f"simple_profiler_rank{local_rank}")
+    if train_cfg.profiling:
+        profiler = SimpleProfiler(dirpath=str(lightning_module.model_dir / "profiles"), filename="simple_profiler")
+    else:
+        profiler = None
     if train_cfg.training_type == "sanity":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),

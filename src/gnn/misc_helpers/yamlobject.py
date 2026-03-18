@@ -123,6 +123,7 @@ class TrainYaml:
         self.checkpoint_interval = flattened_cfg["checkpoint_interval"]
         self.training_type = flattened_cfg["training_type"]
         self.torch_compile = flattened_cfg["torch_compile"]
+        self.profiling = flattened_cfg["profiling"]
 
 def _to_dict_flatten(data):
     """
