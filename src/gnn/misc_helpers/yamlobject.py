@@ -1,3 +1,8 @@
+"""
+yamlobject.py
+Maps yaml keys to instance attributes, via flattening the cfg.
+"""
+
 from omegaconf import OmegaConf, DictConfig
 
 def _extract_nested(cfg, key):

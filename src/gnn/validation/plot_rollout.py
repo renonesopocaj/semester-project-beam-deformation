@@ -222,7 +222,8 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
 
     plt.close(fig)
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
-    print(f"\t\tGIF saved => {gif_path}")
+    if verbose:
+        print(f"\t\tGIF saved => {gif_path}")
 
 
 def _extract_scalar(graph, field_name):

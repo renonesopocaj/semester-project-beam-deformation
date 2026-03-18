@@ -6,6 +6,7 @@ The del command are there to avoid out of memory errors.
 
 import torch
 import hydra
+import gc
 import os
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocess import TrainPreprocessor
@@ -131,28 +132,38 @@ def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
     del chunks_list
 
 
+import gc
+
 class EdaPreprocessor(TrainPreprocessor):
     eda_obj: object
+    keep_graphs_for_gif: bool
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, keep_graphs_for_gif):
+        """
+        Args:
+            cfg: object
+                config object
+            keep_graphs_for_gif: bool
+                whether to keep full graphs after EDA collection
+        """
         super().__init__(cfg)
         self.noiser = NoNoiser()
+        self.keep_graphs_for_gif = keep_graphs_for_gif
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         pass
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         """
-        Collects features from the already-normalized graph attributes
-        (graph.y, graph.x, graph.edge_attr) set by _normalize_assign_features_train.
-
-        Column layout for graph.x  = [categorical(1), position(3), velocity(3),
-                                       rest_pos(3), force(3), (displacement(3))].
-        Column layout for graph.y  = [acceleration(3), von_mises(1)].
-        Column layout for graph.edge_attr with displacement (12):
-            [rel_pos(3), rest_rel_pos(3), disp_pos(3), rel_norm(1), rest_norm(1), disp_norm(1)].
-        Column layout for graph.edge_attr without displacement (8):
-            [rel_pos(3), rest_rel_pos(3), rel_norm(1), rest_norm(1)].
+        Args:
+            traj_idx: list
+                trajectory indices
+            out_graphs: list
+                processed graphs
+            save_dir: object
+                unused here
+            return: None
+                fills self.eda_obj and frees memory when possible
         """
         eda_obj = EdaObj()
         has_displacement = out_graphs[0].edge_attr.shape[1] == 12
@@ -163,14 +174,11 @@ class EdaPreprocessor(TrainPreprocessor):
                 if idx != traj:
                     continue
 
-                # --- Targets from graph.y ---
                 eda_obj.acceleration_x.append(graph.y[:, 0])
                 eda_obj.acceleration_y.append(graph.y[:, 1])
                 eda_obj.acceleration_z.append(graph.y[:, 2])
                 eda_obj.von_mises.append(graph.y[:, 3])
 
-                # --- Node features from graph.x (skip col 0 = categorical BC) ---
-                # [x, v, rest_pos, node_force, x_minus_u]
                 eda_obj.position_x.append(graph.x[:, 1])
                 eda_obj.position_y.append(graph.x[:, 2])
                 eda_obj.position_z.append(graph.x[:, 3])
@@ -183,12 +191,12 @@ class EdaPreprocessor(TrainPreprocessor):
                 eda_obj.force_x.append(graph.x[:, 10])
                 eda_obj.force_y.append(graph.x[:, 11])
                 eda_obj.force_z.append(graph.x[:, 12])
+
                 if has_displacement:
                     eda_obj.displacement_pos_x.append(graph.x[:, 13])
                     eda_obj.displacement_pos_y.append(graph.x[:, 14])
                     eda_obj.displacement_pos_z.append(graph.x[:, 15])
 
-                # --- Edge features from graph.edge_attr ---
                 eda_obj.edge_relative_pos_x.append(graph.edge_attr[:, 0])
                 eda_obj.edge_relative_pos_y.append(graph.edge_attr[:, 1])
                 eda_obj.edge_relative_pos_z.append(graph.edge_attr[:, 2])
@@ -208,53 +216,76 @@ class EdaPreprocessor(TrainPreprocessor):
                     eda_obj.edge_rest_relative_pos_norm.append(graph.edge_attr[:, 7])
 
         self.eda_obj = eda_obj
-        del eda_obj
-        del pbar
-        del has_displacement
-        del self.targets
-        del self.categorical_node_features
-        del self.valued_node_features
-        del self.edge_features
+
+        self.targets.clear()
+        self.categorical_node_features.clear()
+        self.valued_node_features.clear()
+        self.edge_features.clear()
+
+        if not self.keep_graphs_for_gif:
+            self.out_graphs.clear()
+            self.traj_idx_list.clear()
+
+        gc.collect()
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, von_mises_log):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+        """
+        Args:
+            graph: Data
+                input graph at timestep t
+            _a: torch.Tensor
+                acceleration target
+            _x: torch.Tensor
+                node positions at time t
+            _v: torch.Tensor
+                node velocities at time t
+            _von_mises: torch.Tensor
+                von mises target
+            _edge_attr: torch.Tensor
+                edge features
+            _node_attr: torch.Tensor
+                valued node features
+            t: int
+                timestep index
+            x_next: torch.Tensor
+                next positions for all timesteps
+            v_next: torch.Tensor
+                next velocities for all timesteps
+            all_node_force: torch.Tensor
+                node force over time
+            rest_pos_x: torch.Tensor
+                rest positions
+            _categorical_node_attr: torch.Tensor
+                categorical node features
+            _von_mises_log: torch.Tensor
+                log von mises target
+            return: None
+                appends rich graph objects needed for EDA and GIF generation
+        """
         _target = torch.concat([_a, _von_mises], dim=1)
         self.out_graphs.append(
             Data(
                 y=_target.clone(),
                 y_acc_t=_a.clone(),
                 y_von_mises=_von_mises.clone(),
-                von_mises_log=von_mises_log.clone(),
+                von_mises_log=_von_mises_log.clone(),
                 y_sig_t=graph.y_sig_t.clone(),
                 t=graph.time.clone(),
-                # ==================================================================
-                #                       NODE features
-                # ==================================================================
-                # x = [is_bc, position, velocity, rest_position, node_force]
-                x=_node_attr.clone(),  # this will be the NN input feature for training
-                # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed
-                # from x, v at time t and acceleration of t - 1 (previous step prediction)
-                # note: not used for NN input, used only for building next time step graph / ground truth
+                x=_node_attr.clone(),
                 x_next=x_next[t].clone(),
                 v_next=v_next[t].clone(),
                 node_force_next=all_node_force[t + 1].clone(),
-                # all these are already in node_attr = [x, v, u, node_force], so saving them twice
-                # is only due to rollout/other
                 x_pos_t=_x.clone(),
                 x_vel_t=_v.clone(),
                 node_force=all_node_force[t].clone(),
                 rest_pos=rest_pos_x.clone(),
-                # ==================================================================
-                #                           EDGE features
-                # ==================================================================
                 edge_attr=_edge_attr.clone(),
-                # features to encode mesh connectivity in two different ways
                 edge_index=graph.edge_index.clone(),
                 x_element_connectivity=graph.x_element_connectivity.copy()
             )
         )
-        self.targets.append(torch.concat([_a, _von_mises], dim=1))
-        del _target
+        self.targets.append(_target.clone())
 
 
 class EdaObj:
@@ -306,15 +337,13 @@ class EdaObj:
             ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
             [], [], [], [])
 
-
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda")
 def main(cfg):
     """
     Args:
-        cfg: omegaconf.DictConfig
-            Hydra-composed configuration.
+        cfg: object
+            Hydra-composed configuration
     """
-
     cfg_obj_nonorm = PreprocessYaml(cfg)
     cfg_obj_z_isotr_norm = PreprocessYaml(cfg)
     cfg_obj_z_anisotr_norm = PreprocessYaml(cfg)
@@ -333,54 +362,60 @@ def main(cfg):
     cfg_obj_rob_isotr_norm.isotropic_normalizer = True
     cfg_obj_rob_anisotr_norm.isotropic_normalizer = False
 
-    # NOTE: these are where plots are saved
     SAVE_DIR = f"eda_artifacts/{str(cfg_obj_nonorm.dataset_type)}"
 
-    print(f"Preprocessing size={cfg_obj_nonorm.dataset_size} dataset\n" + "=" * 60)
-    print(f"\tSave dir of eda = {SAVE_DIR}")
+    print(f"Preprocessing size={cfg_obj_nonorm.dataset_size} dataset")
+    print(f"\tSave dir of eda = {SAVE_DIR}\n")
     graphs_dir_train = Path(cfg_obj_nonorm.raw_data_dir) / "train" / "graphs"
 
-    preprocessor_train_nonorm = EdaPreprocessor(cfg_obj_nonorm)
-    preprocessor_train_z_isotr_norm = EdaPreprocessor(cfg_obj_z_isotr_norm)
-    preprocessor_train_z_anisotr_norm = EdaPreprocessor(cfg_obj_z_anisotr_norm)
-    preprocessor_train_rob_isotr_norm = EdaPreprocessor(cfg_obj_rob_isotr_norm)
-    preprocessor_train_rob_anisotr_norm = EdaPreprocessor(cfg_obj_rob_anisotr_norm)
+    all_eda_obj_arg = []
 
     print("\n" + "=" * 60 + "\ntrain, no norm\n" + "=" * 60)
-    preprocessor_train_nonorm.preprocess_data(cfg_obj_nonorm, graphs_dir_train, None)
+    preprocessor = EdaPreprocessor(cfg_obj_nonorm, True)
+    preprocessor.preprocess_data(cfg_obj_nonorm, graphs_dir_train, None)
+    all_eda_obj_arg.append(preprocessor.eda_obj)
+
+    print("=" * 60 + "\nStarting to generate ground truth GIFs..\n" + "=" * 60 + "\n")
+    generate_ground_truth_gif_all(preprocessor, SAVE_DIR)
+
+    preprocessor.out_graphs.clear()
+    preprocessor.traj_idx_list.clear()
+    del preprocessor
+    gc.collect()
+
     print("\n" + "=" * 60 + "\ntrain, z isotropic norm\n" + "=" * 60)
-    preprocessor_train_z_isotr_norm.preprocess_data(cfg_obj_z_isotr_norm, graphs_dir_train, None)
+    preprocessor = EdaPreprocessor(cfg_obj_z_isotr_norm, False)
+    preprocessor.preprocess_data(cfg_obj_z_isotr_norm, graphs_dir_train, None)
+    all_eda_obj_arg.append(preprocessor.eda_obj)
+    del preprocessor
+    gc.collect()
+
     print("\n" + "=" * 60 + "\ntrain, z anisotropic norm\n" + "=" * 60)
-    preprocessor_train_z_anisotr_norm.preprocess_data(cfg_obj_z_anisotr_norm, graphs_dir_train, None)
+    preprocessor = EdaPreprocessor(cfg_obj_z_anisotr_norm, False)
+    preprocessor.preprocess_data(cfg_obj_z_anisotr_norm, graphs_dir_train, None)
+    all_eda_obj_arg.append(preprocessor.eda_obj)
+    del preprocessor
+    gc.collect()
+
     print("\n" + "=" * 60 + "\ntrain, robust isotropic norm\n" + "=" * 60)
-    preprocessor_train_rob_isotr_norm.preprocess_data(cfg_obj_rob_isotr_norm, graphs_dir_train, None)
+    preprocessor = EdaPreprocessor(cfg_obj_rob_isotr_norm, False)
+    preprocessor.preprocess_data(cfg_obj_rob_isotr_norm, graphs_dir_train, None)
+    all_eda_obj_arg.append(preprocessor.eda_obj)
+    del preprocessor
+    gc.collect()
+
     print("\n" + "=" * 60 + "\ntrain, robust anisotropic norm\n" + "=" * 60)
-    preprocessor_train_rob_anisotr_norm.preprocess_data(cfg_obj_rob_anisotr_norm, graphs_dir_train, None)
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
-
-    # Plots
-    all_eda_obj_arg = [preprocessor_train_nonorm.eda_obj, preprocessor_train_z_isotr_norm.eda_obj,
-                       preprocessor_train_z_anisotr_norm.eda_obj, preprocessor_train_rob_isotr_norm.eda_obj,
-                       preprocessor_train_rob_anisotr_norm.eda_obj]
-
-    del preprocessor_train_z_isotr_norm
-    del preprocessor_train_z_anisotr_norm
-    del preprocessor_train_rob_isotr_norm
-    del preprocessor_train_rob_anisotr_norm
-    del cfg_obj_z_isotr_norm
-    del cfg_obj_z_anisotr_norm
-    del cfg_obj_rob_isotr_norm
-    del cfg_obj_rob_anisotr_norm
+    preprocessor = EdaPreprocessor(cfg_obj_rob_anisotr_norm, False)
+    preprocessor.preprocess_data(cfg_obj_rob_anisotr_norm, graphs_dir_train, None)
+    all_eda_obj_arg.append(preprocessor.eda_obj)
+    del preprocessor
+    gc.collect()
 
     print("=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
     plot_all_distributions(all_eda_obj_arg, LABELS, SAVE_DIR)
-    print("=" * 60 + "\nStarting to generate ground truth GIFs..\n" + "=" * 60 + "\n")
-    generate_ground_truth_gif_all(preprocessor_train_nonorm, SAVE_DIR)
 
     del all_eda_obj_arg
-    del preprocessor_train_nonorm
-    del cfg_obj_nonorm
-    del graphs_dir_train
+    gc.collect()
 
 
 if __name__ == "__main__":
