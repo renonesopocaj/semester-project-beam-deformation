@@ -60,10 +60,10 @@ class Preprocessor(ABC):
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
-        for traj in set(traj_idx):
-            print(f"Saving trajectory: {traj}")
+        for traj in tqdm(set(traj_idx), desc="Saving trajectories"):
+            # print(f"Saving trajectory: {traj}")
             graphs = [graph for idx, graph in zip(traj_idx, out_graphs) if idx == traj]
-            print(f"\tLength: {len(graphs)} timesteps")
+            # print(f"\tLength: {len(graphs)} timesteps")
             file_path = save_dir / f"graph_{traj:02d}.pt"
             torch.save(graphs, file_path)
 
@@ -384,14 +384,13 @@ def main(cfg):
     preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train)
     print("\n" + "=" * 60 + "\ntrain")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
-    print("\n" + "=" * 60 + "\ntest")
+    print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
+    print("\n" + "=" * 60 + "\ntest"+ "\n" + "=" * 60)
     preprocessor_test.preprocess_data(cfg_obj, graphs_dir_test, save_dir_test)
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
-    print("\n" + "=" * 60 + "\nval")
+    print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
+    print("\n" + "=" * 60 + "\nval"+ "\n" + "=" * 60)
     preprocessor_val.preprocess_data(cfg_obj, graphs_dir_val, save_dir_val)
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
-    print("\n" + "=" * 60 + "\nPreprocessing complete!")
+    print("\n" + "=" * 60 + "\nPreprocessing complete!" + "\n" + "=" * 60)
 
 
 if __name__ == "__main__":

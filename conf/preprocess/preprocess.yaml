@@ -2,7 +2,7 @@ defaults:
   - dataset: small
   - numerical: default
   - paths: single_direction_beam
-  - normalizer: z_anisotropic
+  - normalizer: z_isotropic
   - features: displacement
   - _self_
 
