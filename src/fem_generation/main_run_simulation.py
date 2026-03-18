@@ -13,6 +13,7 @@ and then some that have 2, some 3, and so on. Every test sample must have at lea
 
 import sys
 from itertools import product
+from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,9 @@ def _graph_filepath(params, dir_path):
     """
     Reconstruct the .pt path that fea_simulation will write.
     """
+    # This helper mirrors the filename convention inside beam_fea_solver.py.
+    # It lets the runner check whether a simulation already exists on disk
+    # before launching the expensive FEM solve.
     p = params
     name = (f"graphsL{p['L']}_W{p['W']}_D{p['D']}"
             f"_NL{p['NL']}_NW{p['NW']}_ND{p['ND']}"
@@ -41,6 +45,8 @@ def _graph_filepath(params, dir_path):
 # ---------------------------------------------------------------------------
 
 def load_config(path):
+    # Config loading is intentionally kept minimal: parse YAML once and pass
+    # the resulting nested dictionary to all helper functions below.
     with open(path) as f:
         return yaml.safe_load(f)
 
@@ -50,25 +56,49 @@ def linspace_list(start, stop, n):
     return list(np.linspace(start, stop, n))
 
 
+def unique_float_list(values, decimals=10):
+    """Deduplicate float values while preserving order."""
+    # Floating-point grids can produce repeated values after rounding or when
+    # some ranges collapse to a single point. We deduplicate explicitly so the
+    # split builders work with unique candidate values only.
+    unique_values = []
+    seen = set()
+    for value in values:
+        key = round(float(value), decimals)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_values.append(float(value))
+    return unique_values
+
+
 def vals_excluding(start, stop, n, train_values):
     """
     Generate *n* values uniformly spread in [start, stop] that do NOT appear
-    in *train_values*.  If start == stop (constant feature), just repeat that
-    value *n* times.
+    in *train_values*. If start == stop (constant feature), keep a single value
+    to avoid duplicate split combinations.
     """
     if abs(start - stop) < 1e-12:
-        return [start] * n
+        # Constant axes cannot provide alternative in-range values. Returning a
+        # single value avoids generating duplicate Cartesian-product samples.
+        return [start]
     train_set = set(np.round(train_values, 10))
     factor = 2
     while True:
+        # Start from a coarse linspace and progressively densify it until we
+        # find enough points that lie inside the train range but are not exact
+        # train-grid values.
         candidates = np.linspace(start, stop, factor * n)
         vals = [x for x in candidates if round(x, 10) not in train_set]
+        vals = unique_float_list(vals)
         if len(vals) >= n:
             return vals[:n]
         factor *= 2
 
 
 def _in_range(val, lo, hi, tol=1e-9):
+    # Small tolerance makes the in/out-of-distribution check robust to tiny
+    # floating-point mismatches at the interval boundaries.
     return (lo - tol) <= val <= (hi + tol)
 
 
@@ -80,6 +110,9 @@ def filter_all_in_distribution(combos, train_ranges):
     """
     kept = []
     for (fx, fy, fz), L, W in combos:
+        # Count how many of the five split-defining features fall outside the
+        # train interval. Test samples are valid only if at least one feature
+        # is OOD; otherwise they would still be in-distribution.
         n_ood = sum([
             not _in_range(fx, *train_ranges["fx"]),
             not _in_range(fy, *train_ranges["fy"]),
@@ -92,6 +125,81 @@ def filter_all_in_distribution(combos, train_ranges):
     return kept
 
 
+def _combo_key(combo, decimals=10):
+    """Hashable rounded representation of a split combo."""
+    # The rounded tuple is the canonical identity of one simulation setup.
+    # Using rounded floats avoids near-duplicate keys caused by tiny numeric
+    # differences in linspace-generated values.
+    (fx, fy, fz), L, W = combo
+    return (
+        round(float(fx), decimals),
+        round(float(fy), decimals),
+        round(float(fz), decimals),
+        round(float(L), decimals),
+        round(float(W), decimals),
+    )
+
+
+def dedupe_combos(combos):
+    """Deduplicate parameter combinations while preserving order."""
+    # Order matters because later we trim oversized candidate pools by taking
+    # the first target_count samples. Preserving order keeps the selection
+    # deterministic across runs.
+    unique_combos = []
+    seen = set()
+    for combo in combos:
+        key = _combo_key(combo)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_combos.append(combo)
+    return unique_combos
+
+
+def _split_target_counts(cfg):
+    """Compute train/val/test targets from fractions relative to the total dataset."""
+    val_fraction = float(cfg["val_fraction"])
+    test_fraction = float(cfg["test_fraction"])
+    if val_fraction < 0 or test_fraction < 0:
+        raise ValueError("val_fraction and test_fraction must be non-negative")
+    if val_fraction + test_fraction >= 1.0:
+        raise ValueError("val_fraction + test_fraction must be strictly smaller than 1")
+
+    # First recover the train-grid size implied by the config. Then interpret
+    # val_fraction and test_fraction as fractions of the total final dataset:
+    #
+    #   Ntrain = (1 - fval - ftest) * Ntotal
+    #   Ntotal = Ntrain / (1 - fval - ftest)
+    #
+    # From that total we derive exact integer targets for val and test.
+    n_train = len(build_train(cfg))
+    total_count = int(round(n_train / (1.0 - val_fraction - test_fraction)))
+    n_val = int(round(val_fraction * total_count))
+    n_test = int(round(test_fraction * total_count))
+    return n_train, n_val, n_test
+
+
+def _varying_axis_count(cfg):
+    """Count how many train axes actually vary."""
+    t = cfg["train"]
+    axis_configs = [t["force_x"], t["force_y"], t["force_z"], t["lengths"], t["widths"]]
+    varying_axes = 0
+    for axis_cfg in axis_configs:
+        # Only axes with nonzero span can contribute multiple unique
+        # in-distribution off-grid values.
+        if abs(axis_cfg["start"] - axis_cfg["stop"]) >= 1e-12:
+            varying_axes += 1
+    return max(1, varying_axes)
+
+
+def _candidate_count_per_axis(target_count, varying_axes):
+    """Choose a deterministic per-axis candidate count that can be scaled up if needed."""
+    # This is a starting guess for how many candidate values to build on each
+    # varying axis. If the resulting Cartesian product is still too small,
+    # build_val/build_test will increase it iteratively.
+    return max(1, int(ceil(target_count ** (1.0 / varying_axes))))
+
+
 # ---------------------------------------------------------------------------
 #  Split builders
 # ---------------------------------------------------------------------------
@@ -99,6 +207,8 @@ def filter_all_in_distribution(combos, train_ranges):
 def _train_axis_values(cfg):
     """Return per-axis training lists (fx, fy, fz, lengths, widths)."""
     t = cfg["train"]
+    # Each axis is defined independently in the YAML config. The full train set
+    # is the Cartesian product of the three force axes and the two geometry axes.
     fx = linspace_list(t["force_x"]["start"], t["force_x"]["stop"], t["force_x"]["n"])
     fy = linspace_list(t["force_y"]["start"], t["force_y"]["stop"], t["force_y"]["n"])
     fz = linspace_list(t["force_z"]["start"], t["force_z"]["stop"], t["force_z"]["n"])
@@ -110,6 +220,8 @@ def _train_axis_values(cfg):
 def _train_ranges(cfg):
     """Min/max of each training feature (used for OOD filtering)."""
     t = cfg["train"]
+    # Test samples are defined as OOD relative to these intervals, not relative
+    # to the exact discrete train grid values.
     return {
         "fx": (t["force_x"]["start"], t["force_x"]["stop"]),
         "fy": (t["force_y"]["start"], t["force_y"]["stop"]),
@@ -120,6 +232,8 @@ def _train_ranges(cfg):
 
 
 def build_train(cfg):
+    # Training is the simplest split: take the full Cartesian product of all
+    # configured train-axis values.
     fx, fy, fz, lengths, widths = _train_axis_values(cfg)
     forces = list(product(fx, fy, fz))
     return list(product(forces, lengths, widths))
@@ -128,60 +242,79 @@ def build_train(cfg):
 def build_val(cfg):
     """
     Validation: values inside the training range but different from training
-    values.  Number of per-feature samples is derived from val_fraction.
+    values. Split size is derived from val_fraction relative to the total dataset.
     """
     t = cfg["train"]
     fx_tr, fy_tr, fz_tr, L_tr, W_tr = _train_axis_values(cfg)
+    _, target_val_count, _ = _split_target_counts(cfg)
+    varying_axes = _varying_axis_count(cfg)
+    base_count = _candidate_count_per_axis(target_val_count, varying_axes)
+    scale_factor = 1
 
-    n_train = len(build_train(cfg))
-    n_per = max(2, int((cfg["val_fraction"] * n_train) ** (1.0 / 5)))
+    while True:
+        # Build candidate values that stay inside the train intervals but avoid
+        # the exact train grid on varying axes. We increase density until the
+        # Cartesian product yields at least target_val_count unique samples.
+        n_per_axis = max(1, base_count * scale_factor)
+        fx = vals_excluding(t["force_x"]["start"], t["force_x"]["stop"], n_per_axis, fx_tr)
+        fy = vals_excluding(t["force_y"]["start"], t["force_y"]["stop"], n_per_axis, fy_tr)
+        fz = vals_excluding(t["force_z"]["start"], t["force_z"]["stop"], n_per_axis, fz_tr)
+        lengths = vals_excluding(t["lengths"]["start"], t["lengths"]["stop"], n_per_axis, L_tr)
+        widths = vals_excluding(t["widths"]["start"], t["widths"]["stop"], n_per_axis, W_tr)
 
-    fx = vals_excluding(t["force_x"]["start"], t["force_x"]["stop"], n_per, fx_tr)
-    fy = vals_excluding(t["force_y"]["start"], t["force_y"]["stop"], n_per, fy_tr)
-    fz = vals_excluding(t["force_z"]["start"], t["force_z"]["stop"], n_per, fz_tr)
-    lengths = vals_excluding(t["lengths"]["start"], t["lengths"]["stop"], n_per, L_tr)
-    widths  = vals_excluding(t["widths"]["start"],  t["widths"]["stop"],  n_per, W_tr)
-
-    forces = list(product(fx, fy, fz))
-    return list(product(forces, lengths, widths))
+        forces = list(product(fx, fy, fz))
+        combos = dedupe_combos(list(product(forces, lengths, widths)))
+        if len(combos) >= target_val_count:
+            # Deterministic trimming keeps the split size exact without random
+            # sampling, so rerunning the script produces the same split.
+            return combos[:target_val_count]
+        scale_factor += 1
 
 
 def build_test(cfg):
     """
-    Test: each feature list is half OOD values + half in-distribution values
-    (excluding exact training points).  After the Cartesian product, any sample
-    whose features are ALL in-distribution is removed, guaranteeing every test
-    sample has at least one OOD feature.
+    Test: build mixed in-distribution and OOD candidate values on each axis.
+    After the Cartesian product, any sample whose features are ALL in-distribution
+    is removed, guaranteeing every test sample has at least one OOD feature.
     """
     t   = cfg["train"]
     ood = cfg["test_ood_ranges"]
     fx_tr, fy_tr, fz_tr, L_tr, W_tr = _train_axis_values(cfg)
-
-    n_train = len(build_train(cfg))
-    n_per  = max(2, int((cfg["test_fraction"] * n_train) ** (1.0 / 5)))
-    n_half = max(1, n_per // 2)
-
-    def _test_values(id_start, id_stop, ood_start, ood_stop, n_h, train_vals):
-        ood_part = linspace_list(ood_start, ood_stop, n_h)
-        id_part  = vals_excluding(id_start, id_stop, n_h, train_vals)
-        return ood_part + id_part
-
-    fx = _test_values(t["force_x"]["start"], t["force_x"]["stop"],
-                      ood["force_x"]["start"], ood["force_x"]["stop"], n_half, fx_tr)
-    fy = _test_values(t["force_y"]["start"], t["force_y"]["stop"],
-                      ood["force_y"]["start"], ood["force_y"]["stop"], n_half, fy_tr)
-    fz = _test_values(t["force_z"]["start"], t["force_z"]["stop"],
-                      ood["force_z"]["start"], ood["force_z"]["stop"], n_half, fz_tr)
-    lengths = _test_values(t["lengths"]["start"], t["lengths"]["stop"],
-                           ood["lengths"]["start"], ood["lengths"]["stop"], n_half, L_tr)
-    widths  = _test_values(t["widths"]["start"],  t["widths"]["stop"],
-                           ood["widths"]["start"],  ood["widths"]["stop"],  n_half, W_tr)
-
-    forces = list(product(fx, fy, fz))
-    combos = list(product(forces, lengths, widths))
-
+    _, _, target_test_count = _split_target_counts(cfg)
+    base_count = _candidate_count_per_axis(target_test_count, 5)
     ranges = _train_ranges(cfg)
-    return filter_all_in_distribution(combos, ranges)
+
+    def _test_values(id_start, id_stop, ood_start, ood_stop, n_axis, train_vals):
+        # Each axis contributes a mix of in-distribution off-grid values and OOD
+        # values. The later OOD filter works on the full 5D combo, not per-axis.
+        ood_part = unique_float_list(linspace_list(ood_start, ood_stop, n_axis))
+        id_part = vals_excluding(id_start, id_stop, n_axis, train_vals)
+        return unique_float_list(ood_part + id_part)
+
+    scale_factor = 1
+    while True:
+        # Increase candidate density until the filtered, deduplicated set is
+        # large enough to satisfy the requested exact test count.
+        n_axis = max(1, base_count * scale_factor)
+        fx = _test_values(t["force_x"]["start"], t["force_x"]["stop"],
+                          ood["force_x"]["start"], ood["force_x"]["stop"], n_axis, fx_tr)
+        fy = _test_values(t["force_y"]["start"], t["force_y"]["stop"],
+                          ood["force_y"]["start"], ood["force_y"]["stop"], n_axis, fy_tr)
+        fz = _test_values(t["force_z"]["start"], t["force_z"]["stop"],
+                          ood["force_z"]["start"], ood["force_z"]["stop"], n_axis, fz_tr)
+        lengths = _test_values(t["lengths"]["start"], t["lengths"]["stop"],
+                               ood["lengths"]["start"], ood["lengths"]["stop"], n_axis, L_tr)
+        widths = _test_values(t["widths"]["start"],  t["widths"]["stop"],
+                              ood["widths"]["start"], ood["widths"]["stop"], n_axis, W_tr)
+
+        forces = list(product(fx, fy, fz))
+        combos = list(product(forces, lengths, widths))
+        # Remove all-IND samples so every kept sample has at least one OOD
+        # feature, then deduplicate before trimming to the target size.
+        combos = dedupe_combos(filter_all_in_distribution(combos, ranges))
+        if len(combos) >= target_test_count:
+            return combos[:target_test_count]
+        scale_factor += 1
 
 
 # ---------------------------------------------------------------------------
@@ -207,15 +340,22 @@ def _graph_filepath(params, dir_path):
 # ---------------------------------------------------------------------------
 
 def run_simulations(config_path, verbose, skip_existing):
+    # This is the orchestration entrypoint:
+    # 1. load YAML
+    # 2. build exact train/val/test split parameter lists
+    # 3. create output folders
+    # 4. launch fea_simulation once per unique parameter combination
     cfg = load_config(config_path)
     defaults    = cfg["defaults"]
     output_root = cfg["output_root"]
+    n_train, n_val, n_test = _split_target_counts(cfg)
 
     splits = {
-        "train": build_train(cfg),
-        "val":   build_val(cfg),
-        "test":  build_test(cfg),
+        "train": dedupe_combos(build_train(cfg)),
+        "val":   dedupe_combos(build_val(cfg)),
+        "test":  dedupe_combos(build_test(cfg)),
     }
+    expected_counts = {"train": n_train, "val": n_val, "test": n_test}
 
     for mode in ("train", "val", "test"):
         combos   = splits[mode]
@@ -223,19 +363,23 @@ def run_simulations(config_path, verbose, skip_existing):
         dir_path.mkdir(parents=True, exist_ok=True)
 
         print(f"\n{'=' * 60}")
-        print(f"  {mode.upper()}: {len(combos)} simulations")
+        print(f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})")
         print(f"{'=' * 60}")
 
         for idx, ((fx, fy, fz), L, W) in tqdm(enumerate(combos), total=len(combos)):
             # Build a param dict for the skip-check filename
             p = {**defaults, "L": L, "W": W, "fx": fx, "fy": fy, "fz": fz}
             if _graph_filepath(p, dir_path).exists() and skip_existing:
+                # Skip expensive recomputation when the output graph file is
+                # already present and the caller requested resume-like behavior.
                 continue
 
             if verbose:
                 print(f"\nSim {idx + 1}/{len(combos)}:  "
                       f"fx={fx:.4f}  fy={fy:.4f}  fz={fz:.4f}  L={L:.4f}  W={W:.4f}")
 
+            # Only the five split-defining features vary per simulation here.
+            # The rest are fixed defaults read from the config file.
             fea_simulation(
                 L=L, W=W, D=defaults["D"],
                 NL=defaults["NL"], NW=defaults["NW"], ND=defaults["ND"],
@@ -256,5 +400,6 @@ def run_simulations(config_path, verbose, skip_existing):
 
 
 if __name__ == "__main__":
+    # Default manual entrypoint used when invoking this file directly.
     config = "conf/fem_generation/config_rotated.yaml"
     run_simulations(config, verbose=False, skip_existing=False)
