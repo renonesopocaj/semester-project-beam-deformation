@@ -120,9 +120,9 @@ class TrainYaml:
         self.stats_path = flattened_cfg["stats_path"]
         self.preprocess_config_path = flattened_cfg["preprocess_config_path"]
         self.resume_from = flattened_cfg.get("resume_from")
-        self.checkpoint_interval = flattened_cfg.get("checkpoint_interval")
+        self.checkpoint_interval = flattened_cfg["checkpoint_interval"]
         self.training_type = flattened_cfg["training_type"]
-        self.torch_compile = flattened_cfg.get("torch_compile", False)
+        self.torch_compile = flattened_cfg["torch_compile"]
 
 def _to_dict_flatten(data):
     """

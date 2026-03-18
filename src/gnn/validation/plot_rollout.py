@@ -409,7 +409,8 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
     for timestep, (coordinates, error_values) in enumerate(zip(coordinates_per_step, error_per_step)):
         error_values = np.clip(error_values, vmin, vmax)
         poly_collection = update_surface_collection(ax, faces, coordinates, error_values, cmap, norm, poly_collection)
-        ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+        ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}\n[{split_name}, "
+                     f"1 sample, {num_timesteps} timesteps]")
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
@@ -486,6 +487,7 @@ def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path, spli
             Destination image path.
         return: None
     """
+    print("Plot rollout position error vs timestep...")
     errors = []
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
         step_mae = torch.mean(torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)).item()
@@ -523,6 +525,7 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
     """
     output_dir = Path(output_dir)
     rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
+    print("Printing validation rollout...")
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
@@ -795,6 +798,7 @@ def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefi
     edge_index = to_numpy(true_graph.edge_index).astype(np.int64)
     positions = to_numpy(true_graph.x_pos_t)
     num_nodes = positions.shape[0]
+    print(f"Plotting mesh diagnostics for {split_name}...")
 
     for field_name, field_label in TARGET_FIELDS:
         true_vals = _extract_scalar(true_graph, field_name)

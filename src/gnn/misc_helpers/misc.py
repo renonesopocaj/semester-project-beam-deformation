@@ -27,6 +27,7 @@ def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir
         return: None
             Saves all requested validation plots.
     """
+    print("Printing validation diagnostics norollout...")
     output_dir = Path(output_dir)
     rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
     num_timesteps = len(true_rollout)
@@ -60,3 +61,45 @@ def loss_factory(loss_type):
     if loss_type == "huber":
         return F.huber_loss
     raise NotImplementedError("Unsupported loss function")
+
+
+    # def _collect_batch_metrics_norollout(self, pred, target, prefix):
+    #     """
+    #     Used in 1) training step 2) validation step 3) test step.
+    #     Computes per-component and aggregate loss/MAE metrics for a single batch.
+    #     - loss: overall loss
+    #     - acceleration: loss & relative mae
+    #     - stress: loss & relative mae
+    #     - acc_x_loss: & relative mae
+    #     - acc_y_loss: & relative mae
+    #     - acc_z_loss: & relative mae
+    #     - von_mises_loss: & relative mae
+    #
+    #     Args:
+    #         pred: torch.Tensor
+    #             Model prediction with shape `(num_nodes, 4)`.
+    #         target: torch.Tensor
+    #             Ground-truth tensor with shape `(num_nodes, 4)`.
+    #         prefix: str
+    #             Metric namespace prefix, for example `train`, `val`, or `test`.
+    #     """
+    #     metrics = {f"{prefix}/loss": self.loss_fn(pred, target),
+    #                f"{prefix}/acc_all_loss": self.loss_fn(pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()),
+    #                f"{prefix}/stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()),
+    #                f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+    #                f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(
+    #                    pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()
+    #                ),
+    #                f"{prefix}/acc_x_rel_mae": compute_mean_relative_mae(
+    #                    pred[:, 0].contiguous(), target[:, 0].contiguous()
+    #                ),
+    #                f"{prefix}/acc_y_rel_mae": compute_mean_relative_mae(
+    #                    pred[:, 1].contiguous(), target[:, 1].contiguous()
+    #                ),
+    #                f"{prefix}/acc_z_rel_mae": compute_mean_relative_mae(
+    #                    pred[:, 2].contiguous(), target[:, 2].contiguous()
+    #                ),
+    #                f"{prefix}/stress_rel_mae": compute_mean_relative_mae(
+    #                    pred[:, 3].contiguous(), target[:, 3].contiguous()
+    #                )}
+    #     return metrics

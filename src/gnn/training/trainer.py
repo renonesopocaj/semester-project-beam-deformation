@@ -55,7 +55,8 @@ class LitModule(L.LightningModule):
     validation_loader: DataLoader
     test_loader: DataLoader
 
-    def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root):
+    def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
+                 len_train_dataloader):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -108,6 +109,8 @@ class LitModule(L.LightningModule):
         self.should_log_test_media = False
         self.rollout_all_step_error = 0.0
 
+        self.len_train_dataloader = len_train_dataloader
+
     def forward(self, batch):
         """
         Runs a forward pass through the underlying GNN model.
@@ -141,7 +144,7 @@ class LitModule(L.LightningModule):
         # Define all metrics with epoch as x-axis
         self._define_wandb_metrics()
         # Watch model gradients and parameters
-        self.logger.watch(self.model, log="all", log_freq=100)
+        self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
         # Log initial epoch value
         # self.logger.experiment.log({"epoch": 0})
 
@@ -217,17 +220,24 @@ class LitModule(L.LightningModule):
         self.eval_split_name = split_name
         self.should_log_test_media = log_media
 
-    def _collect_batch_metrics_norollout(self, pred, target, prefix):
+    def _collect_train_batch_metrics_noroll(self, pred, target):
         """
-        Used in 1) training step 2) validation step 3) test step.
-        Computes per-component and aggregate loss/MAE metrics for a single batch.
-        - loss: overall loss
-        - acceleration: loss & relative mae
-        - stress: loss & relative mae
-        - acc_x_loss: & relative mae
-        - acc_y_loss: & relative mae
-        - acc_z_loss: & relative mae
-        - von_mises_loss: & relative mae
+        Collects only the training metrics that are actually needed during training.
+
+        Args:
+            pred: torch.Tensor
+                Model prediction with shape `(num_nodes, 4)`.
+            target: torch.Tensor
+                Ground-truth tensor with shape `(num_nodes, 4)`.
+            return: dict
+                Dictionary with the minimal training metrics.
+        """
+        metrics = {"train/loss": self.loss_fn(pred, target)}
+        return metrics
+
+    def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
+        """
+        Collects the richer evaluation metrics used for test.
 
         Args:
             pred: torch.Tensor
@@ -235,27 +245,58 @@ class LitModule(L.LightningModule):
             target: torch.Tensor
                 Ground-truth tensor with shape `(num_nodes, 4)`.
             prefix: str
-                Metric namespace prefix, for example `train`, `val`, or `test`.
+                Metric namespace prefix, for example `val`, `test`, or `validation`.
+            return: dict
+                Dictionary with evaluation metrics.
         """
-        metrics = {f"{prefix}/loss": self.loss_fn(pred, target),
-                   f"{prefix}/acc_all_loss": self.loss_fn(pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()),
-                   f"{prefix}/stress_loss": self.loss_fn(pred[:, 3].contiguous(), target[:, 3].contiguous()),
-                   f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-                   f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(
-                       pred[:, 0:3].contiguous(), target[:, 0:3].contiguous()
-                   ),
-                   f"{prefix}/acc_x_rel_mae": compute_mean_relative_mae(
-                       pred[:, 0].contiguous(), target[:, 0].contiguous()
-                   ),
-                   f"{prefix}/acc_y_rel_mae": compute_mean_relative_mae(
-                       pred[:, 1].contiguous(), target[:, 1].contiguous()
-                   ),
-                   f"{prefix}/acc_z_rel_mae": compute_mean_relative_mae(
-                       pred[:, 2].contiguous(), target[:, 2].contiguous()
-                   ),
-                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(
-                       pred[:, 3].contiguous(), target[:, 3].contiguous()
-                   )}
+        pred_acc = pred[:, 0:3].contiguous()
+        target_acc = target[:, 0:3].contiguous()
+        pred_stress = pred[:, 3].contiguous()
+        target_stress = target[:, 3].contiguous()
+
+        metrics = {
+            f"{prefix}/loss": self.loss_fn(pred, target),
+            f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
+            f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
+            f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+            f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
+            f"{prefix}/acc_x_rel_mae": compute_mean_relative_mae(
+                pred[:, 0].contiguous(), target[:, 0].contiguous()
+            ),
+            f"{prefix}/acc_y_rel_mae": compute_mean_relative_mae(
+                pred[:, 1].contiguous(), target[:, 1].contiguous()
+            ),
+            f"{prefix}/acc_z_rel_mae": compute_mean_relative_mae(
+                pred[:, 2].contiguous(), target[:, 2].contiguous()
+            ),
+            f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress),
+        }
+        return metrics
+
+    def _collect_val_batch_metrics_noroll(self, pred, target, prefix):
+        """
+        Collects the richer evaluation metrics used for test.
+
+        Args:
+            pred: torch.Tensor
+                Model prediction with shape `(num_nodes, 4)`.
+            target: torch.Tensor
+                Ground-truth tensor with shape `(num_nodes, 4)`.
+            prefix: str
+                Metric namespace prefix, for example `val`, `test`, or `validation`.
+            return: dict
+                Dictionary with evaluation metrics.
+        """
+        pred_acc = pred[:, 0:3].contiguous()
+        target_acc = target[:, 0:3].contiguous()
+        pred_stress = pred[:, 3].contiguous()
+        target_stress = target[:, 3].contiguous()
+
+        metrics = {
+            f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
+            f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
+            f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+        }
         return metrics
 
     def _log_metrics(self, metrics, prog_bar_keys, sync_dist=False):
@@ -301,9 +342,8 @@ class LitModule(L.LightningModule):
         """
         pred = self(batch)
         target = batch.y
-        metrics = self._collect_batch_metrics_norollout(pred, target, "train")
-        # FIXME: delete train/overall_relative_mar from progress bar
-        self._log_metrics(metrics, ["train/loss", "train/overall_relative_mae"])
+        metrics = self._collect_train_batch_metrics_noroll(pred, target)
+        self._log_metrics(metrics, ["train/loss"])
         # on_train_epoch_end 1. Steps the custom LR scheduler using the epoch loss 2. Halts training early if the
         # scheduler signals stop.
         return metrics["train/loss"]
@@ -321,9 +361,8 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         # collects non rollout metrics
-        metrics = self._collect_batch_metrics_norollout(pred, target, "val")
-        # FIXME: delete val/loss from progress bar
-        self._log_metrics(metrics, ["val/loss", "val/overall_relative_mae"], sync_dist=True)
+        metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
+        self._log_metrics(metrics, ["val/overall_relative_mae"], sync_dist=True)
         # on_validation_epoch_end runs a full rollout and logs rollout
 
     def test_step(self, batch, batch_idx):
@@ -339,7 +378,7 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         # non rollout metrics
-        metrics = self._collect_batch_metrics_norollout(pred, target, self.eval_split_name)
+        metrics = self._collect_test_batch_metrics_noroll(pred, target, self.eval_split_name)
         self._log_metrics(metrics, [f"{self.eval_split_name}/loss",
                                     f"{self.eval_split_name}/overall_relative_mae"],
                           sync_dist=True)
@@ -562,7 +601,6 @@ class LitModule(L.LightningModule):
 
         # Training metrics - track last value (default)
         experiment.define_metric("train/loss", summary="min")
-        experiment.define_metric("train/overall_relative_mae", summary="min")
         experiment.define_metric("train/acc_all_loss", summary="min")
         experiment.define_metric("train/stress_loss", summary="min")
         experiment.define_metric("train/acc_all_rel_mae", summary="min")
@@ -573,7 +611,7 @@ class LitModule(L.LightningModule):
         experiment.define_metric("train/lr", summary="last")
 
         # Validation metrics
-        experiment.define_metric("val/loss", summary="min")
+        experiment.define_metric("val/loss", summary="min") # FIXME: currently not implemented, might renitroduce
         experiment.define_metric("val/overall_relative_mae", summary="min")
         experiment.define_metric("val/acc_all_loss", summary="min")
         experiment.define_metric("val/stress_loss", summary="min")

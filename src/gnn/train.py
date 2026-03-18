@@ -1,3 +1,8 @@
+"""
+train.py
+Main training script.
+"""
+
 import os
 import time
 import yaml
@@ -21,6 +26,7 @@ from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDatase
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
+from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
 
 matplotlib.use("Agg")
 plt.ioff()
@@ -39,17 +45,10 @@ def maybe_compile_model(model, train_cfg):
     """
     if not train_cfg.torch_compile:
         return model
-    if not hasattr(torch, "compile"):
-        raise RuntimeError("torch.compile is not available in this PyTorch version.")
-
     # Enable verbose Dynamo diagnostics so graph breaks are reported with details.
-    if hasattr(torch, "_dynamo"):
-        torch._dynamo.config.verbose = True
-    if hasattr(torch, "_logging") and hasattr(torch._logging, "set_logs"):
-        torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
-
-    print("torch.compile enabled with graph-break logging")
-    return torch.compile(model)
+    torch._dynamo.config.verbose = True
+    torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
+    return torch.compile(model) # FIXME: dynamic flag?
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
@@ -110,7 +109,8 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.
     lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=cfg.loss_type,
-                                 preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root)
+                                 preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
+                                 len_train_dataloader=len(train_dataloader))
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
@@ -120,7 +120,7 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # =================== Wandb logger ===================
     if cfg.use_wandb:
         logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False)
+                             log_model=False, offline=True)
     else:
         logger = False
 
@@ -130,13 +130,15 @@ def train(cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # ALlocate a callback for checkpoints of model every time I get the "best model"
     if cfg.enable_val:
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="best",
-                                         monitor="val/loss", mode="min",
+                                         monitor="val/overall_relative_mae", mode="min",
                                          save_top_k=1))
     # periodic save every cfg.checkpoint_interval epoch
     if cfg.checkpoint_interval > 0:
         # save_top_k = -1 --> do not take into account the loss, save anyway
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="epoch-{epoch:04d}",
                                          every_n_epochs=cfg.checkpoint_interval, save_top_k=-1))
+
+    callbacks.append(ShortMetricProgressBar(refresh_rate=1, process_position=0, leave=False))
 
     # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
@@ -186,6 +188,8 @@ def main(cfg):
         return: None
             Runs train and final evaluation.
     """
+    print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
+
     train_cfg = TrainYaml(cfg)
 
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
