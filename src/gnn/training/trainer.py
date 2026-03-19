@@ -82,7 +82,7 @@ class LitModule(L.LightningModule):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.loss_fn = loss_factory(loss_type)
+        self.loss_fn = loss_factory(loss_type, train_cfg.residual_list)
 
         self.training_id = training_id
 

@@ -7,7 +7,6 @@ from pathlib import Path
 from src.gnn.validation.plot_rollout import (build_rollout_summary, plot_prediction_target_scatter, TARGET_FIELDS,
                                              plot_edge_error_correlation)
 import torch
-import torch.nn.functional as F
 
 def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
@@ -44,20 +43,3 @@ def compute_mean_relative_mae(pred, target):
 def compute_relative_mae(pred, target):
     return torch.abs(pred - target) / torch.clamp(torch.abs(target), min=1e-12)
 
-def loss_factory(loss_type):
-    """
-    Maps a loss type string to the corresponding PyTorch loss function.
-
-    Args:
-        loss_type: str
-            Name of the loss function.
-        return: callable
-            PyTorch loss function.
-    """
-    if loss_type == "mse":
-        return F.mse_loss
-    if loss_type == "mae":
-        return F.l1_loss
-    if loss_type == "huber":
-        return F.huber_loss
-    raise NotImplementedError("Unsupported loss function")
