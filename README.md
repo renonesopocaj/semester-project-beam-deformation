@@ -251,3 +251,94 @@ semester-project/
 
 - The repository currently has no committed `tests/`, `scripts/`, or `notebooks/` directories.
 - Runtime-generated outputs such as processed datasets, saved models, Hydra outputs, and GIF/plot artifacts are not part of the committed tree above.
+
+## Learning Task Summary
+
+This project learns the dynamics of deformable 3D beams from finite-element simulations. The data generation pipeline solves transient beam deformation with FEniCS, converts each timestep into a graph, and then trains a graph neural network to predict the next-step mechanical response at every mesh node.
+
+### Context
+
+- Each sample is one timestep of a beam mesh represented as a graph whose topology is fixed over time.
+- The repository supports two dataset families:
+- `single_direction_beam`: force varies only along `y` during training.
+- `rotated_beam`: force components along `x`, `y`, and `z` all vary during training.
+- The current committed training preset points to the processed `single_direction_beam` dataset, specifically `dataset/processed/single_direction_beam/z_isotr_log_displace/large`.
+- The split logic is physically meaningful:
+- `train`: Cartesian-product combinations inside the configured ranges.
+- `val`: in-distribution values that stay inside the training ranges but do not lie on the exact training grid.
+- `test`: out-of-distribution combinations where at least one among `force_x`, `force_y`, `force_z`, beam length, and beam width lies outside the training range.
+
+### Input Features
+
+After preprocessing, each graph node receives one categorical feature and a set of valued physical features.
+
+- Node categorical feature:
+- boundary-condition flag (`1` fixed, `0` free)
+- Node valued features:
+- current position `x_t` (3)
+- current velocity `v_t` (3)
+- rest position `x_rest` (3)
+- applied nodal force at the current timestep (3)
+- optional displacement `x_t - x_rest` (3)
+- With the default preprocessing preset (`features: displacement`), this gives `16` node channels total: `1 + 15`.
+
+- Edge features:
+- current relative position `x_j - x_i` (3)
+- rest relative position `x_rest,j - x_rest,i` (3)
+- optional relative displacement term `(x_j - x_i) - (x_rest,j - x_rest,i)` (3)
+- norms of the relative vectors above
+- With displacement enabled, this gives `12` edge channels.
+
+### Target Features
+
+The model performs node-wise prediction.
+
+- Predicted quantities:
+- acceleration at the current timestep `(a_x, a_y, a_z)`
+- von Mises stress (scalar)
+- In the default preprocessing configuration, the stress target is stored as `log(von_mises + eps)` before normalization (`mises_log: true`).
+- During rollout, the predicted acceleration is denormalized and integrated with a semi-implicit Euler update to produce the next positions and velocities.
+
+### How It Is Predicted
+
+The active training pipeline currently uses `MeshGraphNet`.
+
+- Encoder:
+- one MLP for node features and one MLP for edge features
+- Processor:
+- a stack of residual message-passing blocks
+- each block updates edge embeddings from sender, receiver, and edge states, then updates node embeddings from aggregated incoming messages
+- Decoder:
+- one head predicts 3D acceleration
+- one head predicts scalar von Mises stress
+
+The default training preset uses:
+
+- model: `MeshGraphNet`
+- latent size: `128`
+- message-passing blocks: `8`
+- loss: `mse`
+
+Other architectures exist in the codebase (`CLOFNet`, placeholders for `GUNet` and `MAG`), but the current `train.py` path instantiates only `MeshGraphNet`.
+
+### Metrics
+
+The repository tracks different metrics for training, validation, and final evaluation.
+
+- Training:
+- optimized objective is `train/loss`
+- by default this is `MSE` on the normalized target `[acceleration, stress]`
+
+- Validation during training:
+- main monitored metric is `val/overall_relative_mae`
+- best-checkpoint selection also uses `val/overall_relative_mae`
+- optional `val/acc_all_loss` and `val/stress_loss` exist in the code but are disabled by default in the current config
+- rollout validation metric `val/final_roll_err_pos` exists, but rollout-on-validation is disabled by default in the current config
+
+- Final validation and test evaluation:
+- `overall_relative_mae`: relative MAE over all four target channels together
+- `acc_all_rel_mae`: relative MAE over the three acceleration channels
+- `stress_rel_mae`: relative MAE over the stress channel
+- `final_roll_err_pos`: mean absolute position error at the last timestep of an autoregressive rollout
+
+In short, the task is to learn a graph-based surrogate model that maps the current beam state and forcing to the next-step nodal acceleration and stress, and then to assess both one-step prediction quality and long-horizon rollout quality.
