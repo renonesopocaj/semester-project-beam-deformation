@@ -125,7 +125,9 @@ def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, p
 
 def volume(V, T):
     """
-    Calculate volumes of tetrahedra. Used in plot_volume_change
+    Calculate volumes of each tetrahedra. Used in plot_volume_change. Does it by
+    1. Computes four vertex as vectors of a tetrahedron  a,b,c,d
+    2. Computes volume by doing vol = -1/6 (a-d) \cdot (b-c)x(c-d)
 
     Args:
         V: torch.Tensor
@@ -140,6 +142,7 @@ def volume(V, T):
     b = V[T[:, 1], :]
     c = V[T[:, 2], :]
     d = V[T[:, 3], :]
+    # vol = -1/6 (a-d) \cdot (b-c)x(c-d)
     vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
     return vols
 

@@ -43,10 +43,12 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
     for pred, true in zip(pred_rollout, true_rollout):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
+        # Obtain all cells as tensors of
         cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
+        print(f"Cells: {cells.shape}")
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
-
+        #
         V_true = np.abs(true_volumes).sum()
         V_pred = np.abs(pred_volumes).sum()
 

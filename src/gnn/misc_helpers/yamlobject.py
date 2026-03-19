@@ -129,6 +129,7 @@ class TrainYaml:
         self.enable_rollout_val = flattened_cfg["enable_rollout_val"]
         self.log_test_media = flattened_cfg["log_test_media"]
         self.devices = flattened_cfg["devices"]
+        self.residual_list = flattened_cfg["residual_list"]
 
 def _to_dict_flatten(data):
     """
