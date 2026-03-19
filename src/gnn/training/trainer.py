@@ -2,7 +2,7 @@
 trainer.py
 Implements a LightningModule subclass to use training
 """
-
+CHECK_NO_DEADLOCK = True
 from pathlib import Path
 
 import lightning as L
@@ -325,7 +325,7 @@ class LitModule(L.LightningModule):
             self.log(metric_name, metric_value, on_step=False, on_epoch=True,
                      prog_bar=metric_name in prog_bar_key_set,
                      logger=has_logger, batch_size=batch_size,
-                     sync_dist=metric_name in sync_dist_key_set)
+                     sync_dist=False if CHECK_NO_DEADLOCK else metric_name in sync_dist_key_set)
 
     def training_step(self, batch, batch_idx):
         """

@@ -3,4 +3,3 @@ total_epochs: 3
 loss_type: "mse"
 resume_from: null
 checkpoint_interval: 2
-torch_compile: false
