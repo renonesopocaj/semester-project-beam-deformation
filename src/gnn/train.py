@@ -176,7 +176,10 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
-                                accelerator=accelerator, devices=1, num_nodes=1, strategy="ddp", profiler=profiler) # device stuff
+                                accelerator=accelerator,
+                                 devices=1, num_nodes=1, # FIXME: add device parameter
+                                 # strategy="ddp", 
+                                profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
