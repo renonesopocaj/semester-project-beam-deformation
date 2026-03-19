@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 def plot_validation_diagnostics_norollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
-    Plot FIXME: they are actually from rolllout
+    Plot
     1. scatter plots: prediction vs target, where every p[oint is one node
     2. edge error correlation:
 

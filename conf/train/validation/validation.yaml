@@ -1,2 +1,6 @@
 enable_val: True
 validation_interval: 1
+profile_loss_stress_vs_acceleration: False # disabled because it worsens computational efficiency
+enable_wandb_watch: False # disabled because it worsens computational efficiency
+enable_rollout_val: False
+log_test_media: True

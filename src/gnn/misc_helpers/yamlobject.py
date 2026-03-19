@@ -126,6 +126,9 @@ class TrainYaml:
         self.profiling = flattened_cfg["profiling"]
         self.profile_loss_stress_vs_acceleration = flattened_cfg["profile_loss_stress_vs_acceleration"]
         self.enable_wandb_watch = flattened_cfg["enable_wandb_watch"]
+        self.enable_rollout_val = flattened_cfg["enable_rollout_val"]
+        self.log_test_media = flattened_cfg["log_test_media"]
+        self.devices = flattened_cfg["devices"]
 
 def _to_dict_flatten(data):
     """

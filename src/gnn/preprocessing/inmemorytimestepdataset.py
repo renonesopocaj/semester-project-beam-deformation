@@ -1,5 +1,5 @@
 """
-inmemroytimestepdataset.py
+inmemorytimestepdataset.py
 In-memory dataset for graph data.
 """
 

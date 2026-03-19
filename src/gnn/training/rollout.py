@@ -52,6 +52,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
         target_stats.to(device)
 
         for t, graph_ground_truth in enumerate(test_loader):
+            graph_ground_truth = graph_ground_truth.to(device, non_blocking=True)
             if rest_pos is None:
                 rest_pos = graph_ground_truth.rest_pos
             if t < skip_first:
@@ -62,7 +63,6 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                 # First prediction t=0: the input graph_ground_truth is the same as the ground truth graph_ground_truth
                 input_graph = graph_ground_truth
             # graph_ground_truth is ground truth, input_graph comes from autoregressive
-
             # Predict --> denormalize prediction --> extract von mises vs acceleration
             pred = model(input_graph.to(device))
             pred_denorm = normalizer.denormalize(pred, target_stats)
@@ -123,11 +123,10 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
 
     :return input_graph
     """
-    input_graph = ground_truth_graph
+    input_graph = ground_truth_graph.clone()
     # ---------------------- Nodes ----------------------
     # Obtain BCs (cannot change so always ground truth)
-    # FIXME: hardcoded 0
-    boundary_condition = ground_truth_graph.x[:, 0]
+    boundary_condition = ground_truth_graph.x[:, 0] # FIXME: hardcoded 0
     categorical_node_features = boundary_condition.unsqueeze(1)
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted
@@ -137,8 +136,9 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
                                                       rest_minus_nonrest_pos)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
-    # Keep force node features unchanged
+    # Keep force node features unchanged: deleted
     # _x[-1] = ground_truth_graph.x[-1]
+
     # --------------- Edges ----------------------
     edge_features = build_edge_features(x_predict_tp1, rest_pos, ground_truth_graph.edge_index, rest_minus_nonrest_pos)
     _edge_attr_normalized = normalizer.normalize(edge_features, edge_stats)

@@ -1,3 +1,8 @@
+"""
+build_features.py
+Builds features for the GNN and physical quantities.
+"""
+
 import torch
 
 def calculate_kinematics(x, dt):
@@ -35,6 +40,9 @@ def build_valued_node_features(x, v, rest_pos, node_force, rest_minus_nonrest_po
     :return Tensor
         concatenated features
     """
+    device = x.device
+    rest_pos = rest_pos.to(device)
+    v = v.to(device)
     if rest_minus_nonrest_pos:
         x_minus_u = x - rest_pos
         node_attr = torch.concat([x, v, rest_pos, node_force, x_minus_u], dim=1) # (15)

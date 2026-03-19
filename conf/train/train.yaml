@@ -5,14 +5,12 @@ defaults:
   - validation: validation
   - data: default
   - lr_scheduler: step
+  - devices: one_gpu
   - _self_
 
 seed: 42
 use_wandb: true
 initial_lr: 1e-3
-profiling: False
-profile_loss_stress_vs_acceleration: False
-enable_wandb_watch: False
 
 hydra:
   run:

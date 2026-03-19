@@ -43,7 +43,7 @@ class LitModule(L.LightningModule):
     # Features
     rest_minus_nonrest_pos: bool
     # Else
-    should_log_test_media: bool
+    log_test_media: bool
     node_stats: Any # Stats?
     edge_stats: Any # Stats?
     target_stats: Any # Stats?
@@ -56,7 +56,7 @@ class LitModule(L.LightningModule):
     test_loader: DataLoader
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch, profile_loss_stress_vs_acceleration):
+                 len_train_dataloader, enable_wandb_watch, train_cfg):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -106,12 +106,13 @@ class LitModule(L.LightningModule):
         self.validation_loader = None
         self.test_loader = None
         self.eval_split_name = "test"
-        self.should_log_test_media = False
+        self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
         self.enable_wandb_watch = enable_wandb_watch
 
         self.len_train_dataloader = len_train_dataloader
-        self.profile_loss_stress_vs_acceleration = profile_loss_stress_vs_acceleration
+        self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
+        self.enable_rollout_val = train_cfg.enable_rollout_val
 
     def forward(self, batch):
         """
@@ -207,7 +208,7 @@ class LitModule(L.LightningModule):
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
 
-    def set_test_context(self, test_loader, split_name, log_media):
+    def set_test_context(self, test_loader, split_name):
         """
         Configures the module for a final evaluation pass, specifying the loader, split label, and whether to emit plots.
 
@@ -221,7 +222,6 @@ class LitModule(L.LightningModule):
         """
         self.test_loader = test_loader
         self.eval_split_name = split_name
-        self.should_log_test_media = log_media
 
     def _collect_train_batch_metrics_noroll(self, pred, target):
         """
@@ -257,23 +257,9 @@ class LitModule(L.LightningModule):
         pred_stress = pred[:, 3].contiguous()
         target_stress = target[:, 3].contiguous()
 
-        metrics = {
-            f"{prefix}/loss": self.loss_fn(pred, target),
-            f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
-            f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
-            f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-            f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
-            f"{prefix}/acc_x_rel_mae": compute_mean_relative_mae(
-                pred[:, 0].contiguous(), target[:, 0].contiguous()
-            ),
-            f"{prefix}/acc_y_rel_mae": compute_mean_relative_mae(
-                pred[:, 1].contiguous(), target[:, 1].contiguous()
-            ),
-            f"{prefix}/acc_z_rel_mae": compute_mean_relative_mae(
-                pred[:, 2].contiguous(), target[:, 2].contiguous()
-            ),
-            f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress),
-        }
+        metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                   f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
+                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
         return metrics
 
     def _collect_val_batch_metrics_noroll(self, pred, target, prefix):
@@ -297,8 +283,7 @@ class LitModule(L.LightningModule):
         if self.profile_loss_stress_vs_acceleration:
             metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
                        f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
-                       f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress),
-            }
+                       f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress)}
         else:
             metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target)}
         return metrics
@@ -424,7 +409,8 @@ class LitModule(L.LightningModule):
 
     def _run_rollout(self, data_loader):
         """
-        Executes a full autoregressive rollout over the given loader and returns ground-truth/predicted trajectories plus final-step MAE.
+        Executes a full autoregressive rollout over the given loader and returns ground-truth/predicted trajectories
+        plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error during rollout.
 
         Args:
             data_loader: pyg.DataLoader
@@ -438,8 +424,9 @@ class LitModule(L.LightningModule):
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
                                                 rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
-        rollout_error = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
-        return true_rollout, pred_rollout, rollout_error
+        # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
+        final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
+        return true_rollout, pred_rollout, final_roll_err_pos
 
     def _log_rollout_media(self, true_rollout, pred_rollout):
         """
@@ -496,14 +483,16 @@ class LitModule(L.LightningModule):
         # strategy by lightning)
         if not self.trainer.is_global_zero:
             return
-        _, _, rollout_error = self._run_rollout(self.validation_loader)
-        self.rollout_all_step_error = rollout_error
-        self.log("val/gen_rollout_error",
-                 torch.tensor(rollout_error, device=self.device),
-                 prog_bar=True,
-                 logger=self._has_wandb_logger(),
-                 sync_dist=False,
-                 rank_zero_only=True)
+        if self.enable_rollout_val:
+            # Returns
+            _, _, final_roll_err_pos = self._run_rollout(self.validation_loader)
+            self.rollout_all_step_error = final_roll_err_pos
+            self.log("val/final_roll_err_pos",
+                     torch.tensor(final_roll_err_pos, device=self.device),
+                     prog_bar=True,
+                     logger=self._has_wandb_logger(),
+                     sync_dist=False,
+                     rank_zero_only=True)
 
     def on_test_epoch_end(self):
         """
@@ -512,16 +501,16 @@ class LitModule(L.LightningModule):
         """
         if not self.trainer.is_global_zero:
             return
-
-        true_rollout, pred_rollout, rollout_error = self._run_rollout(self.test_loader)
-        self.rollout_all_step_error = rollout_error
-        self.log(f"{self.eval_split_name}/gen_rollout_error",
-                 torch.tensor(rollout_error, device=self.device),
+        # rollout_error = mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
+        true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(self.test_loader)
+        self.rollout_all_step_error = final_roll_err_pos
+        self.log(f"{self.eval_split_name}/final_roll_err_pos",
+                 torch.tensor(final_roll_err_pos, device=self.device),
                  prog_bar=True,
                  logger=self._has_wandb_logger(),
                  sync_dist=False,
                  rank_zero_only=True)
-        if self.should_log_test_media:
+        if self.log_test_media:
             self._log_rollout_media(true_rollout, pred_rollout)
 
     # =============================================================================================================
@@ -608,10 +597,8 @@ class LitModule(L.LightningModule):
 
         experiment = self.logger.experiment
 
-        # Define epoch as the global step metric for x-axis
-        # experiment.define_metric("epoch")
-        # All metrics use epoch as x-axis by default
-        # experiment.define_metric("*", step_metric="epoch")
+        # Define epoch as the global step metric for x-axis experiment.define_metric("epoch")
+        # All metrics use epoch as x-axis by default experiment.define_metric("*", step_metric="epoch")
 
         # Training metrics - track last value (default)
         experiment.define_metric("train/loss", summary="min")
@@ -630,14 +617,14 @@ class LitModule(L.LightningModule):
         experiment.define_metric("val/acc_all_loss", summary="min")
         experiment.define_metric("val/stress_loss", summary="min")
         experiment.define_metric("val/acc_all_rel_mae", summary="min")
-        experiment.define_metric("val/acc_x_rel_mae", summary="min")
-        experiment.define_metric("val/acc_y_rel_mae", summary="min")
-        experiment.define_metric("val/acc_z_rel_mae", summary="min")
+        experiment.define_metric("val/acc_x_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/acc_y_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/acc_z_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
         experiment.define_metric("val/stress_rel_mae", summary="min")
-        experiment.define_metric("val/gen_rollout_error", summary="min")
+        experiment.define_metric("val/final_roll_err_pos", summary="min")
 
         # Test/validation final metrics (dynamic prefix)
         for prefix in ["test", "validation"]:
             experiment.define_metric(f"{prefix}/loss", summary="min")
             experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
-            experiment.define_metric(f"{prefix}/gen_rollout_error", summary="min")
+            experiment.define_metric(f"{prefix}/final_roll_err_pos", summary="min")

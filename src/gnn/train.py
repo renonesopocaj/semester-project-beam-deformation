@@ -121,7 +121,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
-                                 profile_loss_stress_vs_acceleration=train_cfg.profile_loss_stress_vs_acceleration)
+                                 train_cfg=train_cfg)
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
@@ -167,7 +167,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
                                 limit_train_batches=5, limit_val_batches=5, limit_test_batches=5,
-                                accelerator=accelerator, devices=1, profiler=profiler)
+                                accelerator=accelerator, devices=train_cfg.devices,
+                                profiler=profiler)
     elif train_cfg.training_type == "slurm":
         if not torch.cuda.is_available():
             raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
@@ -177,7 +178,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator,
-                                 devices=1, num_nodes=1, # FIXME: add device parameter
+                                 devices=train_cfg.devices, num_nodes=1,
                                  # strategy="ddp", 
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
@@ -185,7 +186,9 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
                                 enable_checkpointing=len(callbacks) > 0,
-                                accelerator=accelerator, devices=1, profiler=profiler)
+                                accelerator=accelerator,
+                                devices=train_cfg.devices,
+                                profiler=profiler)
     else:
         raise NotImplementedError("Default")
 
@@ -231,7 +234,7 @@ def main(cfg):
     # =================== Final validation ===================
     if validation_dataloader is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        lightning_module.set_test_context(test_loader=validation_dataloader, split_name="validation", log_media=True)
+        lightning_module.set_test_context(test_loader=validation_dataloader, split_name="validation")
         fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
     # =================== Testing ===================
@@ -243,7 +246,7 @@ def main(cfg):
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
                                  pin_memory=True)
-    lightning_module.set_test_context(test_loader=test_dataloader, split_name="test", log_media=True)
+    lightning_module.set_test_context(test_loader=test_dataloader, split_name="test")
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
 if __name__ == "__main__":

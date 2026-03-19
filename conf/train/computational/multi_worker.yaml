@@ -1,0 +1,4 @@
+num_workers: 4
+batch_size: 16
+torch_compile: False
+profiling: False # disabled because it worsens computational efficiency
