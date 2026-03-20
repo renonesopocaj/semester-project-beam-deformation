@@ -25,4 +25,4 @@ conda activate semesterproject
 
 mkdir -p saved_models
 
-python -m src.gnn.train computational=in_memory computational.torch_compile=False lr_scheduler=step training=slurm
+python -m src.gnn.train computational=in_memory computational.torch_compile=True lr_scheduler=adaptive training=slurm
