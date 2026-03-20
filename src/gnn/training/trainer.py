@@ -403,7 +403,6 @@ class LitModule(L.LightningModule):
         monitor_name = "val/overall_relative_mae" if self.enable_val else "train/loss"
         monitor_metric = self.trainer.callback_metrics.get(monitor_name)
         if monitor_metric is None: # additional check
-            monitor_name = "train/loss"
             monitor_metric = self.trainer.callback_metrics["train/loss"]
         monitor_metric_value = float(monitor_metric.detach().item())
         self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
