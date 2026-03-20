@@ -43,9 +43,8 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
     for pred, true in zip(pred_rollout, true_rollout):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
-        # Obtain all cells as tensors of
+        # Obtain all cells as tensors of (N, 4) i.e. 4 nodes for everyone of the N tetrahedrons
         cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
-        print(f"Cells: {cells.shape}")
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
         # sum the absolute value of all volumes
