@@ -28,3 +28,4 @@ eda_artifacts
 .log
 multirun
 outputs
+fem_dataset_generation

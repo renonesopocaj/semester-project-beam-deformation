@@ -19,7 +19,7 @@ from src.gnn.misc_helpers.misc import loss_factory
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
-                                             plot_rollout_error_vs_timestep, plot_validation_diagnostics_rollout,
+                                             plot_roll_err_pos_vs_time, plot_validation_diagnostics_rollout,
                                              plot_volume_change, TARGET_FIELDS)
 
 class LitModule(L.LightningModule):
@@ -409,6 +409,8 @@ class LitModule(L.LightningModule):
 
     def _run_rollout(self, data_loader):
         """
+        FIXME: change this to take in input one trajectory, not the whole dataloader.
+            This will be called by on_validation_epoch_end and be averaged over all trajectories
         Executes a full autoregressive rollout over the given loader and returns ground-truth/predicted trajectories
         plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error during rollout.
 
@@ -439,6 +441,8 @@ class LitModule(L.LightningModule):
             pred_rollout: list
                 Predicted rollout.
         """
+
+
         # Paths
         path_split_name = self.model_evaluation_dir / self.eval_split_name
         path_split_name.mkdir(parents=True, exist_ok=True)
@@ -452,8 +456,7 @@ class LitModule(L.LightningModule):
                                  L=1.0, W=0.1, D=0.04,
                                  gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
                                  split_name=self.eval_split_name)
-        plot_rollout_error_vs_timestep(true_rollout, pred_rollout, rollout_error_path,
-                                       split_name=self.eval_split_name)
+        plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=self.eval_split_name)
         plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
                                               output_dir=path_split_name, filename_prefix=self.eval_split_name,
                                               split_name=self.eval_split_name)

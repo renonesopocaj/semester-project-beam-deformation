@@ -2,6 +2,13 @@
 eda.py
 Main file to run in order to do Exploratory Data Analysis.
 The del command are there to avoid out of memory errors.
+This script does the following:
+1. Preprocess the data and save it in a format that is easy to use for EDA.
+2. Plot the distributions of the features.
+3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
+To avoid code repetition, the preprocessing is done by implementing the TrainPreprocessor class with a special
+EdaPreprocessor class that is used to collect the data.
+All the possible normalization are done.
 """
 
 import torch
@@ -130,9 +137,6 @@ def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
     del handles_right
     del labels_right
     del chunks_list
-
-
-import gc
 
 class EdaPreprocessor(TrainPreprocessor):
     eda_obj: object
@@ -344,6 +348,10 @@ def main(cfg):
         cfg: object
             Hydra-composed configuration
     """
+    SPLIT = "validation"
+    GIF_GENERATION_NUMBER = "uniformly_sampled" # possible values: uniformly_sampled | "all"
+
+
     cfg_obj_nonorm = PreprocessYaml(cfg)
     cfg_obj_z_isotr_norm = PreprocessYaml(cfg)
     cfg_obj_z_anisotr_norm = PreprocessYaml(cfg)

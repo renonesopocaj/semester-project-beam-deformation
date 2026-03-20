@@ -1,4 +1,4 @@
-output_root: "./Results_large_10_pow_3"
+output_root: "./fem_dataset_generation/rotated"
 
 defaults:
   D: 0.1

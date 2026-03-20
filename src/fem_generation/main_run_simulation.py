@@ -29,6 +29,20 @@ TOL = 1e-9
 ARE_EQUAL_THRESHOLD = 1e-12
 
 
+def _train_count(cfg):
+    """
+    Count how many unique train combinations exist, without materializing the full list.
+
+    Args:
+        cfg: dict
+            yaml config
+        return: int
+            number of unique train combinations
+    """
+    fx, fy, fz, lengths, widths = _train_axis_values(cfg)
+    return len(fx) * len(fy) * len(fz) * len(lengths) * len(widths)
+
+
 def _graph_filepath(params, dir_path):
     """
     Reconstruct the .pt path that fea_simulation will write.
@@ -322,27 +336,18 @@ def _split_target_counts(cfg):
     """
     Compute train / val / test targets from fractions relative to the total dataset.
 
-    Important:
-    - n_train is now computed from build_train(cfg), and build_train(cfg) is already unique by construction.
-    - So the target counts are internally consistent with the actual split lengths.
-
     Args:
         cfg: dict
             yaml config
         return: tuple
             (n_train, n_val, n_test)
     """
-    # Read fractions from config.
     val_fraction = float(cfg["val_fraction"])
     test_fraction = float(cfg["test_fraction"])
-    # Compute the exact unique train size.
-    n_train = len(build_train(cfg))
-    # Infer the total dataset size from the fractions.
+    n_train = _train_count(cfg)
     total_count = int(round(n_train / (1.0 - val_fraction - test_fraction)))
-    # Compute the target validation and test sizes.
     n_val = int(round(val_fraction * total_count))
     n_test = int(round(test_fraction * total_count))
-    # Return the three targets.
     return n_train, n_val, n_test
 
 
@@ -358,9 +363,9 @@ def _varying_axis_count(cfg):
     """
     t = cfg["train"]
     axis_configs = [t["force_x"], t["force_y"], t["force_z"], t["lengths"], t["widths"]]
-    varying_axes = 0 # counter
+    varying_axes = 0  # counter
     for axis_cfg in axis_configs:
-        if not _is_constant_range(axis_cfg["start"], axis_cfg["stop"]): # is not constant
+        if not _is_constant_range(axis_cfg["start"], axis_cfg["stop"]):  # is not constant
             varying_axes += 1
     # Keep at least 1 to avoid invalid roots downstream.
     return max(1, varying_axes)
@@ -803,10 +808,10 @@ def build_test(cfg):
 #  Main loop
 # ---------------------------------------------------------------------------
 
-def run_simulations(config_path, verbose, skip_existing):
+def run_simulations(config_path, verbose, skip_existing, modes):
     """
     1. load yaml
-    2. build exact train / val / test split parameter lists
+    2. build only the requested split parameter lists
     3. create output folders
     4. launch fea_simulation once per parameter combination
 
@@ -817,70 +822,64 @@ def run_simulations(config_path, verbose, skip_existing):
             printing control
         skip_existing: bool
             skip existing graphs if True
+        modes: tuple or list
+            requested splits, e.g. ("val", "test")
         return: None
             runs the simulations
     """
-    # Load the config.
     cfg = load_config(config_path)
     defaults = cfg["defaults"]
     output_root = cfg["output_root"]
-    # Compute the target split sizes.
+
+    requested_modes = tuple(str(mode).lower() for mode in modes)
+    valid_modes = {"train", "val", "test"}
+    for mode in requested_modes:
+        if mode not in valid_modes:
+            raise ValueError(f"Unknown mode '{mode}'. Valid modes are: train, val, test.")
+
     n_train, n_val, n_test = _split_target_counts(cfg)
-    # Build the three splits. They are already exact-sized and unique by construction.
-    train_combos = build_train(cfg)
-    val_combos = build_val(cfg)
-    test_combos = build_test(cfg)
-    # Store them in one dict for the main loop.
-    splits = {"train": train_combos, "val": val_combos, "test": test_combos}
     expected_counts = {"train": n_train, "val": n_val, "test": n_test}
-    # Check the lengths explicitly so failures are caught immediately.
-    for split_name in ("train", "val", "test"):
-        if len(splits[split_name]) != expected_counts[split_name]:
-            raise RuntimeError(f"Split '{split_name}' has length {len(splits[split_name])}, "
-                               f"but the expected target is {expected_counts[split_name]}.")
-    # Start generating simulations split by split.
-    for mode in ("train", "val", "test"):
-        # Get the parameter combinations of the current split.
+    builders = {"train": build_train, "val": build_val, "test": build_test}
+
+    splits = {}
+    for mode in requested_modes:
+        splits[mode] = builders[mode](cfg)
+        if len(splits[mode]) != expected_counts[mode]:
+            raise RuntimeError(f"Split '{mode}' has length {len(splits[mode])}, "
+                               f"but the expected target is {expected_counts[mode]}.")
+
+    for mode in requested_modes:
         combos = splits[mode]
-        # Build the target graph directory.
         dir_path = Path(output_root) / mode / "graphs"
-        # Make sure the directory exists.
         dir_path.mkdir(parents=True, exist_ok=True)
-        # Print a header for this split.
-        print(f"\n{'=' * 60}")
-        print(f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})")
-        print(f"{'=' * 60}")
-        # Iterate through all selected combos.
+
+        print("\n" + "=" * 60 + f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})" + "=" * 60)
+
         for idx, ((fx, fy, fz), L, W) in tqdm(enumerate(combos), total=len(combos)):
-            # Build the parameter dict used for skip-existing filename reconstruction.
             p = dict(defaults)
             p["L"] = L
             p["W"] = W
             p["fx"] = fx
             p["fy"] = fy
             p["fz"] = fz
-            # Skip recomputing an already existing graph if requested.
+
             if _graph_filepath(p, dir_path).exists() and skip_existing:
                 continue
-            # Print the current sample if verbose mode is active.
+
             if verbose:
                 print(f"\nSim {idx + 1}/{len(combos)}:  fx={fx:.4f}  fy={fy:.4f}  fz={fz:.4f}  L={L:.4f}  W={W:.4f}")
-            # Launch the FEA simulation.
-            fea_simulation(L=L, W=W,
 
+            fea_simulation(L=L, W=W,
                            D=defaults["D"],
                            NL=defaults["NL"], NW=defaults["NW"], ND=defaults["ND"],
                            elastic_params=(defaults["E"], defaults["nu"]),
                            density=defaults["rho"],
                            damping_params=(defaults["eta_m"], defaults["eta_k"]),
                            newmark_params=(defaults["alpha_m"], defaults["alpha_f"]),
-
                            initial_force_x=fx, initial_force_y=fy, initial_force_z=fz,
-
                            cutoff_time_factor=defaults["cutoff_time_factor"],
                            total_time=defaults["total_time"],
                            num_steps=defaults["num_steps"],
-
                            mode=mode,
                            output_root=output_root,
                            verbose=verbose)
@@ -888,5 +887,5 @@ def run_simulations(config_path, verbose, skip_existing):
 
 if __name__ == "__main__":
     # Default manual entrypoint used when invoking this file directly.
-    config = "conf/fem_generation/config_rotated.yaml"
-    run_simulations(config, verbose=False, skip_existing=False)
+    config = "conf/fem_generation/config_original.yaml"
+    run_simulations(config, verbose=False, skip_existing=False, modes=("val", "test"))

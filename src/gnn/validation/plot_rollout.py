@@ -48,9 +48,9 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
         print(f"Cells: {cells.shape}")
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
-        #
-        V_true = np.abs(true_volumes).sum()
-        V_pred = np.abs(pred_volumes).sum()
+        # sum the absolute value of all volumes
+        V_true = torch.abs(true_volumes).sum().detach().cpu().item()
+        V_pred = torch.abs(pred_volumes).sum().detach().cpu().item()
 
         true_volumes_list.append(V_true)
         pred_volumes_list.append(V_pred)
@@ -476,7 +476,7 @@ def plot_edge_error_correlation(field_summary, output_path, split_name, num_time
     fig.savefig(output_path)
     plt.close(fig)
 
-def plot_rollout_error_vs_timestep(true_rollout, pred_rollout, output_path, split_name):
+def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_name):
     """
     Plot position MAE at each rollout timestep.
 
