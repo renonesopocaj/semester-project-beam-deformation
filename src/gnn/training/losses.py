@@ -1,4 +1,9 @@
+import torch
 import torch.nn.functional as F
+from src.gnn.validation.mesh_build_numerical import compute_boundary_dihedral_angles_torch
+
+EPS = 1e-6
+TARGET_ACC_DIM = 3
 
 def loss_factory(loss_type, residual_list):
     """
@@ -27,9 +32,49 @@ def volume_loss(pred, target):
     return
 
 def curvature_loss(pred, target):
-    # FIXME: implement extreme curvature penalization, where as a measure of curvature we use the angle between a couple
-    #       of adjacent tetrahedras, for all couple of adjacent tetrahedras. (that angle can be computed as the angle
-    #       between the vector normal to the surface of the tetrahedron?)
-    #       We take the maximum angle and we penalize it gradually, i.e. the bigger it is the most it is penalized, and
-    #       maybe set an arbitrary threshold below which the penalization is not activated (30 degrees).
-    return
+    # FIXME: deprecated placeholder signature kept for backward compatibility.
+    return torch.zeros((), device=pred.device, dtype=pred.dtype)
+
+
+def reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
+    """
+    Args:
+        pred: torch.Tensor
+            Model prediction with shape `(num_nodes, 4)`.
+        batch: Data
+            Batched PyG graph containing current position and velocity.
+        target_stats: Stats or StatsModule
+            Target normalization statistics.
+        dt: float
+            Simulation time step.
+        return: torch.Tensor
+            Predicted next positions with shape `(num_nodes, 3)`.
+    """
+    pred_acc = pred[:, :TARGET_ACC_DIM]
+    pred_acc_denorm = pred_acc * (target_stats.std[:TARGET_ACC_DIM] + EPS) + target_stats.mean[:TARGET_ACC_DIM]
+    return batch.x_pos_t + batch.x_vel_t * dt + pred_acc_denorm * (dt ** 2)
+
+
+def compute_thresholded_curvature_loss(pred, batch, target_stats, dt, theta_max):
+    """
+    Args:
+        pred: torch.Tensor
+            Model prediction with shape `(num_nodes, 4)`.
+        batch: Data
+            Batched PyG graph with cached boundary topology.
+        target_stats: Stats or StatsModule
+            Target normalization statistics.
+        dt: float
+            Simulation time step.
+        theta_max: float
+            Maximum allowed dihedral angle from the train set.
+        return: torch.Tensor
+            Mean thresholded curvature penalty.
+    """
+    predicted_next_positions = reconstruct_predicted_next_positions(pred, batch, target_stats, dt)
+    dihedral_angles = compute_boundary_dihedral_angles_torch(
+        predicted_next_positions, batch.boundary_left_tri_index, batch.boundary_right_tri_index, EPS
+    )
+    if dihedral_angles.numel() == 0:
+        return predicted_next_positions.new_zeros(())
+    return torch.mean(torch.relu(dihedral_angles - theta_max))

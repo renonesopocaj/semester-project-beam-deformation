@@ -24,13 +24,14 @@ from torch_geometric.loader import DataLoader
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.preprocessing.stats import load_stats
+from src.gnn.preprocessing.stats import load_stats, load_theta_max
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
 
 matplotlib.use("Agg")
 plt.ioff()
+THETA_MAX_MARGIN = 1e-6
 
 def maybe_compile_model(model, train_cfg):
     """
@@ -105,6 +106,10 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
+    theta_max = None
+    if "curvature" in train_cfg.residual_list:
+        theta_max = load_theta_max(train_cfg.train_dir) + THETA_MAX_MARGIN
+        print(f"\tLoaded theta_max threshold = {theta_max}")
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
@@ -121,7 +126,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
-                                 train_cfg=train_cfg)
+                                 train_cfg=train_cfg, theta_max=theta_max)
     lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
