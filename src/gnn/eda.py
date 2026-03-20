@@ -6,116 +6,254 @@ This script does the following:
 1. Preprocess the data and save it in a format that is easy to use for EDA.
 2. Plot the distributions of the features.
 3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
-To avoid code repetition, the preprocessing is done by implementing the TrainPreprocessor class with a special
-EdaPreprocessor class that is used to collect the data.
+To avoid code repetition, the preprocessing reuses the same low-level feature builders used in preprocess.py.
 All the possible normalization are done.
 """
 
-import torch
-import hydra
+import copy
 import gc
+import math
 import os
-from src.gnn.misc_helpers.yamlobject import PreprocessYaml
-from src.gnn.preprocess import TrainPreprocessor
-from src.gnn.preprocessing.noiser import NoNoiser
-from src.gnn.preprocessing.build_features import compute_von_mises_3d
-from src.gnn.validation.plot_rollout import make_ground_truth_gif
-from torch_geometric.data import Data
+import shutil
 from pathlib import Path
+
+import hydra
 import matplotlib.pyplot as plt
+import torch
+from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml
+from src.gnn.preprocess import TrainPreprocessor
+from src.gnn.preprocessing.build_features import (calculate_kinematics, build_valued_node_features,
+                                                  build_edge_features, compute_von_mises_3d)
+from src.gnn.preprocessing.noiser import NoNoiser
+from src.gnn.validation.plot_rollout import make_ground_truth_gif
+
 EPS = 1e-6
-DT = 0.08
-LIMIT_TIMESTEPS = 50
 DEVICE = "cpu"
-LABELS = ["No norm", "Z isotr.", "Z anisotr.", "Robust isotr.", "Robust anisotr."]
+EDA_SPLIT = "train"  # Possible values: train | val | test
+GIF_GENERATION_MODE = "UNIFORMLY_SAMPLED"  # Possible values: ALL | UNIFORMLY_SAMPLED
+GIF_SAMPLE_PERCENTAGE = 10.0
 
-def generate_ground_truth_gif_all(preprocessor, SAVE_DIR):
-    """
-    Generate one GIF per trajectory from the no-norm preprocessor's raw graphs.
+# Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
+SCALAR_FEATURE_NAMES = [
+    "von_mises",
+    "edge_relative_pos_norm",
+    "edge_rest_relative_pos_norm",
+    "edge_displacement_norm",
+]
 
-    Args:
-        preprocessor: EdaPreprocessor
-            The non-normalized preprocessor whose out_graphs hold raw x_pos_t and y_sig_t.
-    """
-    gif_dir = Path(SAVE_DIR) / "ground_truth_gifs"
-    os.makedirs(gif_dir, exist_ok=True)
+NORMALIZATION_RUNS = [
+    {"name": "none", "label": "No norm", "normalizer_method": "None", "isotropic_normalizer": True, "generate_gifs": True},
+    {"name": "z_isotr", "label": "Z isotr.", "normalizer_method": "z", "isotropic_normalizer": True, "generate_gifs": False},
+    {"name": "z_anisotr", "label": "Z anisotr.", "normalizer_method": "z", "isotropic_normalizer": False, "generate_gifs": False},
+    {"name": "robust_isotr", "label": "Robust isotr.", "normalizer_method": "robust", "isotropic_normalizer": True, "generate_gifs": False},
+    {"name": "robust_anisotr", "label": "Robust anisotr.", "normalizer_method": "robust", "isotropic_normalizer": False, "generate_gifs": False},
+]
 
-    traj_idx_list = preprocessor.traj_idx_list
-    out_graphs = preprocessor.out_graphs
+RUN_METADATA = {run["name"]: run for run in NORMALIZATION_RUNS}
+VECTOR_RUN_NAMES = ["none", "z_isotr", "z_anisotr", "robust_isotr", "robust_anisotr"]
+SCALAR_RUN_NAMES = ["none", "z_isotr", "robust_isotr"]
+RUN_COLORS = {
+    "none": "gray",
+    "z_isotr": "tab:blue",
+    "z_anisotr": "tab:orange",
+    "robust_isotr": "tab:green",
+    "robust_anisotr": "tab:red",
+}
 
-    pbar = tqdm(enumerate(sorted(set(traj_idx_list))), desc="Ground truth GIFs")
-    for i, traj in pbar:
-        if i % 15 != 0:
-            continue
-        traj_graphs = [g for idx, g in zip(traj_idx_list, out_graphs) if idx == traj]
 
-        for graph in traj_graphs:
-            graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
-
-        gif_path = gif_dir / f"trajectory_{traj:02d}.gif"
-        # print(f"\tGenerating ground truth GIF for trajectory {traj} ({len(traj_graphs)} steps)...")xx
-        make_ground_truth_gif(traj_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
-        del gif_path
-        del traj_graphs
-
-    del traj_idx_list
-    del out_graphs
-    del gif_dir
-
-def plot_all_distributions(eda_obj_list, labels, SAVE_DIR):
+def _to_cpu_clone(value):
     """
     Args:
-        eda_obj_list: list[EdaObj]
-            One EdaObj per normalizer variant, holding lists of torch.Tensors for each feature.
-        labels: list[str]
-            Human-readable label for each normalizer variant.
+        value: object
+            Tensor-like or array-like value.
+        return: object
+            Detached CPU copy preserving the original container type when possible.
     """
-    os.makedirs(SAVE_DIR, exist_ok=True)
-    pbar = tqdm(eda_obj_list[0].__dict__, desc="Plotting distribution")
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "clone"):
+        return value.clone()
+    if hasattr(value, "copy"):
+        return value.copy()
+    return value
+
+
+def _should_generate_gif(traj_idx):
+    """
+    Args:
+        traj_idx: int
+            Trajectory index in the current split.
+        return: bool
+            True iff a GIF should be generated for the trajectory.
+    """
+    if GIF_GENERATION_MODE == "ALL":
+        return True
+    if GIF_GENERATION_MODE == "UNIFORMLY_SAMPLED":
+        raise RuntimeError("_should_generate_gif is not used for uniformly sampled mode anymore.")
+    raise ValueError(f"Unknown GIF_GENERATION_MODE: {GIF_GENERATION_MODE}")
+
+
+def _build_uniformly_spread_indices(total_count, percentage):
+    """
+    Args:
+        total_count: int
+            Total number of trajectories in the split.
+        percentage: float
+            Percentage of trajectories to sample.
+        return: set[int]
+            Uniformly spread trajectory indices.
+    """
+    if total_count <= 0:
+        return set()
+    if percentage <= 0.0:
+        return set()
+    n_selected = int(round(total_count * percentage / 100.0))
+    n_selected = max(1, min(total_count, n_selected))
+    if n_selected == total_count:
+        return set(range(total_count))
+    selected_indices = set()
+    for idx in range(n_selected):
+        selected_index = min(total_count - 1, int(math.floor((idx + 0.5) * total_count / n_selected)))
+        selected_indices.add(selected_index)
+    return selected_indices
+
+
+def _build_gif_trajectory_indices(total_count, generate_gifs):
+    """
+    Args:
+        total_count: int
+            Total number of trajectories in the split.
+        generate_gifs: bool
+            Whether GIF generation is enabled for the current run.
+        return: set[int]
+            Trajectory indices whose GIFs should be generated.
+    """
+    if not generate_gifs:
+        return set()
+    if GIF_GENERATION_MODE == "ALL":
+        return set(range(total_count))
+    if GIF_GENERATION_MODE == "UNIFORMLY_SAMPLED":
+        return _build_uniformly_spread_indices(total_count, GIF_SAMPLE_PERCENTAGE)
+    raise ValueError(f"Unknown GIF_GENERATION_MODE: {GIF_GENERATION_MODE}")
+
+
+def _create_variant_cfg(base_cfg, normalizer_method, isotropic_normalizer):
+    """
+    Args:
+        base_cfg: PreprocessYaml
+            Base preprocessing config.
+        normalizer_method: str
+            Normalizer method for the variant.
+        isotropic_normalizer: bool
+            Whether the normalizer pools xyz triplets isotropically.
+        return: PreprocessYaml
+            Independent config object for one EDA run.
+    """
+    variant_cfg = copy.deepcopy(base_cfg)
+    variant_cfg.normalizer_method = normalizer_method
+    variant_cfg.isotropic_normalizer = isotropic_normalizer
+    return variant_cfg
+
+
+def _get_variant_names_for_feature(attr_name):
+    """
+    Args:
+        attr_name: str
+            EDA feature name.
+        return: list[str]
+            The normalization runs that should be plotted for that feature.
+    """
+    if attr_name in SCALAR_FEATURE_NAMES:
+        return SCALAR_RUN_NAMES
+    return VECTOR_RUN_NAMES
+
+
+def _get_display_label(run_name, attr_name):
+    """
+    Args:
+        run_name: str
+            Normalization run name.
+        attr_name: str
+            EDA feature name.
+        return: str
+            Human-readable plot label.
+    """
+    if attr_name in SCALAR_FEATURE_NAMES:
+        scalar_labels = {"none": "No norm", "z_isotr": "Z norm", "robust_isotr": "Robust norm"}
+        return scalar_labels[run_name]
+    return RUN_METADATA[run_name]["label"]
+
+
+def plot_all_distributions(eda_obj_dict, save_dir):
+    """
+    Args:
+        eda_obj_dict: dict[str, EdaObj]
+            One EdaObj per normalization run.
+        save_dir: str or Path
+            Directory where the plots will be saved.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    reference_eda_obj = eda_obj_dict["none"]
+    pbar = tqdm(reference_eda_obj.__dict__, desc="Plotting distribution")
     for key in pbar:
-        if len(getattr(eda_obj_list[0], key)) == 0:
+        if len(getattr(reference_eda_obj, key)) == 0:
             continue
         pbar.set_postfix({"key": key})
-        plot_distribution(key, eda_obj_list, labels, SAVE_DIR)
+        plot_distribution(key, eda_obj_dict, save_dir)
 
 
-def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
+def plot_distribution(attr_name, eda_obj_dict, save_dir):
     """
-    Plots non-normalized distribution on the left y-axis and all
+    Plots non-normalized distribution on the left y-axis and the selected
     normalized distributions on the right y-axis (shared scale).
 
     Args:
         attr_name: str
             Attribute name (used for titles/labels).
-        eda_obj_list: list[EdaObj]
-            List of eda objs; index 0 is non-normalized, 1..N are normalized.
-        labels: list[str]
-            Label for each normalizer variant.
+        eda_obj_dict: dict[str, EdaObj]
+            Mapping run_name -> EdaObj.
+        save_dir: str or Path
+            Directory where the plots will be saved.
     """
+    run_names = _get_variant_names_for_feature(attr_name)
     chunks_list = []
-    for idx in range(len(eda_obj_list)):
-        _chunks = []
-        _val = getattr(eda_obj_list[idx], attr_name)
-        for t in _val:
-            _chunks.append(t.reshape(-1, 1))
-        _x = torch.cat(_chunks, dim=0).to(torch.float32)
-        _x_np = _x.reshape(-1).detach().to(DEVICE).numpy()
-        chunks_list.append(_x_np)
-        del _chunks
-        del _val
-        del _x
-        del _x_np
+    labels = []
+    colors = []
+    for run_name in run_names:
+        if run_name not in eda_obj_dict:
+            continue
+        values = getattr(eda_obj_dict[run_name], attr_name)
+        if len(values) == 0:
+            continue
+        chunks = []
+        for tensor in values:
+            chunks.append(tensor.reshape(-1, 1))
+        merged_tensor = torch.cat(chunks, dim=0).to(torch.float32)
+        chunks_list.append(merged_tensor.reshape(-1).detach().to(DEVICE).numpy())
+        labels.append(_get_display_label(run_name, attr_name))
+        colors.append(RUN_COLORS[run_name])
+        del chunks
+        del values
+        del merged_tensor
+
+    if len(chunks_list) == 0:
+        return
+
+    raw_min = float(chunks_list[0].min())
+    raw_max = float(chunks_list[0].max())
 
     fig, ax_left = plt.subplots(figsize=(10, 6))
     ax_right = ax_left.twinx()
 
-    ax_left.hist(chunks_list[0], bins=200, density=True, alpha=0.3, color="gray", label=labels[0])
+    ax_left.hist(chunks_list[0], bins=200, density=True, alpha=0.3, color=colors[0], label=labels[0])
     ax_left.set_ylabel("Density (non-normalized)")
 
-    colors = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
-    for data, color, label in zip(chunks_list[1:], colors, labels[1:]):
+    for data, color, label in zip(chunks_list[1:], colors[1:], labels[1:]):
         ax_right.hist(data, bins=200, density=True, alpha=0.5, color=color,
                       label=label, histtype="step", linewidth=1.5)
     ax_right.set_ylabel("Density (normalized)")
@@ -123,6 +261,9 @@ def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
     ax_left.set_xlabel(attr_name)
     fig.suptitle(f"{attr_name} distribution")
     ax_left.grid(True, alpha=0.3)
+    ax_left.text(0.02, 0.98, f"Raw range: [{raw_min:.6g}, {raw_max:.6g}]",
+                 transform=ax_left.transAxes, va="top", ha="left",
+                 bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8})
 
     handles_left, labels_left = ax_left.get_legend_handles_labels()
     handles_right, labels_right = ax_right.get_legend_handles_labels()
@@ -130,166 +271,302 @@ def plot_distribution(attr_name, eda_obj_list, labels, SAVE_DIR):
                loc="upper right", bbox_to_anchor=(0.98, 0.95))
 
     plt.tight_layout()
-    plt.savefig(f"{SAVE_DIR}/eda_{attr_name}.png", dpi=150)
+    plt.savefig(Path(save_dir) / f"eda_{attr_name}.png", dpi=150)
     plt.close(fig)
-    del handles_left
-    del labels_left
-    del handles_right
-    del labels_right
-    del chunks_list
+
 
 class EdaPreprocessor(TrainPreprocessor):
     eda_obj: object
-    keep_graphs_for_gif: bool
+    artifact_dir: Path
+    run_name: str
 
-    def __init__(self, cfg, keep_graphs_for_gif):
+    def __init__(self, cfg, artifact_dir, run_name):
         """
         Args:
             cfg: object
-                config object
-            keep_graphs_for_gif: bool
-                whether to keep full graphs after EDA collection
+                Config object.
+            artifact_dir: str or Path
+                Root directory for EDA artifacts.
+            run_name: str
+                Name of the current normalization run.
         """
         super().__init__(cfg)
         self.noiser = NoNoiser()
-        self.keep_graphs_for_gif = keep_graphs_for_gif
+        self.artifact_dir = Path(artifact_dir)
+        self.run_name = run_name
+        self.eda_obj = EdaObj()
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         pass
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
-        """
-        Args:
-            traj_idx: list
-                trajectory indices
-            out_graphs: list
-                processed graphs
-            save_dir: object
-                unused here
-            return: None
-                fills self.eda_obj and frees memory when possible
-        """
-        eda_obj = EdaObj()
-        has_displacement = out_graphs[0].edge_attr.shape[1] == 12
-
-        pbar = tqdm(sorted(set(traj_idx)), desc="EDA collecting trajectories")
-        for traj in pbar:
-            for idx, graph in zip(traj_idx, out_graphs):
-                if idx != traj:
-                    continue
-
-                eda_obj.acceleration_x.append(graph.y[:, 0])
-                eda_obj.acceleration_y.append(graph.y[:, 1])
-                eda_obj.acceleration_z.append(graph.y[:, 2])
-                eda_obj.von_mises.append(graph.y[:, 3])
-
-                eda_obj.position_x.append(graph.x[:, 1])
-                eda_obj.position_y.append(graph.x[:, 2])
-                eda_obj.position_z.append(graph.x[:, 3])
-                eda_obj.velocity_x.append(graph.x[:, 4])
-                eda_obj.velocity_y.append(graph.x[:, 5])
-                eda_obj.velocity_z.append(graph.x[:, 6])
-                eda_obj.rest_pos_x.append(graph.x[:, 7])
-                eda_obj.rest_pos_y.append(graph.x[:, 8])
-                eda_obj.rest_pos_z.append(graph.x[:, 9])
-                eda_obj.force_x.append(graph.x[:, 10])
-                eda_obj.force_y.append(graph.x[:, 11])
-                eda_obj.force_z.append(graph.x[:, 12])
-
-                if has_displacement:
-                    eda_obj.displacement_pos_x.append(graph.x[:, 13])
-                    eda_obj.displacement_pos_y.append(graph.x[:, 14])
-                    eda_obj.displacement_pos_z.append(graph.x[:, 15])
-
-                eda_obj.edge_relative_pos_x.append(graph.edge_attr[:, 0])
-                eda_obj.edge_relative_pos_y.append(graph.edge_attr[:, 1])
-                eda_obj.edge_relative_pos_z.append(graph.edge_attr[:, 2])
-                eda_obj.edge_rest_relative_pos_x.append(graph.edge_attr[:, 3])
-                eda_obj.edge_rest_relative_pos_y.append(graph.edge_attr[:, 4])
-                eda_obj.edge_rest_relative_pos_z.append(graph.edge_attr[:, 5])
-
-                if has_displacement:
-                    eda_obj.edge_displacement_pos_x.append(graph.edge_attr[:, 6])
-                    eda_obj.edge_displacement_pos_y.append(graph.edge_attr[:, 7])
-                    eda_obj.edge_displacement_pos_z.append(graph.edge_attr[:, 8])
-                    eda_obj.edge_relative_pos_norm.append(graph.edge_attr[:, 9])
-                    eda_obj.edge_rest_relative_pos_norm.append(graph.edge_attr[:, 10])
-                    eda_obj.edge_displacement_norm.append(graph.edge_attr[:, 11])
-                else:
-                    eda_obj.edge_relative_pos_norm.append(graph.edge_attr[:, 6])
-                    eda_obj.edge_rest_relative_pos_norm.append(graph.edge_attr[:, 7])
-
-        self.eda_obj = eda_obj
-
-        self.targets.clear()
-        self.categorical_node_features.clear()
-        self.valued_node_features.clear()
-        self.edge_features.clear()
-
-        if not self.keep_graphs_for_gif:
-            self.out_graphs.clear()
-            self.traj_idx_list.clear()
-
-        gc.collect()
+        pass
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+        pass
+
+    def preprocess_data(self, cfg, graphs_dir, generate_gifs):
+        """
+        Process the dataset trajectory by trajectory to avoid accumulating the full
+        rich EDA representation in memory.
+
+        Args:
+            cfg: object
+                Preprocessing config.
+            graphs_dir: str or Path
+                Directory containing raw trajectory `.pt` files.
+            generate_gifs: bool
+                True iff uniformly sampled ground-truth GIFs should be generated.
+        """
+        torch.manual_seed(cfg.seed)
+        filenames = sorted(Path(graphs_dir).glob("*.pt"))
+        if cfg.normalizer_method.lower() == "none":
+            self._collect_raw_eda(cfg, filenames, generate_gifs)
+            return
+
+        cache_dir = self.artifact_dir / ".eda_cache" / self.run_name
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            cache_files = self._cache_trajectories(cfg, filenames, cache_dir)
+            split_idx_edge = 9 if cfg.displacement else 6
+            self._compute_stats_from_cache(cache_files, split_idx_edge)
+            self._collect_normalized_eda(cache_files, cfg.displacement)
+        finally:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+
+    def _collect_raw_eda(self, cfg, filenames, generate_gifs):
         """
         Args:
-            graph: Data
-                input graph at timestep t
-            _a: torch.Tensor
-                acceleration target
-            _x: torch.Tensor
-                node positions at time t
-            _v: torch.Tensor
-                node velocities at time t
-            _von_mises: torch.Tensor
-                von mises target
-            _edge_attr: torch.Tensor
-                edge features
-            _node_attr: torch.Tensor
-                valued node features
-            t: int
-                timestep index
-            x_next: torch.Tensor
-                next positions for all timesteps
-            v_next: torch.Tensor
-                next velocities for all timesteps
-            all_node_force: torch.Tensor
-                node force over time
-            rest_pos_x: torch.Tensor
-                rest positions
-            _categorical_node_attr: torch.Tensor
-                categorical node features
-            _von_mises_log: torch.Tensor
-                log von mises target
+            cfg: object
+                Preprocessing config.
+            filenames: list[Path]
+                Trajectory files to process.
+            generate_gifs: bool
+                Whether to generate trajectory GIFs during the pass.
             return: None
-                appends rich graph objects needed for EDA and GIF generation
+                Fills self.eda_obj lazily.
         """
-        _target = torch.concat([_a, _von_mises], dim=1)
-        self.out_graphs.append(
-            Data(
-                y=_target.clone(),
-                y_acc_t=_a.clone(),
-                y_von_mises=_von_mises.clone(),
-                von_mises_log=_von_mises_log.clone(),
-                y_sig_t=graph.y_sig_t.clone(),
-                t=graph.time.clone(),
-                x=_node_attr.clone(),
-                x_next=x_next[t].clone(),
-                v_next=v_next[t].clone(),
-                node_force_next=all_node_force[t + 1].clone(),
-                x_pos_t=_x.clone(),
-                x_vel_t=_v.clone(),
-                node_force=all_node_force[t].clone(),
-                rest_pos=rest_pos_x.clone(),
-                edge_attr=_edge_attr.clone(),
-                edge_index=graph.edge_index.clone(),
-                x_element_connectivity=graph.x_element_connectivity.copy()
-            )
-        )
-        self.targets.append(_target.clone())
+        gif_indices = _build_gif_trajectory_indices(len(filenames), generate_gifs)
+        pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"EDA {self.run_name}")
+        for traj_idx, filename in pbar:
+            keep_gif_graphs = traj_idx in gif_indices
+            payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs)
+            self._collect_payload(payload, cfg.displacement, normalize=False)
+            if trajectory_graphs is not None:
+                self._generate_ground_truth_gif(trajectory_graphs, traj_idx)
+            del payload
+            del trajectory_graphs
+            gc.collect()
+
+    def _cache_trajectories(self, cfg, filenames, cache_dir):
+        """
+        Args:
+            cfg: object
+                Preprocessing config.
+            filenames: list[Path]
+                Trajectory files to process.
+            cache_dir: Path
+                Directory used to store compact raw trajectory bundles.
+            return: list[Path]
+                Cache file paths.
+        """
+        cache_files = []
+        pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"Caching {self.run_name}")
+        for traj_idx, filename in pbar:
+            payload, _ = self._build_trajectory_payload(cfg, filename, False)
+            cache_path = cache_dir / f"traj_{traj_idx:05d}.pt"
+            torch.save(payload, cache_path)
+            cache_files.append(cache_path)
+            del payload
+            gc.collect()
+        return cache_files
+
+    def _load_family_from_cache(self, cache_files, payload_key, start_column):
+        """
+        Args:
+            cache_files: list[Path]
+                Cache files created by _cache_trajectories().
+            payload_key: str
+                One of node_inputs, edge_features, or targets.
+            start_column: int or None
+                Optional column offset used to skip the BC feature in node inputs.
+            return: list[torch.Tensor]
+                Family tensors loaded from cache.
+        """
+        tensor_list = []
+        for cache_path in cache_files:
+            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
+            for tensor in payload[payload_key]:
+                if start_column is None:
+                    tensor_list.append(tensor)
+                else:
+                    tensor_list.append(tensor[:, start_column:])
+            del payload
+        return tensor_list
+
+    def _compute_stats_from_cache(self, cache_files, split_idx_edge):
+        """
+        Args:
+            cache_files: list[Path]
+                Cache files created by _cache_trajectories().
+            split_idx_edge: int
+                Number of edge feature columns grouped as xyz triplets.
+            return: None
+                Fills self.node_stats, self.edge_stats, self.target_stats.
+        """
+        print("\nComputing EDA stats from cached trajectories...\n")
+        node_tensors = self._load_family_from_cache(cache_files, "node_inputs", 1)
+        self.node_stats = self.normalizer.compute_stats(node_tensors, node_tensors[0].shape[1])
+        del node_tensors
+        gc.collect()
+
+        edge_tensors = self._load_family_from_cache(cache_files, "edge_features", None)
+        self.edge_stats = self.normalizer.compute_stats(edge_tensors, split_idx_edge)
+        del edge_tensors
+        gc.collect()
+
+        target_tensors = self._load_family_from_cache(cache_files, "targets", None)
+        self.target_stats = self.normalizer.compute_stats(target_tensors, 3)
+        del target_tensors
+        gc.collect()
+        print("\nFinished computing EDA stats\n")
+
+    def _collect_normalized_eda(self, cache_files, has_displacement):
+        """
+        Args:
+            cache_files: list[Path]
+                Cache files created by _cache_trajectories().
+            has_displacement: bool
+                True iff displacement-derived features are enabled.
+            return: None
+                Fills self.eda_obj from normalized cached trajectories.
+        """
+        pbar = tqdm(cache_files, total=len(cache_files), desc=f"Collecting {self.run_name}")
+        for cache_path in pbar:
+            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
+            self._collect_payload(payload, has_displacement, normalize=True)
+            del payload
+            gc.collect()
+
+    def _normalize_node_input(self, node_input):
+        """
+        Args:
+            node_input: torch.Tensor
+                Raw node input tensor `[bc, valued_node_features]`.
+            return: torch.Tensor
+                Node input tensor with only the valued part normalized.
+        """
+        normalized_valued = self.normalizer.normalize(node_input[:, 1:], self.node_stats)
+        return torch.concat([node_input[:, 0:1], normalized_valued], dim=1)
+
+    def _collect_payload(self, payload, has_displacement, normalize):
+        """
+        Args:
+            payload: dict
+                Compact trajectory bundle containing node_inputs, edge_features, and targets.
+            has_displacement: bool
+                True iff displacement-derived features are enabled.
+            normalize: bool
+                Whether to apply the current normalizer before appending to EdaObj.
+            return: None
+                Appends all timestep features in the payload to self.eda_obj.
+        """
+        for node_input, edge_features, target in zip(payload["node_inputs"], payload["edge_features"], payload["targets"]):
+            if normalize:
+                node_input = self._normalize_node_input(node_input)
+                edge_features = self.normalizer.normalize(edge_features, self.edge_stats)
+                target = self.normalizer.normalize(target, self.target_stats)
+            self.eda_obj.append_timestep(node_input, edge_features, target, has_displacement)
+
+    def _build_trajectory_payload(self, cfg, filename, keep_gif_graphs):
+        """
+        Args:
+            cfg: object
+                Preprocessing config.
+            filename: Path
+                Raw trajectory file.
+            keep_gif_graphs: bool
+                True iff the returned payload should include minimal GIF graph objects.
+            return: (dict, list or None)
+                Compact payload and optional GIF graph list for the current trajectory.
+        """
+        dataloader = torch.load(filename, weights_only=False)
+        graphs_list_batch = []
+        for data in dataloader:
+            graph = data.to(cfg.device)
+            graphs_list_batch.append(graph)
+
+        whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
+        x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)
+        v, a = calculate_kinematics(x, cfg.dt)
+        rest_pos_x = x[0].clone()
+        x, v = self.noiser.add_noise_train(x, v, cfg.dt)
+        all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)
+        boundary_condition = graphs_list_batch[0].x_bc
+
+        payload = {"node_inputs": [], "edge_features": [], "targets": []}
+        trajectory_graphs = [] if keep_gif_graphs else None
+
+        for t, graph in enumerate(graphs_list_batch):
+            if t > cfg.limit_timesteps - 2:
+                break
+            node_force = all_node_force[t]
+            x_t = x[t]
+            v_t = v[t]
+            a_t = a[t]
+            valued_node_attr = build_valued_node_features(x_t, v_t, rest_pos_x, node_force, cfg.displacement)
+            node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
+            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, cfg.displacement)
+            von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
+            if cfg.mises_log:
+                von_mises = von_mises_log
+            else:
+                von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+            target = torch.concat([a_t, von_mises], dim=1)
+
+            payload["node_inputs"].append(_to_cpu_clone(node_input))
+            payload["edge_features"].append(_to_cpu_clone(edge_attr))
+            payload["targets"].append(_to_cpu_clone(target))
+
+            if keep_gif_graphs:
+                trajectory_graphs.append(
+                    Data(
+                        x_pos_t=_to_cpu_clone(x_t),
+                        y_sig_t=_to_cpu_clone(graph.y_sig_t),
+                        x_element_connectivity=_to_cpu_clone(graph.x_element_connectivity),
+                    )
+                )
+
+        del dataloader
+        del graphs_list_batch
+        del whole_trajectory_batch
+        del x
+        del v
+        del a
+        del rest_pos_x
+        del all_node_force
+        del boundary_condition
+        return payload, trajectory_graphs
+
+    def _generate_ground_truth_gif(self, trajectory_graphs, traj_idx):
+        """
+        Args:
+            trajectory_graphs: list[Data]
+                Raw trajectory graphs for one trajectory.
+            traj_idx: int
+                Current trajectory index.
+            return: None
+                Writes one GIF to disk.
+        """
+        gif_dir = self.artifact_dir / "ground_truth_gifs"
+        os.makedirs(gif_dir, exist_ok=True)
+        for graph in trajectory_graphs:
+            graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+        gif_path = gif_dir / f"trajectory_{traj_idx:02d}.gif"
+        make_ground_truth_gif(trajectory_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
 
 
 class EdaObj:
@@ -332,97 +609,99 @@ class EdaObj:
          self.displacement_pos_x, self.displacement_pos_y, self.displacement_pos_z,
          self.force_x, self.force_y, self.force_z,
          self.rest_pos_x, self.rest_pos_y, self.rest_pos_z,
-         # edge
          self.edge_relative_pos_x, self.edge_relative_pos_y, self.edge_relative_pos_z, self.edge_relative_pos_norm,
          self.edge_rest_relative_pos_x, self.edge_rest_relative_pos_y, self.edge_rest_relative_pos_z,
          self.edge_rest_relative_pos_norm,
          self.edge_displacement_pos_x, self.edge_displacement_pos_y, self.edge_displacement_pos_z,
          self.edge_displacement_norm) = \
             ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
-            [], [], [], [])
+             [], [], [], [])
+
+    def append_timestep(self, node_features, edge_features, target, has_displacement):
+        """
+        Args:
+            node_features: torch.Tensor
+                Node input tensor `[bc, valued_node_features]`.
+            edge_features: torch.Tensor
+                Edge feature tensor.
+            target: torch.Tensor
+                Target tensor `[acc_x, acc_y, acc_z, von_mises]`.
+            has_displacement: bool
+                True iff displacement-derived features are enabled.
+            return: None
+                Appends the current timestep to the internal EDA lists.
+        """
+        self.acceleration_x.append(target[:, 0])
+        self.acceleration_y.append(target[:, 1])
+        self.acceleration_z.append(target[:, 2])
+        self.von_mises.append(target[:, 3])
+
+        self.position_x.append(node_features[:, 1])
+        self.position_y.append(node_features[:, 2])
+        self.position_z.append(node_features[:, 3])
+        self.velocity_x.append(node_features[:, 4])
+        self.velocity_y.append(node_features[:, 5])
+        self.velocity_z.append(node_features[:, 6])
+        self.rest_pos_x.append(node_features[:, 7])
+        self.rest_pos_y.append(node_features[:, 8])
+        self.rest_pos_z.append(node_features[:, 9])
+        self.force_x.append(node_features[:, 10])
+        self.force_y.append(node_features[:, 11])
+        self.force_z.append(node_features[:, 12])
+
+        if has_displacement:
+            self.displacement_pos_x.append(node_features[:, 13])
+            self.displacement_pos_y.append(node_features[:, 14])
+            self.displacement_pos_z.append(node_features[:, 15])
+
+        self.edge_relative_pos_x.append(edge_features[:, 0])
+        self.edge_relative_pos_y.append(edge_features[:, 1])
+        self.edge_relative_pos_z.append(edge_features[:, 2])
+        self.edge_rest_relative_pos_x.append(edge_features[:, 3])
+        self.edge_rest_relative_pos_y.append(edge_features[:, 4])
+        self.edge_rest_relative_pos_z.append(edge_features[:, 5])
+
+        if has_displacement:
+            self.edge_displacement_pos_x.append(edge_features[:, 6])
+            self.edge_displacement_pos_y.append(edge_features[:, 7])
+            self.edge_displacement_pos_z.append(edge_features[:, 8])
+            self.edge_relative_pos_norm.append(edge_features[:, 9])
+            self.edge_rest_relative_pos_norm.append(edge_features[:, 10])
+            self.edge_displacement_norm.append(edge_features[:, 11])
+        else:
+            self.edge_relative_pos_norm.append(edge_features[:, 6])
+            self.edge_rest_relative_pos_norm.append(edge_features[:, 7])
+
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda")
 def main(cfg):
     """
     Args:
         cfg: object
-            Hydra-composed configuration
+            Hydra-composed configuration.
     """
-    SPLIT = "validation"
-    GIF_GENERATION_NUMBER = "uniformly_sampled" # possible values: uniformly_sampled | "all"
+    base_cfg = PreprocessYaml(cfg)
+    if EDA_SPLIT not in ["train", "val", "test"]:
+        raise ValueError(f"Unknown EDA_SPLIT: {EDA_SPLIT}")
+    save_dir = Path(f"eda_artifacts/{str(base_cfg.dataset_type)}/{EDA_SPLIT}")
+    print(f"Preprocessing size={base_cfg.dataset_size} dataset")
+    print(f"\tSave dir of eda = {save_dir}\n")
 
+    graphs_dir = Path(base_cfg.raw_data_dir) / EDA_SPLIT / "graphs"
+    eda_obj_dict = {}
 
-    cfg_obj_nonorm = PreprocessYaml(cfg)
-    cfg_obj_z_isotr_norm = PreprocessYaml(cfg)
-    cfg_obj_z_anisotr_norm = PreprocessYaml(cfg)
-    cfg_obj_rob_isotr_norm = PreprocessYaml(cfg)
-    cfg_obj_rob_anisotr_norm = PreprocessYaml(cfg)
-
-    cfg_obj_nonorm.normalizer_method = "None"
-    cfg_obj_z_isotr_norm.normalizer_method = "z"
-    cfg_obj_z_anisotr_norm.normalizer_method = "z"
-    cfg_obj_rob_isotr_norm.normalizer_method = "robust"
-    cfg_obj_rob_anisotr_norm.normalizer_method = "robust"
-
-    cfg_obj_nonorm.isotropic_normalizer = True
-    cfg_obj_z_isotr_norm.isotropic_normalizer = True
-    cfg_obj_z_anisotr_norm.isotropic_normalizer = False
-    cfg_obj_rob_isotr_norm.isotropic_normalizer = True
-    cfg_obj_rob_anisotr_norm.isotropic_normalizer = False
-
-    SAVE_DIR = f"eda_artifacts/{str(cfg_obj_nonorm.dataset_type)}"
-
-    print(f"Preprocessing size={cfg_obj_nonorm.dataset_size} dataset")
-    print(f"\tSave dir of eda = {SAVE_DIR}\n")
-    graphs_dir_train = Path(cfg_obj_nonorm.raw_data_dir) / "train" / "graphs"
-
-    all_eda_obj_arg = []
-
-    print("\n" + "=" * 60 + "\ntrain, no norm\n" + "=" * 60)
-    preprocessor = EdaPreprocessor(cfg_obj_nonorm, True)
-    preprocessor.preprocess_data(cfg_obj_nonorm, graphs_dir_train, None)
-    all_eda_obj_arg.append(preprocessor.eda_obj)
-
-    print("=" * 60 + "\nStarting to generate ground truth GIFs..\n" + "=" * 60 + "\n")
-    generate_ground_truth_gif_all(preprocessor, SAVE_DIR)
-
-    preprocessor.out_graphs.clear()
-    preprocessor.traj_idx_list.clear()
-    del preprocessor
-    gc.collect()
-
-    print("\n" + "=" * 60 + "\ntrain, z isotropic norm\n" + "=" * 60)
-    preprocessor = EdaPreprocessor(cfg_obj_z_isotr_norm, False)
-    preprocessor.preprocess_data(cfg_obj_z_isotr_norm, graphs_dir_train, None)
-    all_eda_obj_arg.append(preprocessor.eda_obj)
-    del preprocessor
-    gc.collect()
-
-    print("\n" + "=" * 60 + "\ntrain, z anisotropic norm\n" + "=" * 60)
-    preprocessor = EdaPreprocessor(cfg_obj_z_anisotr_norm, False)
-    preprocessor.preprocess_data(cfg_obj_z_anisotr_norm, graphs_dir_train, None)
-    all_eda_obj_arg.append(preprocessor.eda_obj)
-    del preprocessor
-    gc.collect()
-
-    print("\n" + "=" * 60 + "\ntrain, robust isotropic norm\n" + "=" * 60)
-    preprocessor = EdaPreprocessor(cfg_obj_rob_isotr_norm, False)
-    preprocessor.preprocess_data(cfg_obj_rob_isotr_norm, graphs_dir_train, None)
-    all_eda_obj_arg.append(preprocessor.eda_obj)
-    del preprocessor
-    gc.collect()
-
-    print("\n" + "=" * 60 + "\ntrain, robust anisotropic norm\n" + "=" * 60)
-    preprocessor = EdaPreprocessor(cfg_obj_rob_anisotr_norm, False)
-    preprocessor.preprocess_data(cfg_obj_rob_anisotr_norm, graphs_dir_train, None)
-    all_eda_obj_arg.append(preprocessor.eda_obj)
-    del preprocessor
-    gc.collect()
+    for run in NORMALIZATION_RUNS:
+        variant_cfg = _create_variant_cfg(base_cfg, run["normalizer_method"], run["isotropic_normalizer"])
+        print("\n" + "=" * 60 + f"\n{EDA_SPLIT}, {run['label'].lower()}\n" + "=" * 60)
+        preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"])
+        preprocessor.preprocess_data(variant_cfg, graphs_dir, run["generate_gifs"])
+        eda_obj_dict[run["name"]] = preprocessor.eda_obj
+        del preprocessor
+        gc.collect()
 
     print("=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
-    plot_all_distributions(all_eda_obj_arg, LABELS, SAVE_DIR)
-
-    del all_eda_obj_arg
+    plot_all_distributions(eda_obj_dict, save_dir)
+    del eda_obj_dict
     gc.collect()
 
 
