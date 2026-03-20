@@ -2,7 +2,6 @@
 trainer.py
 Implements a LightningModule subclass to use training
 """
-CHECK_NO_DEADLOCK = True
 from pathlib import Path
 
 import lightning as L
@@ -15,12 +14,14 @@ from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout, com
 from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
 from src.gnn.preprocessing.stats import Stats, StatsModule
 from torch_geometric.loader import DataLoader
-from src.gnn.misc_helpers.misc import loss_factory
+from src.gnn.training.losses import loss_factory
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
                                              plot_roll_err_pos_vs_time, plot_validation_diagnostics_rollout,
                                              plot_volume_change, TARGET_FIELDS)
+
+CHECK_NO_DEADLOCK = True
 
 class LitModule(L.LightningModule):
     # Model, optimizer

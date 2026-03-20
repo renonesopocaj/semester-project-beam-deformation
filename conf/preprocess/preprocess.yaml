@@ -1,5 +1,5 @@
 defaults:
-  - dataset: small
+  - dataset: large
   - numerical: default
   - paths: single_direction_beam
   - normalizer: z_isotropic
