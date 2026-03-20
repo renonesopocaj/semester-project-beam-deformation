@@ -72,3 +72,19 @@ def load_stats(train_save_dir):
     edge_stats = Stats.from_dict(stats["edge"])
     target_stats = Stats.from_dict(stats["target"])
     return node_stats, edge_stats, target_stats
+
+
+def load_theta_max(train_save_dir):
+    """
+    Args:
+        train_save_dir: str or Path
+            Path to the directory where training data was saved.
+        return: float
+            Maximum allowed boundary dihedral angle measured on the train set.
+    """
+    theta_max_path = Path(train_save_dir) / "stats" / "theta_max.json"
+    if not theta_max_path.exists():
+        raise FileNotFoundError(f"Theta max file not found at {theta_max_path}. Preprocess the training data first.")
+    with open(theta_max_path, "r") as f:
+        theta_max_payload = json.load(f)
+    return float(theta_max_payload["theta_max"])

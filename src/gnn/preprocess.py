@@ -37,6 +37,11 @@ from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
 from tqdm import tqdm
+from src.gnn.validation.mesh_build_numerical import (
+    extract_boundary_dihedral_triangle_pairs_torch,
+    filter_all_fixed_boundary_dihedral_pairs,
+    compute_max_boundary_dihedral_angle_torch,
+)
 
 EPS = 1e-6
 
@@ -56,6 +61,7 @@ class Preprocessor(ABC):
     def __init__(self):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
+        self.theta_max = 0.0
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
@@ -109,10 +115,19 @@ class Preprocessor(ABC):
             # one graph
             whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
-            x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
-            v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
-            rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3), before noise
-            x, v = self.noiser.add_noise_train(x, v, cfg.dt)
+            x_raw = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
+            v_raw, a = calculate_kinematics(x_raw, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
+            rest_pos_x = x_raw[0].clone()  # Rest (first) mesh position (N, 3), before noise
+            boundary_condition = graphs_list_batch[0].x_bc
+            fixed_mask = boundary_condition.squeeze(1) > 0.5
+            boundary_left_triangles, boundary_right_triangles = extract_boundary_dihedral_triangle_pairs_torch(
+                graphs_list_batch[0].x_element_connectivity, rest_pos_x.device
+            )
+            boundary_left_triangles, boundary_right_triangles, _ = filter_all_fixed_boundary_dihedral_pairs(
+                boundary_left_triangles, boundary_right_triangles, fixed_mask
+            )
+            self._maybe_update_train_curvature_threshold(x_raw, boundary_left_triangles, boundary_right_triangles, cfg)
+            x, v = self.noiser.add_noise_train(x_raw.clone(), v_raw, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
             # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3) FIXME: does it make any difference?
@@ -154,11 +169,13 @@ class Preprocessor(ABC):
                 # Appends and creates PyG data object for both val and train
                 # For val it's already normalized
                 self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                                       all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log)
+                                       all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
+                                       boundary_left_triangles, boundary_right_triangles)
 
         # --- Open: All these do nothing if split NOT train ---
         self._compute_stats_train(cfg, split_idx_edge)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
+        self._save_auxiliary_train_artifacts(save_dir)
         self._normalize_assign_features_train()
         # Save all processed data (in all cases)
         self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
@@ -181,8 +198,17 @@ class Preprocessor(ABC):
 
     @abstractmethod
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
+                          boundary_left_triangles, boundary_right_triangles):
         raise NotImplementedError("_normalize_append_outgraphs")
+
+    @abstractmethod
+    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+        raise NotImplementedError("_maybe_update_train_curvature_threshold")
+
+    @abstractmethod
+    def _save_auxiliary_train_artifacts(self, save_dir):
+        raise NotImplementedError("_save_auxiliary_train_artifacts")
 
 
 class TrainPreprocessor(Preprocessor):
@@ -200,6 +226,13 @@ class TrainPreprocessor(Preprocessor):
             json.dump(stats, f, indent=4)
         print(f"Stats saved to {stats_dir / 'stats.json'}")
 
+    def _save_auxiliary_train_artifacts(self, save_dir):
+        stats_dir = save_dir / "stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        with open(stats_dir / "theta_max.json", "w") as f:
+            json.dump({"theta_max": float(self.theta_max)}, f, indent=4)
+        print(f"Theta max saved to {stats_dir / 'theta_max.json'}")
+
     def _compute_stats_train(self, cfg, split_idx_edge):
         print("\nComputing train stats...\n")
         # Compute statistics
@@ -216,8 +249,20 @@ class TrainPreprocessor(Preprocessor):
     def _load_stats(self, cfg):
         pass
 
+    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+        max_timesteps = min(x_raw.shape[0], cfg.limit_timesteps)
+        for timestep_idx in range(max_timesteps):
+            current_theta_max = compute_max_boundary_dihedral_angle_torch(
+                x_raw[timestep_idx],
+                boundary_left_triangles,
+                boundary_right_triangles,
+                EPS,
+            )
+            self.theta_max = max(self.theta_max, float(current_theta_max.detach().item()))
+
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
+                          boundary_left_triangles, boundary_right_triangles):
         # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
         # used for NNs
         self.out_graphs.append(
@@ -226,7 +271,9 @@ class TrainPreprocessor(Preprocessor):
                 t=graph.time, # global t attribute
                 y_acc_t=_a, # target feature acceleration
                 x_pos_t=_x, # feature position
-                x_vel_t=_v # feature velocity
+                x_vel_t=_v, # feature velocity
+                boundary_left_tri_index=boundary_left_triangles,
+                boundary_right_tri_index=boundary_right_triangles,
             )
         )
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -276,6 +323,12 @@ class ValPreprocessor(Preprocessor):
               f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
+    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+        pass
+
+    def _save_auxiliary_train_artifacts(self, save_dir):
+        pass
+
     def _normalize_before_appending(self, _edge_attr, _node_attr, _categorical_node_attr, _target):
         # Use precomputed stats for validation
         _numerical_node_attr_norm = self.normalizer.normalize(_node_attr, self.node_stats)
@@ -286,7 +339,8 @@ class ValPreprocessor(Preprocessor):
 
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
+                          boundary_left_triangles, boundary_right_triangles):
         _target = torch.concat([_a, _von_mises], dim=1)
         node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
             _edge_attr, _node_attr, _categorical_node_attr, _target)
@@ -322,7 +376,9 @@ class ValPreprocessor(Preprocessor):
                 edge_attr=edge_attr_norm,
                 # features to encode mesh connectivity in two different ways
                 edge_index=graph.edge_index,
-                x_element_connectivity=graph.x_element_connectivity
+                x_element_connectivity=graph.x_element_connectivity,
+                boundary_left_tri_index=boundary_left_triangles,
+                boundary_right_tri_index=boundary_right_triangles,
             )
         )
 

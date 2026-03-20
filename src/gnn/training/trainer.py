@@ -14,7 +14,7 @@ from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout, com
 from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
 from src.gnn.preprocessing.stats import Stats, StatsModule
 from torch_geometric.loader import DataLoader
-from src.gnn.training.losses import loss_factory
+from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_loss
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
@@ -22,6 +22,7 @@ from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh
                                              plot_volume_change, TARGET_FIELDS)
 
 CHECK_NO_DEADLOCK = True
+CURVATURE_LOSS_WEIGHT = 1.0
 
 class LitModule(L.LightningModule):
     # Model, optimizer
@@ -57,7 +58,7 @@ class LitModule(L.LightningModule):
     test_loader: DataLoader
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch, train_cfg):
+                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -84,6 +85,11 @@ class LitModule(L.LightningModule):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_fn = loss_factory(loss_type, train_cfg.residual_list)
+        self.residual_list = set(train_cfg.residual_list)
+        self.theta_max = theta_max
+        self.curvature_loss_weight = CURVATURE_LOSS_WEIGHT
+        if "curvature" in self.residual_list and self.theta_max is None:
+            raise ValueError("Curvature residual requested but theta_max was not provided.")
 
         self.training_id = training_id
 
@@ -225,7 +231,7 @@ class LitModule(L.LightningModule):
         self.test_loader = test_loader
         self.eval_split_name = split_name
 
-    def _collect_train_batch_metrics_noroll(self, pred, target):
+    def _collect_train_batch_metrics_noroll(self, pred, target, batch):
         """
         Collects only the training metrics that are actually needed during training.
 
@@ -237,7 +243,14 @@ class LitModule(L.LightningModule):
             return: dict
                 Dictionary with the minimal training metrics.
         """
-        metrics = {"train/loss": self.loss_fn(pred, target)}
+        supervised_loss = self.loss_fn(pred, target)
+        total_loss = supervised_loss
+        metrics = {"train/supervised_loss": supervised_loss}
+        if "curvature" in self.residual_list:
+            curvature_residual = compute_thresholded_curvature_loss(pred, batch, self.target_stats, self.dt, self.theta_max)
+            metrics["train/curvature_loss"] = curvature_residual
+            total_loss = total_loss + self.curvature_loss_weight * curvature_residual
+        metrics["train/loss"] = total_loss
         return metrics
 
     def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
@@ -328,7 +341,7 @@ class LitModule(L.LightningModule):
         """
         pred = self(batch)
         target = batch.y
-        metrics = self._collect_train_batch_metrics_noroll(pred, target)
+        metrics = self._collect_train_batch_metrics_noroll(pred, target, batch)
         self._log_metrics(metrics, prog_bar_keys=["train/loss"], batch_size=batch.num_graphs,
                           sync_dist_keys=["train/loss"])
         # on_train_epoch_end
@@ -611,6 +624,8 @@ class LitModule(L.LightningModule):
 
         # Training metrics - track last value (default)
         experiment.define_metric("train/loss", summary="min")
+        experiment.define_metric("train/supervised_loss", summary="min")
+        experiment.define_metric("train/curvature_loss", summary="min")
         experiment.define_metric("train/acc_all_loss", summary="min")
         experiment.define_metric("train/stress_loss", summary="min")
         experiment.define_metric("train/acc_all_rel_mae", summary="min")
