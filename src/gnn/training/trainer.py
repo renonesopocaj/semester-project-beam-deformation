@@ -23,6 +23,7 @@ from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh
 
 CHECK_NO_DEADLOCK = True
 
+
 class LitModule(L.LightningModule):
     # Model, optimizer
     model: torch.nn.Module
@@ -45,9 +46,9 @@ class LitModule(L.LightningModule):
     rest_minus_nonrest_pos: bool
     # Else
     log_test_media: bool
-    node_stats: Any # Stats?
-    edge_stats: Any # Stats?
-    target_stats: Any # Stats?
+    node_stats: Any  # Stats?
+    edge_stats: Any  # Stats?
+    target_stats: Any  # Stats?
     # Dt
     dt: float
     # Current rollout
@@ -149,7 +150,7 @@ class LitModule(L.LightningModule):
         self._define_wandb_metrics()
         # Watch model gradients and parameters
         if self.enable_wandb_watch:
-            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
+            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader * 5, log_graph=False)
         # Log initial epoch value
         # self.logger.experiment.log({"epoch": 0})
 
@@ -318,7 +319,7 @@ class LitModule(L.LightningModule):
         Computes the training loss for one batch and logs training metrics.
 
         Args:
-            batch: Data
+            batch: Data (pyg)
                 Graph batch.
             batch_idx: int
                 Batch index.
@@ -366,9 +367,9 @@ class LitModule(L.LightningModule):
         target = batch.y
         metrics = self._collect_test_batch_metrics_noroll(pred, target, self.eval_split_name)
         self._log_metrics(metrics,
-            [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/overall_relative_mae"],
-            batch_size=batch.num_graphs,
-            sync_dist_keys=list(metrics.keys()))
+                          [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/overall_relative_mae"],
+                          batch_size=batch.num_graphs,
+                          sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
 
     def predict_step(self, batch, batch_idx):
@@ -393,7 +394,7 @@ class LitModule(L.LightningModule):
         """
         # Log epoch to W&B for x-axis alignment (only on rank 0)
         # if self._has_wandb_logger() and self.trainer.is_global_zero:
-            # self.logger.experiment.log({"epoch": self.current_epoch})
+        # self.logger.experiment.log({"epoch": self.current_epoch})
 
         if self.scheduler is None:
             return
@@ -406,6 +407,9 @@ class LitModule(L.LightningModule):
         self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())
 
         if self.scheduler.stop:
+            print("\n\n\n\n" + "=" * 60)
+            print(f"Stopping training early because scheduler indicated it should stop at epoch {self.current_epoch}.")
+            print("\n\n\n\n" + "=" * 60)
             self.trainer.should_stop = True
 
     def _run_rollout(self, data_loader):
@@ -442,7 +446,6 @@ class LitModule(L.LightningModule):
             pred_rollout: list
                 Predicted rollout.
         """
-
 
         # Paths
         path_split_name = self.model_evaluation_dir / self.eval_split_name
@@ -616,14 +619,17 @@ class LitModule(L.LightningModule):
         experiment.define_metric("train/lr", summary="last")
 
         # Validation metrics
-        experiment.define_metric("val/loss", summary="min") # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/loss", summary="min")  # FIXME: currently not implemented, might renitroduce
         experiment.define_metric("val/overall_relative_mae", summary="min")
         experiment.define_metric("val/acc_all_loss", summary="min")
         experiment.define_metric("val/stress_loss", summary="min")
         experiment.define_metric("val/acc_all_rel_mae", summary="min")
-        experiment.define_metric("val/acc_x_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/acc_y_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/acc_z_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/acc_x_rel_mae",
+                                 summary="min")  # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/acc_y_rel_mae",
+                                 summary="min")  # FIXME: currently not implemented, might renitroduce
+        experiment.define_metric("val/acc_z_rel_mae",
+                                 summary="min")  # FIXME: currently not implemented, might renitroduce
         experiment.define_metric("val/stress_rel_mae", summary="min")
         experiment.define_metric("val/final_roll_err_pos", summary="min")
 
