@@ -111,6 +111,7 @@ class LitModule(L.LightningModule):
         self.enable_wandb_watch = enable_wandb_watch
 
         self.len_train_dataloader = len_train_dataloader
+        self.enable_val = train_cfg.enable_val
         self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
         self.enable_rollout_val = train_cfg.enable_rollout_val
 
@@ -397,9 +398,13 @@ class LitModule(L.LightningModule):
         if self.scheduler is None:
             return
 
-        epoch_loss = self.trainer.callback_metrics["train/loss"]
-        epoch_loss_value = float(epoch_loss.detach().cpu())
-        self.scheduler.step(metric=epoch_loss_value, epoch=self.current_epoch)
+        monitor_name = "val/overall_relative_mae" if self.enable_val else "train/loss"
+        monitor_metric = self.trainer.callback_metrics.get(monitor_name)
+        if monitor_metric is None: # additional check
+            monitor_name = "train/loss"
+            monitor_metric = self.trainer.callback_metrics["train/loss"]
+        monitor_metric_value = float(monitor_metric.detach().item())
+        self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
 
         current_lr = float(self.optimizer.param_groups[0]["lr"])
         self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())

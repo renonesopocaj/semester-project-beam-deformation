@@ -3,6 +3,7 @@ scheduler.py
 Learning rate schedulers
 """
 
+import math
 import torch
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingWarmRestarts
 from abc import ABC, abstractmethod
@@ -103,6 +104,12 @@ class PlateauEarlyStoppingWrapper(SchedulerWrapper):
 
     def step(self, metric, epoch):
         self.scheduler.step(metric)
+        if not math.isfinite(metric):
+            return
+        if self.best_metric == float("inf"):
+            self.best_metric = metric
+            self.no_improve_count = 0
+            return
         # Update early-stopping counter
         relative_improvement = (self.best_metric - metric) / (abs(self.best_metric) + 1e-9)
         if relative_improvement > self.plateau_threshold:
