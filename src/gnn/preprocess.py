@@ -37,7 +37,7 @@ from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from src.gnn.validation.mesh_build_numerical import (
+from src.gnn.mesh_numerical_helpers.compute_angle import (
     extract_boundary_dihedral_triangle_pairs_torch,
     filter_all_fixed_boundary_dihedral_pairs,
     compute_max_boundary_dihedral_angle_torch,

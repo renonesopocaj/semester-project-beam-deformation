@@ -90,8 +90,8 @@ def _build_gif_trajectory_indices(total_count, generate_gifs, GIF_SAMPLE_PERCENT
             Total number of trajectories in the split.
         generate_gifs: bool
             Whether GIF generation is enabled for the current run.
-        return: set[int]
-            Trajectory indices whose GIFs should be generated.
+    return: set[int]
+        Trajectory indices whose GIFs should be generated.
     """
     if not generate_gifs:
         return set()
@@ -530,7 +530,8 @@ class EdaPreprocessor(TrainPreprocessor):
         for graph in trajectory_graphs:
             graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
         gif_path = gif_dir / f"trajectory_{traj_idx:02d}.gif"
-        make_ground_truth_gif(trajectory_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False)
+        make_ground_truth_gif(trajectory_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False,
+                              split_name="eda", traj_idx=traj_idx)
 
 
 class EdaObj:
@@ -685,7 +686,7 @@ def main(cfg):
         del preprocessor
         gc.collect()
 
-    print("=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
+    print("\n\n"+"=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
     plot_all_distributions(eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, RUN_METADATA,
                            SCALAR_FEATURE_NAMES)
     del eda_obj_dict

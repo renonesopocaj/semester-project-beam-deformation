@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import wandb
 from lightning.pytorch.loggers import WandbLogger
 from typing import Any
-from src.gnn.misc_helpers.misc import plot_validation_diagnostics_norollout, compute_mean_relative_mae
+from src.gnn.misc_helpers.misc import plot_validation_diagnostics_rollout, compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
 from src.gnn.preprocessing.stats import Stats, StatsModule
 from torch_geometric.loader import DataLoader
@@ -18,7 +18,7 @@ from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
-                                             plot_roll_err_pos_vs_time, plot_validation_diagnostics_rollout,
+                                             plot_roll_err_pos_vs_time, plot_err_heatmap_rollout,
                                              plot_volume_change, TARGET_FIELDS)
 
 CHECK_NO_DEADLOCK = True
@@ -243,7 +243,7 @@ class LitModule(L.LightningModule):
             return: dict
                 Dictionary with the minimal training metrics.
         """
-        supervised_loss = self.loss_fn(pred, target)
+        total_loss = self.loss_fn(pred, target)
         if "curvature" in self.residual_list:
             curvature_residual = compute_thresholded_curvature_loss(pred, batch, self.target_stats, self.dt, self.theta_max)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
@@ -475,12 +475,10 @@ class LitModule(L.LightningModule):
                                  gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
                                  split_name=self.eval_split_name)
         plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=self.eval_split_name)
-        plot_validation_diagnostics_norollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                              output_dir=path_split_name, filename_prefix=self.eval_split_name,
-                                              split_name=self.eval_split_name)
-        plot_validation_diagnostics_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout,
-                                            output_dir=path_split_name, filename_prefix=self.eval_split_name,
-                                            split_name=self.eval_split_name)
+        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
+                                 filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
+        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
+                                 filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
 
         try:
             plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
