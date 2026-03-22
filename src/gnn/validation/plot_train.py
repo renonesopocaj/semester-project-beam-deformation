@@ -1,3 +1,8 @@
+"""
+plot_train.py
+Contains functions for plotting training history specific stuff.
+"""
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt

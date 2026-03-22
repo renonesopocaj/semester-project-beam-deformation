@@ -1,3 +1,8 @@
+"""
+stats.py
+Contains Stats dataclass and StatsModule to compute and retrieve statistics for normalization.
+"""
+
 import torch
 import torch.nn as nn
 from dataclasses import dataclass

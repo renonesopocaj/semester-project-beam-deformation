@@ -1,3 +1,8 @@
+"""
+misc_numerical_helpers.py
+Various helper functions for numerical mesh operations.
+"""
+
 import numpy as np
 from src.gnn.misc_helpers.misc import to_numpy
 from collections import Counter

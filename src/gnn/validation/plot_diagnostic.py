@@ -11,7 +11,7 @@ from src.gnn.mesh_numerical_helpers.compute_angle import extract_surface_faces
 import matplotlib.pyplot as plt
 from pathlib import Path
 from src.gnn.misc_helpers.misc import to_numpy
-from src.gnn.misc_helpers.sklearn_metrics_helpers import format_r2_text, r2_linear_fit_x_to_y
+from src.gnn.misc_helpers.compute_r2 import format_r2_text, r2_linear_fit_x_to_y
 
 TARGET_FIELDS = [("acc_x", "Acceleration X"),
                  ("acc_y", "Acceleration Y"),

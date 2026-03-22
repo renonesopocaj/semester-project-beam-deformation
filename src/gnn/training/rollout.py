@@ -1,6 +1,5 @@
 """
 rollout.py
-
 Takes care of doing rollout.
 Only thing from ground truth graph, i.e. is not predicted
 """

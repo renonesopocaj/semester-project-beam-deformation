@@ -1,6 +1,5 @@
 """
 plot_rollout.py
-
 Contains all files that plot metrics or diagnostics for rollout, in depth for each trajectory.
 Main access points: in_depth_plots()
 """
@@ -15,8 +14,8 @@ from src.gnn.validation.plot_diagnostic import (extract_surface_faces, extract_s
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity, to_numpy
-from src.gnn.misc_helpers.sklearn_metrics_helpers import (format_r2_text, r2_linear_fit_x_to_y,
-                                                          r2_prediction_vs_target)
+from src.gnn.misc_helpers.compute_r2 import (format_r2_text, r2_linear_fit_x_to_y,
+                                             r2_prediction_vs_target)
 from pathlib import Path
 
 RELATIVE_ERROR_CLIP = 5.0  # 500 %

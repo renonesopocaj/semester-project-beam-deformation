@@ -1,3 +1,8 @@
+"""
+normalizer.py
+Contains Normalizer class and its subclasses.
+"""
+
 from abc import ABC, abstractmethod
 import torch
 from src.gnn.preprocessing.stats import Stats

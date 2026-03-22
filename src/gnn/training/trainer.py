@@ -1,7 +1,8 @@
 """
 trainer.py
-Implements a LightningModule subclass to use training
+Implements a LightningModule subclass to train models.
 """
+
 from pathlib import Path
 
 import lightning as L
@@ -18,10 +19,10 @@ from torch_geometric.loader import DataLoader
 from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_loss
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
-from src.gnn.validation.plot_rollout import overall_plot, in_depth_plots
+from src.gnn.validation.plot_rollout import in_depth_plots
+from src.gnn.validation.plot_overall import overall_plot
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity
-from src.gnn.validation.plot_diagnostic import plot_mesh_diagnostics
 
 CHECK_NO_DEADLOCK = True
 CURVATURE_LOSS_WEIGHT = 1.0

@@ -1,3 +1,7 @@
+"""
+Functions to compute volume of tetrahedra.
+"""
+
 import torch
 
 def volume(V, T):

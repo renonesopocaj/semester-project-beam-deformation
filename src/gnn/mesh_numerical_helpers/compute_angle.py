@@ -1,3 +1,11 @@
+"""
+compute_angle.py
+Contains helper functions for computing angles.
+The main access point should be two:
+ - in preprocess to compute theta_max
+ - in train to compute the angle physics informed residual.
+"""
+
 from collections import defaultdict, deque
 import torch
 import numpy as np
@@ -20,7 +28,7 @@ def _flip_face_orientation(face):
     return np.asarray([face[0], face[2], face[1]], dtype=np.int64)
 
 
-def orient_boundary_faces_consistently(boundary_faces):
+def _orient_boundary_faces_consistently(boundary_faces):
     """
     Args:
         boundary_faces: np.ndarray
@@ -62,7 +70,7 @@ def orient_boundary_faces_consistently(boundary_faces):
     return oriented_faces
 
 
-def extract_boundary_dihedral_triangle_pairs(connectivity):
+def _extract_boundary_dihedral_triangle_pairs(connectivity):
     """
     Args:
         connectivity: object
@@ -72,7 +80,7 @@ def extract_boundary_dihedral_triangle_pairs(connectivity):
             node indices for each interior boundary edge.
     """
     boundary_faces = extract_surface_faces(connectivity)
-    oriented_faces = orient_boundary_faces_consistently(boundary_faces)
+    oriented_faces = _orient_boundary_faces_consistently(boundary_faces)
     edge_to_faces = defaultdict(list)
     for face_idx, face in enumerate(oriented_faces):
         for edge in _iter_face_edges(face):
@@ -106,7 +114,7 @@ def extract_boundary_dihedral_triangle_pairs_torch(connectivity, device):
         Two tensors with shape `(3, num_pairs)` containing oriented boundary
         triangle node indices for each interior boundary edge.
     """
-    left_triangles, right_triangles = extract_boundary_dihedral_triangle_pairs(connectivity)
+    left_triangles, right_triangles = _extract_boundary_dihedral_triangle_pairs(connectivity)
     left_triangles = torch.as_tensor(left_triangles, dtype=torch.long, device=device)
     right_triangles = torch.as_tensor(right_triangles, dtype=torch.long, device=device)
     return left_triangles, right_triangles

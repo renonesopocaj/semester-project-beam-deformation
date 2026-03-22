@@ -1,5 +1,5 @@
 """
-sklearn_metrics_helpers.py
+compute_r2.py
 R^2 helpers using scikit-learn for plot annotations.
 """
 import numpy as np

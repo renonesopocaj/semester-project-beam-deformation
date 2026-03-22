@@ -1,3 +1,8 @@
+"""
+noiser.py
+Contains abstract class Noiser and GaussianNoiser to add noise to training data.
+"""
+
 import torch
 from abc import ABC, abstractmethod
 

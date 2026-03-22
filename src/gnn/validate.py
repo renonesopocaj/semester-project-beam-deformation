@@ -1,3 +1,8 @@
+"""
+validate.py
+Script to load saved model and evaluate on a new trajectory. Trajectories can be specified in the config file.
+"""
+
 from pathlib import Path
 import torch
 import yaml

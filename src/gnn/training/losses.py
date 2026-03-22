@@ -1,3 +1,8 @@
+"""
+losses.py
+Contains loss functions.
+"""
+
 import torch
 import torch.nn.functional as F
 from src.gnn.mesh_numerical_helpers.compute_angle import compute_boundary_dihedral_angles_torch
