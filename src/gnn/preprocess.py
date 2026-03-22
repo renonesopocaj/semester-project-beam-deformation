@@ -252,12 +252,8 @@ class TrainPreprocessor(Preprocessor):
     def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
         max_timesteps = min(x_raw.shape[0], cfg.limit_timesteps)
         for timestep_idx in range(max_timesteps):
-            current_theta_max = compute_max_boundary_dihedral_angle_torch(
-                x_raw[timestep_idx],
-                boundary_left_triangles,
-                boundary_right_triangles,
-                EPS,
-            )
+            current_theta_max = compute_max_boundary_dihedral_angle_torch(x_raw[timestep_idx], boundary_left_triangles,
+                                                                          boundary_right_triangles)
             self.theta_max = max(self.theta_max, float(current_theta_max.detach().item()))
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
@@ -265,17 +261,13 @@ class TrainPreprocessor(Preprocessor):
                           boundary_left_triangles, boundary_right_triangles):
         # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
         # used for NNs
-        self.out_graphs.append(
-            Data(
-                edge_index=graph.edge_index, # global index
-                t=graph.time, # global t attribute
-                y_acc_t=_a, # target feature acceleration
-                x_pos_t=_x, # feature position
-                x_vel_t=_v, # feature velocity
-                boundary_left_tri_index=boundary_left_triangles,
-                boundary_right_tri_index=boundary_right_triangles,
-            )
-        )
+        self.out_graphs.append(Data(edge_index=graph.edge_index, # global index
+                                    t=graph.time, # global t attribute
+                                    y_acc_t=_a, # target feature acceleration
+                                    x_pos_t=_x, # feature position
+                                    x_vel_t=_v, # feature velocity
+                                    boundary_left_tri_index=boundary_left_triangles,
+                                    boundary_right_tri_index=boundary_right_triangles))
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
 
     def _normalize_assign_features_train(self):
@@ -345,8 +337,7 @@ class ValPreprocessor(Preprocessor):
         node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
             _edge_attr, _node_attr, _categorical_node_attr, _target)
         self.out_graphs.append(
-            Data(
-                # targets: current time acceleration and von mises stress
+            Data(# targets: current time acceleration and von mises stress
                 y=target_norm,
                 y_acc_t=_a,
                 y_von_mises=_von_mises,
@@ -378,8 +369,7 @@ class ValPreprocessor(Preprocessor):
                 edge_index=graph.edge_index,
                 x_element_connectivity=graph.x_element_connectivity,
                 boundary_left_tri_index=boundary_left_triangles,
-                boundary_right_tri_index=boundary_right_triangles,
-            )
+                boundary_right_tri_index=boundary_right_triangles)
         )
 
 def create_preprocessor(split, cfg, save_dir_train):
@@ -438,13 +428,13 @@ def main(cfg):
     preprocessor_train = create_preprocessor("train", cfg_obj, None)
     preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train)
     preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train)
-    print("\n" + "=" * 60 + "\ntrain")
+    print("\n" + "=" * 60 + "\nTrain preprocesing")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
-    print("\n" + "=" * 60 + "\ntest"+ "\n" + "=" * 60)
+    print("\n" + "=" * 60 + "\nTest preprocessing"+ "\n" + "=" * 60)
     preprocessor_test.preprocess_data(cfg_obj, graphs_dir_test, save_dir_test)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
-    print("\n" + "=" * 60 + "\nval"+ "\n" + "=" * 60)
+    print("\n" + "=" * 60 + "\nVal preprocessing"+ "\n" + "=" * 60)
     preprocessor_val.preprocess_data(cfg_obj, graphs_dir_val, save_dir_val)
     print("\n" + "=" * 60 + "\nPreprocessing complete!" + "\n" + "=" * 60)
 

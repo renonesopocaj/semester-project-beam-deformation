@@ -6,7 +6,8 @@ This script does the following:
 1. Preprocess the data and save it in a format that is easy to use for EDA.
 2. Plot the distributions of the features.
 3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
-To avoid code repetition, the preprocessing reuses the same low-level feature builders used in preprocess.py.
+For train the normalized distributions are computed via train stats, for val and test also with train stats.
+To avoid code repetition, the preprocessing reuses the samefeature builders used in preprocess.py.
 All the possible normalization are done.
 """
 
@@ -290,7 +291,8 @@ class EdaPreprocessor(TrainPreprocessor):
         pass
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
+                          boundary_right_triangles):
         pass
 
     def _save_eda_stats(self):
@@ -300,11 +302,9 @@ class EdaPreprocessor(TrainPreprocessor):
         """
         stats_dir = self.train_artifact_dir / ".eda_stats" / self.run_name
         stats_dir.mkdir(parents=True, exist_ok=True)
-        stats = {
-            "node": self.node_stats.to_dict(),
-            "edge": self.edge_stats.to_dict(),
-            "target": self.target_stats.to_dict(),
-        }
+        stats = {"node": self.node_stats.to_dict(),
+                 "edge": self.edge_stats.to_dict(),
+                 "target": self.target_stats.to_dict()}
         with open(stats_dir / "stats.json", "w") as f:
             json.dump(stats, f, indent=4)
         print(f"EDA stats saved to {stats_dir / 'stats.json'}")
@@ -316,10 +316,8 @@ class EdaPreprocessor(TrainPreprocessor):
         """
         stats_path = self.train_artifact_dir / ".eda_stats" / self.run_name / "stats.json"
         if not stats_path.exists():
-            raise FileNotFoundError(
-                f"EDA stats not found at {stats_path}. "
-                f"Run EDA on the train split first to generate them."
-            )
+            raise FileNotFoundError(f"EDA stats not found at {stats_path}. "
+                f"Run EDA on the train split first to generate them.")
         with open(stats_path, "r") as f:
             stats = json.load(f)
         self.node_stats = Stats.from_dict(stats["node"])
@@ -563,15 +561,9 @@ class EdaPreprocessor(TrainPreprocessor):
                                               y_sig_t=_to_cpu_clone(graph.y_sig_t),
                                               x_element_connectivity=_to_cpu_clone(graph.x_element_connectivity)))
 
-        del dataloader
-        del graphs_list_batch
-        del whole_trajectory_batch
-        del x
-        del v
-        del a
-        del rest_pos_x
-        del all_node_force
-        del boundary_condition
+        del dataloader; del graphs_list_batch; del whole_trajectory_batch; del x; del v; del a; del rest_pos_x
+        del all_node_force; del boundary_condition
+
         return payload, trajectory_graphs
 
     def _generate_ground_truth_gif(self, trajectory_graphs, traj_idx):

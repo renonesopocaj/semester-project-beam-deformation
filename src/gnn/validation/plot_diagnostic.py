@@ -1,3 +1,8 @@
+"""
+plot_diagnostic.py
+Advanced diagnostic plots for rollouts.
+"""
+
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
@@ -8,13 +13,33 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from src.gnn.misc_helpers.misc import to_numpy
 from src.gnn.misc_helpers.sklearn_metrics_helpers import format_r2_text, r2_linear_fit_x_to_y
-from src.gnn.validation.plot_rollout import TARGET_FIELDS, extract_scalar
+
+TARGET_FIELDS = [("acc_x", "Acceleration X"),
+                 ("acc_y", "Acceleration Y"),
+                 ("acc_z", "Acceleration Z"),
+                 ("von_mises", "von Mises")]
 
 # ---------------------------------------------------------------------------
 #                                    Diagnostic helpers
 # ---------------------------------------------------------------------------
 
-def compute_shortest_path_distances(edge_index, source_nodes, num_nodes):
+def extract_scalar(graph, field_name):
+    """
+    Args:
+        graph: Data
+            Rollout graph containing nodewise prediction or target values.
+        field_name: str
+            One of `acc_x`, `acc_y`, `acc_z`, `von_mises`.
+        return: np.ndarray
+            Flattened scalar values for all nodes.
+    """
+    if field_name == "von_mises":
+        return to_numpy(graph.von_mises).reshape(-1)
+    else:
+        component_index = {"acc_x": 0, "acc_y": 1, "acc_z": 2}[field_name]
+        return to_numpy(graph.acceleration)[:, component_index].reshape(-1)
+
+def _compute_shortest_path_distances(edge_index, source_nodes, num_nodes):
     """
     Multi-source BFS on an undirected graph.
 
@@ -51,7 +76,7 @@ def compute_shortest_path_distances(edge_index, source_nodes, num_nodes):
     return distances
 
 
-def extract_boundary_node_set(element_connectivity):
+def _extract_boundary_node_set(element_connectivity):
     """
     Args:
         element_connectivity: object
@@ -63,7 +88,7 @@ def extract_boundary_node_set(element_connectivity):
     return np.unique(boundary_faces.ravel())
 
 
-def compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes):
+def _compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes):
     """
     Cotangent-weight Laplace-Beltrami mean curvature on a triangulated surface.
     |H_i| = 0.5 * ||Laplacian(x)_i|| / A_mixed_i, approximated via the cotangent
@@ -125,7 +150,7 @@ def compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes):
     return boundary_nodes, curvature
 
 
-def compute_dirichlet_energy(values, edge_index):
+def _compute_dirichlet_energy(values, edge_index):
     """
     Graph Dirichlet energy: E(z) = sum_{(i,j) in E} ||z_i - z_j||^2.
 
@@ -143,7 +168,7 @@ def compute_dirichlet_energy(values, edge_index):
     return float(np.sum(diff ** 2))
 
 
-def compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
+def _compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
     """
     Project a node signal onto the first k graph Laplacian eigenvectors and
     return the spectral coefficients.
@@ -190,58 +215,6 @@ def compute_graph_laplacian_spectrum(edge_index, signal, num_nodes, k):
 
     coefficients = eigenvectors.T @ signal
     return eigenvalues, coefficients ** 2
-
-
-def compute_coordinate_bounds(coordinates_per_step):
-    """
-    Args:
-        coordinates_per_step: list
-            List of coordinate arrays with shape `(num_nodes, 3)`.
-        return: tuple
-            `(coordinate_min, coordinate_max, coordinate_span, padding)`.
-    """
-    all_coordinates = np.concatenate(coordinates_per_step, axis=0)
-    coordinate_min = all_coordinates.min(axis=0)
-    coordinate_max = all_coordinates.max(axis=0)
-    coordinate_span = np.maximum(coordinate_max - coordinate_min, 1e-9)
-    padding = 0.05 * coordinate_span
-    return coordinate_min, coordinate_max, coordinate_span, padding
-
-
-def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, poly_collection):
-    """
-    Args:
-        ax: matplotlib.axes._subplots.Axes3DSubplot
-            Target 3D axis.
-        faces: np.ndarray
-            Boundary faces with shape `(num_faces, 3)`.
-        coordinates: np.ndarray
-            Node coordinates with shape `(num_nodes, 3)`.
-        node_values: np.ndarray
-            Scalar values defined per node.
-        cmap: matplotlib.colors.Colormap
-            Colormap used for rendering.
-        norm: matplotlib.colors.Normalize
-            Normalization used for rendering.
-        poly_collection: Poly3DCollection or None
-            Existing collection to update.
-    return: Poly3DCollection
-        Created or updated collection.
-    """
-    polygons = coordinates[faces]
-    face_values = np.mean(node_values[faces], axis=1)
-    face_colors = cmap(norm(face_values))
-
-    if poly_collection is None:
-        poly_collection = Poly3DCollection(polygons)
-        poly_collection.set_facecolors(face_colors)
-        poly_collection.set_edgecolor("none")
-        ax.add_collection3d(poly_collection)
-        return poly_collection
-
-    poly_collection.set_verts(polygons)
-    poly_collection.set_facecolors(face_colors)
-    return poly_collection
 
 
 def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, output_path, split_name, num_timesteps):
@@ -305,7 +278,7 @@ def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num
     """
     abs_error = np.abs(pred_values - true_values)
     worst_node = int(np.argmax(abs_error))
-    distances = compute_shortest_path_distances(edge_index, [worst_node], num_nodes)
+    distances = _compute_shortest_path_distances(edge_index, [worst_node], num_nodes)
     reachable = distances >= 0
     x_dist = distances[reachable].astype(np.float64)
     y_err = abs_error[reachable]
@@ -345,8 +318,8 @@ def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_pa
     for field_name, field_label in TARGET_FIELDS:
         true_vals = extract_scalar(true_rollout_graph, field_name)
         pred_vals = extract_scalar(pred_rollout_graph, field_name)
-        energy_true_list.append(compute_dirichlet_energy(true_vals, edge_index))
-        energy_pred_list.append(compute_dirichlet_energy(pred_vals, edge_index))
+        energy_true_list.append(_compute_dirichlet_energy(true_vals, edge_index))
+        energy_pred_list.append(_compute_dirichlet_energy(pred_vals, edge_index))
         field_labels.append(field_label)
 
     x_pos = np.arange(len(field_labels))
@@ -392,8 +365,8 @@ def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_pat
         true_signal = extract_scalar(true_rollout_graph, field_name)
         pred_signal = extract_scalar(pred_rollout_graph, field_name)
 
-        result_true = compute_graph_laplacian_spectrum(edge_index, true_signal, num_nodes, k)
-        result_pred = compute_graph_laplacian_spectrum(edge_index, pred_signal, num_nodes, k)
+        result_true = _compute_graph_laplacian_spectrum(edge_index, true_signal, num_nodes, k)
+        result_pred = _compute_graph_laplacian_spectrum(edge_index, pred_signal, num_nodes, k)
 
         if result_true is None or result_pred is None:
             ax.text(0.5, 0.5, "Spectral analysis unavailable", ha="center", va="center",
@@ -440,7 +413,7 @@ def _plot_error_vs_curvature(true_values, pred_values, positions, element_connec
     """
     boundary_faces = extract_surface_faces(element_connectivity)
     boundary_nodes = np.unique(boundary_faces.ravel())
-    node_indices, curvature = compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes)
+    node_indices, curvature = _compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes)
 
     abs_error = np.abs(pred_values - true_values)
     error_at_boundary = abs_error[node_indices]
@@ -481,8 +454,8 @@ def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_n
         output_path: Path
             Destination image path.
     """
-    boundary_nodes = extract_boundary_node_set(element_connectivity)
-    distances = compute_shortest_path_distances(edge_index, boundary_nodes, num_nodes)
+    boundary_nodes = _extract_boundary_node_set(element_connectivity)
+    distances = _compute_shortest_path_distances(edge_index, boundary_nodes, num_nodes)
     reachable = distances >= 0
 
     abs_error = np.abs(pred_values - true_values)

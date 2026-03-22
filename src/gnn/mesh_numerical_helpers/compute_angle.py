@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_surface_faces
 
+EPS = 1e9
 
 def _iter_face_edges(face):
     return [(int(face[0]), int(face[1])), (int(face[1]), int(face[2])), (int(face[2]), int(face[0]))]
@@ -135,7 +136,7 @@ def filter_all_fixed_boundary_dihedral_pairs(left_triangles, right_triangles, fi
     return left_triangles[:, keep_mask], right_triangles[:, keep_mask], keep_mask
 
 
-def compute_boundary_dihedral_angles_torch(positions, left_triangles, right_triangles, eps):
+def compute_boundary_dihedral_angles_torch(positions, left_triangles, right_triangles):
     """
 
     Args:
@@ -145,8 +146,6 @@ def compute_boundary_dihedral_angles_torch(positions, left_triangles, right_tria
             Oriented triangle indices with shape `(3, num_pairs)`.
         right_triangles: torch.Tensor
             Oriented triangle indices with shape `(3, num_pairs)`.
-        eps: float
-            Numerical stability epsilon used for normalization and clamping.
     return: torch.Tensor
         Dihedral angles with shape `(num_pairs,)`.
     """
@@ -159,14 +158,14 @@ def compute_boundary_dihedral_angles_torch(positions, left_triangles, right_tria
                                left_positions[:, 2] - left_positions[:, 0], dim=1)
     right_normals = torch.cross(right_positions[:, 1] - right_positions[:, 0],
                                 right_positions[:, 2] - right_positions[:, 0], dim=1)
-    left_unit = left_normals / torch.clamp(torch.linalg.norm(left_normals, dim=1, keepdim=True), min=eps)
-    right_unit = right_normals / torch.clamp(torch.linalg.norm(right_normals, dim=1, keepdim=True), min=eps)
+    left_unit = left_normals / torch.clamp(torch.linalg.norm(left_normals, dim=1, keepdim=True), min=EPS)
+    right_unit = right_normals / torch.clamp(torch.linalg.norm(right_normals, dim=1, keepdim=True), min=EPS)
     cosine = torch.sum(left_unit * right_unit, dim=1)
-    cosine = torch.clamp(cosine, min=-1.0 + eps, max=1.0 - eps)
+    cosine = torch.clamp(cosine, min=-1.0 + EPS, max=1.0 - EPS)
     return torch.arccos(cosine)
 
 
-def compute_max_boundary_dihedral_angle_torch(positions, left_triangles, right_triangles, eps):
+def compute_max_boundary_dihedral_angle_torch(positions, left_triangles, right_triangles):
     """
     Args:
         positions: torch.Tensor
@@ -180,6 +179,6 @@ def compute_max_boundary_dihedral_angle_torch(positions, left_triangles, right_t
         return: torch.Tensor
             Scalar tensor with the maximum dihedral angle.
     """
-    angles = compute_boundary_dihedral_angles_torch(positions, left_triangles, right_triangles, eps)
+    angles = compute_boundary_dihedral_angles_torch(positions, left_triangles, right_triangles)
     return torch.max(angles)
 

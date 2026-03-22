@@ -1,6 +1,8 @@
 """
 plot_rollout.py
-Contains all files that plot metrics or diagnostics for the rollout.
+
+Contains all files that plot metrics or diagnostics for rollout, in depth for each trajectory.
+Main access points: in_depth_plots()
 """
 
 import numpy as np
@@ -8,15 +10,12 @@ import matplotlib.pyplot as plt
 import imageio
 import torch
 from matplotlib.ticker import FuncFormatter
-from src.gnn.validation.diagnostic_plot_helpers import (compute_coordinate_bounds, extract_surface_faces,
-                                                          update_surface_collection)
+from src.gnn.validation.plot_diagnostic import (extract_surface_faces, extract_scalar,
+                                                plot_mesh_diagnostics)
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity, to_numpy
-from src.gnn.misc_helpers.sklearn_metrics_helpers import (
-    format_r2_text,
-    r2_linear_fit_x_to_y,
-    r2_prediction_vs_target,
-)
+from src.gnn.misc_helpers.sklearn_metrics_helpers import (format_r2_text, r2_linear_fit_x_to_y,
+                                                          r2_prediction_vs_target)
 from pathlib import Path
 
 RELATIVE_ERROR_CLIP = 5.0  # 500 %
@@ -25,7 +24,7 @@ TARGET_FIELDS = [("acc_x", "Acceleration X"),
                  ("acc_z", "Acceleration Z"),
                  ("von_mises", "von Mises")]
 
-def plot_volume_change(pred_rollout, true_rollout, path, split_name):
+def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
     """
     Plot volume change over time for predicted vs ground truth.
 
@@ -64,7 +63,44 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
     plt.savefig(path)
     plt.close()
 
-def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
+def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, poly_collection):
+    """
+    Helper function to beam renderings.
+
+    Args:
+        ax: matplotlib.axes._subplots.Axes3DSubplot
+            Target 3D axis.
+        faces: np.ndarray
+            Boundary faces with shape `(num_faces, 3)`.
+        coordinates: np.ndarray
+            Node coordinates with shape `(num_nodes, 3)`.
+        node_values: np.ndarray
+            Scalar values defined per node.
+        cmap: matplotlib.colors.Colormap
+            Colormap used for rendering.
+        norm: matplotlib.colors.Normalize
+            Normalization used for rendering.
+        poly_collection: Poly3DCollection or None
+            Existing collection to update.
+    return: Poly3DCollection
+        Created or updated collection.
+    """
+    polygons = coordinates[faces]
+    face_values = np.mean(node_values[faces], axis=1)
+    face_colors = cmap(norm(face_values))
+
+    if poly_collection is None:
+        poly_collection = Poly3DCollection(polygons)
+        poly_collection.set_facecolors(face_colors)
+        poly_collection.set_edgecolor("none")
+        ax.add_collection3d(poly_collection)
+        return poly_collection
+
+    poly_collection.set_verts(polygons)
+    poly_collection.set_facecolors(face_colors)
+    return poly_collection
+
+def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
 
@@ -233,23 +269,6 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
         print(f"\t\tGIF saved => {gif_path}")
 
 
-def extract_scalar(graph, field_name):
-    """
-    Args:
-        graph: Data
-            Rollout graph containing nodewise prediction or target values.
-        field_name: str
-            One of `acc_x`, `acc_y`, `acc_z`, `von_mises`.
-        return: np.ndarray
-            Flattened scalar values for all nodes.
-    """
-    if field_name == "von_mises":
-        return to_numpy(graph.von_mises).reshape(-1)
-
-    component_index = {"acc_x": 0, "acc_y": 1, "acc_z": 2}[field_name]
-    return to_numpy(graph.acceleration)[:, component_index].reshape(-1)
-
-
 def _compute_error(true_values, pred_values, error_mode):
     """
     Args:
@@ -298,30 +317,28 @@ def _compute_limits(all_values, error_mode):
     return 0.0, vmax
 
 
-def build_rollout_summary(true_rollout, pred_rollout):
+def _build_rollout_summary(true_rollout, pred_rollout):
     """
     Args:
         true_rollout: list
             Ground-truth rollout graphs.
         pred_rollout: list
             Predicted rollout graphs.
-        return: dict
-            Cached rollout data shared by all validation plots.
+    return: dict
+        Rollout data shared by all validation plots.
     """
     coordinates_per_step = []
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
         coordinates_per_step.append(to_numpy(true_graph.x_pos_t))
 
     coordinate_min, coordinate_max, coordinate_span, padding = compute_coordinate_bounds(coordinates_per_step)
-    summary = {
-        "coordinates_per_step": coordinates_per_step,
-        "faces": extract_surface_faces(true_rollout[0].x_element_connectivity),
-        "coordinate_min": coordinate_min,
-        "coordinate_max": coordinate_max,
-        "coordinate_span": coordinate_span,
-        "padding": padding,
-        "fields": {},
-    }
+    summary = {"coordinates_per_step": coordinates_per_step,
+               "faces": extract_surface_faces(true_rollout[0].x_element_connectivity),
+               "coordinate_min": coordinate_min,
+               "coordinate_max": coordinate_max,
+               "coordinate_span": coordinate_span,
+               "padding": padding,
+               "fields": {}}
 
     for field_name, field_label in TARGET_FIELDS:
         target_per_step = []
@@ -348,10 +365,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
             edge_error_i.append(residual_errors[edge_index[0]])
             edge_error_j.append(residual_errors[edge_index[1]])
 
-        errors_by_mode = {
-            "absolute": absolute_errors_per_step,
-            "signed_relative": signed_relative_errors_per_step,
-        }
+        errors_by_mode = {"absolute": absolute_errors_per_step,
+                          "signed_relative": signed_relative_errors_per_step    }
         summary["fields"][field_name] = {
             "label": field_label,
             "target_values": np.concatenate(target_per_step),
@@ -359,11 +374,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
             "edge_error_i": np.concatenate(edge_error_i),
             "edge_error_j": np.concatenate(edge_error_j),
             "errors_by_mode": errors_by_mode,
-            "limits_by_mode": {
-                error_mode: _compute_limits(np.concatenate(error_values), error_mode)
-                for error_mode, error_values in errors_by_mode.items()
-            },
-        }
+            "limits_by_mode": {error_mode: _compute_limits(np.concatenate(error_values), error_mode)
+                               for error_mode, error_values in errors_by_mode.items()}}
 
     return summary
 
@@ -425,7 +437,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
     imageio.mimsave(output_path, frames, fps=4, loop=0)
 
 
-def plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
+def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -459,7 +471,7 @@ def plot_prediction_target_scatter(field_summary, output_path, split_name, num_t
     plt.close(fig)
 
 
-def plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
+def _plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
@@ -497,7 +509,7 @@ def plot_edge_error_correlation(field_summary, output_path, split_name, num_time
     fig.savefig(output_path)
     plt.close(fig)
 
-def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_name):
+def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_name):
     """
     Plot position MAE at each rollout timestep.
 
@@ -528,7 +540,7 @@ def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_nam
     plt.close(fig)
 
 
-def plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
+def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
     which corresponds to the signed relative error
@@ -547,58 +559,18 @@ def plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_pr
             Saves all requested validation plots.
     """
     output_dir = Path(output_dir)
-    rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
+    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     print("Printing validation rollout...")
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout))
 
-def plot_per_trajectory_bar(traj_indices, values, ylabel, title, output_path, color, true_values):
-    """
-    Bar chart with one bar per trajectory.
 
-    Args:
-        traj_indices: list[int]
-            Trajectory indices for the x-axis.
-        values: list[float]
-            Values for the y-axis (one per trajectory).
-        ylabel: str
-            Label for the y-axis.
-        title: str
-            Plot title.
-        output_path: Path
-            Destination image path.
-        color: str
-            Bar color.
-        true_values: list[float] or None
-            If provided, draws a second bar group for ground-truth reference.
-    """
-    x = np.arange(len(traj_indices))
-    fig, ax = plt.subplots(figsize=(max(6, len(traj_indices) * 0.8), 5))
-    if true_values is not None:
-        bar_width = 0.35
-        ax.bar(x - bar_width / 2, true_values, bar_width, label="True", color="steelblue", alpha=0.7)
-        ax.bar(x + bar_width / 2, values, bar_width, label="Predicted", color=color, alpha=0.7)
-        ax.legend()
-    else:
-        ax.bar(x, values, color=color, alpha=0.7)
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(i) for i in traj_indices], rotation=45 if len(traj_indices) > 15 else 0)
-    ax.set_xlabel("Trajectory")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3, axis="y")
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
-
-
-def plot_scatter_edge(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
+def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Plot
-    1. scatter plots: prediction vs target, where every p[oint is one node
-    2. edge error correlation:
+    1. scatter plots: prediction vs target, where every point is one node
 
     Args:
         true_rollout: list
@@ -614,11 +586,106 @@ def plot_scatter_edge(true_rollout, pred_rollout, output_dir, filename_prefix, s
     """
     print("Printing validation scatter plots and edge correlation...")
     output_dir = Path(output_dir)
-    rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
+    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     num_timesteps = len(true_rollout)
     for field_name, field_label in TARGET_FIELDS:
         scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
-        correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
         field_summary = rollout_summary["fields"][field_name]
-        plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps)
-        plot_edge_error_correlation(field_summary, correlation_path, split_name, num_timesteps)
+        _plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps)
+        # correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
+        # plot_edge_error_correlation(field_summary, correlation_path, split_name, num_timesteps)
+
+def compute_coordinate_bounds(coordinates_per_step):
+    """
+    Args:
+        coordinates_per_step: list
+            List of coordinate arrays with shape `(num_nodes, 3)`.
+        return: tuple
+            `(coordinate_min, coordinate_max, coordinate_span, padding)`.
+    """
+    all_coordinates = np.concatenate(coordinates_per_step, axis=0)
+    coordinate_min = all_coordinates.min(axis=0)
+    coordinate_max = all_coordinates.max(axis=0)
+    coordinate_span = np.maximum(coordinate_max - coordinate_min, 1e-9)
+    padding = 0.05 * coordinate_span
+    return coordinate_min, coordinate_max, coordinate_span, padding
+
+def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
+                   plot_diagnostics_advanced):
+    """
+    Generates all in-depth diagnostic plots for a single trajectory rollout.
+    Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
+    computed with scikit-learn (see plot_rollout / diagnostic_plot_helpers).
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+        output_dir: Path
+            Directory where all plots for this trajectory are saved.
+        traj_split_name: str
+            Label used in plot titles, e.g. "traj0, test".
+        filename_prefix: str
+            Prefix for saved filenames, e.g. "traj0_test".
+        return: dict
+            Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Paths (for _scatter generated inside the function itself)
+    gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"
+    volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"
+    rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"
+
+    # Plots
+    _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name)
+    _make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
+                              gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
+                              split_name=traj_split_name)
+    _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)
+    _plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                              filename_prefix=filename_prefix, split_name=traj_split_name)
+    _plot_scatter_edge_corr(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                            filename_prefix=filename_prefix, split_name=traj_split_name)
+
+    if plot_diagnostics_advanced:
+        try:
+            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                                  filename_prefix=filename_prefix, split_name=traj_split_name)
+        except Exception as e:
+            print(f"Error while plotting mesh diagnostics: {e}")
+
+    paths = {"images": {}, "videos": {}}
+    paths["videos"]["beam_comparison_gif"] = gif_path
+    paths["images"]["volume_change"] = volume_png_path
+    paths["images"]["rollout_error_vs_timestep"] = rollout_error_path
+    for field_name, _ in TARGET_FIELDS:
+        scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
+        if scatter_path.exists():
+            paths["images"][f"{field_name}_prediction_vs_target"] = scatter_path
+        error_gif_path = output_dir / f"{filename_prefix}_{field_name}_signed_relative_error.gif"
+        if error_gif_path.exists():
+            paths["videos"][f"{field_name}_signed_relative_error"] = error_gif_path
+        if plot_diagnostics_advanced:
+            corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
+            if corr_path.exists():
+                paths["images"][f"{field_name}_edge_error_correlation"] = corr_path
+
+    if plot_diagnostics_advanced:
+        diag_dir = output_dir / "diagnostics"
+        if diag_dir.exists():
+            for field_name, _ in TARGET_FIELDS:
+                for suffix in ["neighbor_abs_error", "error_vs_dist_worst",
+                               "error_vs_curvature", "error_vs_boundary_dist"]:
+                    diag_path = diag_dir / f"{filename_prefix}_{field_name}_{suffix}.png"
+                    if diag_path.exists():
+                        paths["images"][f"diag/{field_name}_{suffix}"] = diag_path
+            dirichlet_path = diag_dir / f"{filename_prefix}_dirichlet_energy.png"
+            if dirichlet_path.exists():
+                paths["images"]["diag/dirichlet_energy"] = dirichlet_path
+            spectral_path = diag_dir / f"{filename_prefix}_spectral_comparison.png"
+            if spectral_path.exists():
+                paths["images"]["diag/spectral_comparison"] = spectral_path
+    return paths

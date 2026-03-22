@@ -18,12 +18,10 @@ from torch_geometric.loader import DataLoader
 from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_loss
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
-from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_roll_err_pos_vs_time,
-                                             plot_err_heatmap_rollout, plot_volume_change,
-                                             plot_per_trajectory_bar, TARGET_FIELDS)
+from src.gnn.validation.plot_rollout import overall_plot, in_depth_plots
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity
-from src.gnn.validation.diagnostic_plot_helpers import plot_mesh_diagnostics
+from src.gnn.validation.plot_diagnostic import plot_mesh_diagnostics
 
 CHECK_NO_DEADLOCK = True
 CURVATURE_LOSS_WEIGHT = 1.0
@@ -528,141 +526,7 @@ class LitModule(L.LightningModule):
             pred_volumes.append(v_pred)
         return true_volumes, pred_volumes
 
-    def in_depth(self, true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix):
-        """
-        Generates all in-depth diagnostic plots for a single trajectory rollout.
-        Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
-        computed with scikit-learn (see plot_rollout / diagnostic_plot_helpers).
-
-        Args:
-            true_rollout: list
-                Ground-truth rollout graphs.
-            pred_rollout: list
-                Predicted rollout graphs.
-            output_dir: Path
-                Directory where all plots for this trajectory are saved.
-            traj_split_name: str
-                Label used in plot titles, e.g. "traj0, test".
-            filename_prefix: str
-                Prefix for saved filenames, e.g. "traj0_test".
-            return: dict
-                Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"
-        volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"
-        rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"
-
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name)
-        make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
-                                 L=1.0, W=0.1, D=0.04,
-                                 gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
-                                 split_name=traj_split_name)
-        plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)
-        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
-                                 filename_prefix=filename_prefix, split_name=traj_split_name)
-
-        try:
-            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
-                                  filename_prefix=filename_prefix, split_name=traj_split_name)
-        except Exception as error:
-            print(f"Error while plotting mesh diagnostics: {error}")
-
-        paths = {"images": {}, "videos": {}}
-        paths["videos"]["beam_comparison_gif"] = gif_path
-        paths["images"]["volume_change"] = volume_png_path
-        paths["images"]["rollout_error_vs_timestep"] = rollout_error_path
-        for field_name, _ in TARGET_FIELDS:
-            scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
-            if scatter_path.exists():
-                paths["images"][f"{field_name}_prediction_vs_target"] = scatter_path
-            corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
-            if corr_path.exists():
-                paths["images"][f"{field_name}_edge_error_correlation"] = corr_path
-            error_gif_path = output_dir / f"{filename_prefix}_{field_name}_signed_relative_error.gif"
-            if error_gif_path.exists():
-                paths["videos"][f"{field_name}_signed_relative_error"] = error_gif_path
-        if self.plot_diagnostics_advanced:
-            diag_dir = output_dir / "diagnostics"
-            if diag_dir.exists():
-                for field_name, _ in TARGET_FIELDS:
-                    for suffix in ["neighbor_abs_error", "error_vs_dist_worst",
-                                   "error_vs_curvature", "error_vs_boundary_dist"]:
-                        diag_path = diag_dir / f"{filename_prefix}_{field_name}_{suffix}.png"
-                        if diag_path.exists():
-                            paths["images"][f"diag/{field_name}_{suffix}"] = diag_path
-                dirichlet_path = diag_dir / f"{filename_prefix}_dirichlet_energy.png"
-                if dirichlet_path.exists():
-                    paths["images"]["diag/dirichlet_energy"] = dirichlet_path
-                spectral_path = diag_dir / f"{filename_prefix}_spectral_comparison.png"
-                if spectral_path.exists():
-                    paths["images"]["diag/spectral_comparison"] = spectral_path
-        return paths
-
-    def overall_plot(self, all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                     final_volumes_true, final_volumes_pred, output_dir):
-        """
-        Generates summary bar-chart plots that aggregate metrics across all trajectories.
-
-        Args:
-            all_final_roll_err_pos: list[float]
-                Per-trajectory final rollout position error.
-            per_traj_acc_rel_mae: list[float]
-                Per-trajectory acceleration relative MAE (no rollout).
-            per_traj_stress_rel_mae: list[float]
-                Per-trajectory stress relative MAE (no rollout).
-            final_volumes_true: list[float]
-                Per-trajectory ground-truth final volume.
-            final_volumes_pred: list[float]
-                Per-trajectory predicted final volume.
-            output_dir: Path
-                Directory where summary plots are saved.
-            return: dict
-                Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        traj_indices = list(range(len(all_final_roll_err_pos)))
-        split = self.eval_split_name
-        paths = {"images": {}, "videos": {}}
-
-        # 1) Final rollout position error per trajectory
-        p1 = output_dir / "final_roll_err_pos_per_traj.png"
-        plot_per_trajectory_bar(traj_indices, all_final_roll_err_pos,
-                                ylabel="Final Rollout Position MAE",
-                                title=f"Final Rollout Position Error per Trajectory [{split}]",
-                                output_path=p1, color="tomato", true_values=None)
-        paths["images"]["final_roll_err_pos_per_traj"] = p1
-
-        # 2) Acceleration relative MAE per trajectory (no rollout)
-        p2 = output_dir / "acc_rel_mae_noroll_per_traj.png"
-        plot_per_trajectory_bar(traj_indices, per_traj_acc_rel_mae,
-                                ylabel="Acceleration Relative MAE",
-                                title=f"Acceleration Relative MAE per Trajectory (no rollout) [{split}]",
-                                output_path=p2, color="mediumseagreen", true_values=None)
-        paths["images"]["acc_rel_mae_noroll_per_traj"] = p2
-
-        # 3) Stress relative MAE per trajectory (no rollout)
-        p3 = output_dir / "stress_rel_mae_noroll_per_traj.png"
-        plot_per_trajectory_bar(traj_indices, per_traj_stress_rel_mae,
-                                ylabel="Stress Relative MAE",
-                                title=f"Stress Relative MAE per Trajectory (no rollout) [{split}]",
-                                output_path=p3, color="mediumpurple", true_values=None)
-        paths["images"]["stress_rel_mae_noroll_per_traj"] = p3
-
-        # 4) Final rollout volume per trajectory (predicted vs true)
-        p4 = output_dir / "final_volume_per_traj.png"
-        plot_per_trajectory_bar(traj_indices, final_volumes_pred,
-                                ylabel="Final Volume",
-                                title=f"Final Rollout Volume per Trajectory [{split}]",
-                                output_path=p4, color="darkorange", true_values=final_volumes_true)
-        paths["images"]["final_volume_per_traj"] = p4
-
-        return paths
-
-    def _log_plot_rollout_single_traj(self, true_rollout, pred_rollout, traj_idx):
+    def _log_plot_roll_single_traj(self, true_rollout, pred_rollout, traj_idx):
         """
         Sets up per-trajectory output directory and naming, then delegates to in_depth to generate
         all diagnostic plots for one trajectory. Does not log to W&B.
@@ -680,7 +544,9 @@ class LitModule(L.LightningModule):
         traj_split_name = f"traj{traj_idx}, {self.eval_split_name}"
         filename_prefix = f"traj{traj_idx}_{self.eval_split_name}"
         output_dir = self.model_evaluation_dir / self.eval_split_name / f"traj{traj_idx}"
-        return self.in_depth(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix)
+        paths = in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
+                               self.plot_diagnostics_advanced)
+        return paths
 
     def on_validation_epoch_end(self):
         """
@@ -724,52 +590,49 @@ class LitModule(L.LightningModule):
         all_pred_rollouts = {}
         all_final_roll_err_pos = []
         num_trajectories = self.test_dataset.num_trajectories
+
+        # FIXME: add pbar
         for traj_idx in range(num_trajectories):
             traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
             true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(traj_loader)
             all_true_rollouts[traj_idx] = true_rollout
             all_pred_rollouts[traj_idx] = pred_rollout
             all_final_roll_err_pos.append(final_roll_err_pos)
-            print(f"\t[{self.eval_split_name}] traj{traj_idx} final_roll_err_pos = {final_roll_err_pos:.6f}")
 
         # 2. Average and log rollout error across all trajectories
         avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
         self.rollout_all_step_error = avg_final_roll_err_pos
         self.log(f"{self.eval_split_name}/final_roll_err_pos",
                  torch.tensor(avg_final_roll_err_pos, device=self.device),
-                 prog_bar=True,
-                 logger=self._has_wandb_logger(),
-                 sync_dist=False,
-                 rank_zero_only=True)
+                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
         if not self.log_test_media:
             return
 
         # 3. Compute per-trajectory no-rollout metrics (one-step inference)
-        print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
+        # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
         per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
-
         # 4. Compute final volumes from rollout
         final_volumes_true, final_volumes_pred = self._compute_final_volumes(all_true_rollouts, all_pred_rollouts)
 
         # 5. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
-        overall_paths = self.overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                                          final_volumes_true, final_volumes_pred, overall_output_dir)
+        overall_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                     final_volumes_true, final_volumes_pred, overall_output_dir,
+                                     self.eval_split_name)
 
         # 6. Generate in-depth plots for selected trajectories only
         selected = (self.selected_test_trajectories if self.eval_split_name == "test"
                     else self.selected_validation_trajectories)
         per_traj_paths = {}
+        # FIXME: add pbar
         for traj_idx in selected:
             if traj_idx >= num_trajectories:
-                print(f"\tWarning: selected traj{traj_idx} out of range "
-                      f"(only {num_trajectories} trajectories), skipping.")
+                print(f"\tWarning: selected traj{traj_idx} out of range (only {num_trajectories} trajectories).")
                 continue
-            print(f"\t[{self.eval_split_name}] Generating in-depth plots for traj{traj_idx}...")
-            per_traj_paths[traj_idx] = self._log_plot_rollout_single_traj(
-                all_true_rollouts[traj_idx], all_pred_rollouts[traj_idx], traj_idx)
+            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
+                                                                       all_pred_rollouts[traj_idx], traj_idx)
 
         # 7. Single wandb logging call
         self._log_all_wandb_media(overall_paths, per_traj_paths)

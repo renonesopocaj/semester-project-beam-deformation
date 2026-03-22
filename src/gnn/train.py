@@ -230,7 +230,7 @@ def main(cfg):
 
     preprocess_cfg = PreprocessYaml(preprocess_dict)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if not torch.cuda.is_available():
+    if not torch.cuda.is_available() and train_cfg.training_type == "slurm":
         raise RuntimeError("CUDA is not available.")
     print(f"Using device: {device}")
 
