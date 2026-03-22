@@ -10,16 +10,16 @@ import torch.nn.functional as F
 import wandb
 from lightning.pytorch.loggers import WandbLogger
 from typing import Any
-from src.gnn.misc_helpers.misc import plot_validation_diagnostics_rollout, compute_mean_relative_mae
-from src.gnn.preprocessing.normalizer import NormalizerFactory, Normalizer
-from src.gnn.preprocessing.stats import Stats, StatsModule
+from src.gnn.misc_helpers.misc import compute_mean_relative_mae
+from src.gnn.preprocessing.normalizer import NormalizerFactory
+from src.gnn.preprocessing.stats import StatsModule
 from torch_geometric.loader import DataLoader
 from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_loss
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
-from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_mesh_diagnostics,
-                                             plot_roll_err_pos_vs_time, plot_err_heatmap_rollout,
-                                             plot_volume_change, TARGET_FIELDS)
+from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_roll_err_pos_vs_time,
+                                             plot_err_heatmap_rollout, plot_volume_change, TARGET_FIELDS)
+from src.gnn.validation.diagnostic_plot_helpers import plot_mesh_diagnostics
 
 CHECK_NO_DEADLOCK = True
 CURVATURE_LOSS_WEIGHT = 1.0
@@ -121,6 +121,7 @@ class LitModule(L.LightningModule):
         self.enable_val = train_cfg.enable_val
         self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
         self.enable_rollout_val = train_cfg.enable_rollout_val
+        self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
 
     def forward(self, batch):
         """
@@ -549,12 +550,11 @@ class LitModule(L.LightningModule):
 
         experiment = self.logger.experiment
         prefix = self.eval_split_name
-        wandb_logs = {}
+        wandb_logs = {f"{prefix}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
+                      f"{prefix}/volume_change": wandb.Image(str(volume_png_path)),
+                      f"{prefix}/rollout_error_vs_timestep": wandb.Image(str(rollout_error_path))}
         # wandb_logs = {"epoch": self.current_epoch}
         # Main plots
-        wandb_logs[f"{prefix}/beam_comparison_gif"] = wandb.Video(str(gif_path), fps=4, format="gif")
-        wandb_logs[f"{prefix}/volume_change"] = wandb.Image(str(volume_png_path))
-        wandb_logs[f"{prefix}/rollout_error_vs_timestep"] = wandb.Image(str(rollout_error_path))
         # Per-field diagnostic plots from plot_validation_diagnostics_norollout
         for field_name, _ in TARGET_FIELDS:
             # Prediction vs target scatter
@@ -565,38 +565,39 @@ class LitModule(L.LightningModule):
             corr_path = path_split_name / f"{prefix}_{field_name}_edge_error_correlation.png"
             if corr_path.exists():
                 wandb_logs[f"{prefix}/{field_name}_edge_error_correlation"] = wandb.Image(str(corr_path))
-            # Signed relative error GIF from plot_validation_diagnostics_rollout
+            # Signed relative error GIF
             error_gif_path = path_split_name / f"{prefix}_{field_name}_signed_relative_error.gif"
             if error_gif_path.exists():
                 wandb_logs[f"{prefix}/{field_name}_signed_relative_error"] = wandb.Video(
                     str(error_gif_path), fps=4, format="gif")
-        # Mesh diagnostics (in diagnostics/ subdirectory)
-        diag_dir = path_split_name / "diagnostics"
-        if diag_dir.exists():
-            for field_name, _ in TARGET_FIELDS:
-                # Neighbor absolute error
-                diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
-                # Error vs distance from worst node
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
-                # Error vs curvature
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
-                # Error vs boundary distance
-                diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
-                if diag_path.exists():
-                    wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
-            # Combined diagnostics
-            dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
-            if dirichlet_path.exists():
-                wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
-            spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
-            if spectral_path.exists():
-                wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
+        if self.plot_diagnostics_advanced:
+            # Mesh diagnostics (in diagnostics/ subdirectory)
+            diag_dir = path_split_name / "diagnostics"
+            if diag_dir.exists():
+                for field_name, _ in TARGET_FIELDS:
+                    # Neighbor absolute error
+                    diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
+                    if diag_path.exists():
+                        wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
+                    # Error vs distance from worst node
+                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
+                    if diag_path.exists():
+                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
+                    # Error vs curvature
+                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
+                    if diag_path.exists():
+                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
+                    # Error vs boundary distance
+                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
+                    if diag_path.exists():
+                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
+                # Combined diagnostics
+                dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
+                if dirichlet_path.exists():
+                    wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
+                spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
+                if spectral_path.exists():
+                    wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
         # Log all at once
         experiment.log(wandb_logs)
 

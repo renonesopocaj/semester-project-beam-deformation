@@ -9,12 +9,7 @@ import imageio
 import torch
 from matplotlib.ticker import FuncFormatter
 from src.gnn.validation.diagnostic_plot_helpers import (compute_coordinate_bounds, extract_surface_faces,
-                                                          update_surface_collection,
-                                                          compute_shortest_path_distances,
-                                                          extract_boundary_node_set,
-                                                          compute_discrete_mean_curvature,
-                                                          compute_dirichlet_energy,
-                                                          compute_graph_laplacian_spectrum)
+                                                          update_surface_collection)
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity, to_numpy
 from pathlib import Path
@@ -35,6 +30,8 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
         true_rollout: list[FIXME: TYPE]
             list of ground truth values (each element has attributes = targets)
         path: Path
+        split_name: str
+            string with split name
     """
     fig, ax = plt.subplots()
     true_volumes_list, pred_volumes_list = [], []
@@ -554,7 +551,7 @@ def plot_scatter_edge(true_rollout, pred_rollout, output_dir, filename_prefix, s
     return: None
         Saves all requested validation plots.
     """
-    print("Printing validation diagnostics norollout...")
+    print("Printing validation scatter plots and edge correlation...")
     output_dir = Path(output_dir)
     rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
     num_timesteps = len(true_rollout)

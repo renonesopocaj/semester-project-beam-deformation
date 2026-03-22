@@ -130,6 +130,7 @@ class TrainYaml:
         self.log_test_media = flattened_cfg["log_test_media"]
         self.devices = flattened_cfg["devices"]
         self.residual_list = flattened_cfg["residual_list"]
+        self.plot_diagnostics_advanced = flattened_cfg["plot_diagnostics_advanced"]
 
 def _to_dict_flatten(data):
     """

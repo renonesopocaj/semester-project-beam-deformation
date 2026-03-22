@@ -3,10 +3,8 @@ misc.py
 Contains miscellaneous helper functions.
 """
 
-from pathlib import Path
-from src.gnn.validation.plot_rollout import (build_rollout_summary, plot_prediction_target_scatter, TARGET_FIELDS,
-                                             plot_edge_error_correlation)
 import torch
+import numpy as np
 
 def compute_mean_relative_mae(pred, target):
     return torch.mean(compute_relative_mae(pred, target))

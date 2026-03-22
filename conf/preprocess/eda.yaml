@@ -1,7 +1,7 @@
 defaults:
   - dataset: large # size only: large | medium | small
   - numerical: default # apply log to von mises vs do not apply
-  - paths: rotated_beam # rotated vs single direction
+  - paths: single_direction_beam # rotated | single_direction_beam
   - normalizer: z_anisotropic
   - features: displacement # which feature augmentation use
   - _self_
