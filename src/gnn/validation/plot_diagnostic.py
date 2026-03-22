@@ -8,7 +8,6 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from collections import deque
 from src.gnn.mesh_numerical_helpers.compute_angle import extract_surface_faces
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
 from pathlib import Path
 from src.gnn.misc_helpers.misc import to_numpy
