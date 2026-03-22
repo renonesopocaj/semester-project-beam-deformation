@@ -6,6 +6,64 @@ defaults:
   - features: displacement # which feature augmentation use
   - _self_
 
+eda_split: train # Possible values: train | val | test
+gif_generation_mode: UNIFORMLY_SAMPLED # Possible values: ALL | UNIFORMLY_SAMPLED
+gif_sample_percentage: 10.0
+generate_distributions: true
+
+normalization_runs:
+  - name: none
+    label: "No norm"
+    normalizer_method: "None"
+    isotropic_normalizer: true
+    generate_gifs: true
+  - name: z_isotr
+    label: "Z isotr."
+    normalizer_method: "z"
+    isotropic_normalizer: true
+    generate_gifs: false
+  - name: z_anisotr
+    label: "Z anisotr."
+    normalizer_method: "z"
+    isotropic_normalizer: false
+    generate_gifs: false
+  - name: robust_isotr
+    label: "Robust isotr."
+    normalizer_method: "robust"
+    isotropic_normalizer: true
+    generate_gifs: false
+  - name: robust_anisotr
+    label: "Robust anisotr."
+    normalizer_method: "robust"
+    isotropic_normalizer: false
+    generate_gifs: false
+
+run_colors:
+  none: "gray"
+  z_isotr: "tab:blue"
+  z_anisotr: "tab:orange"
+  robust_isotr: "tab:green"
+  robust_anisotr: "tab:red"
+
+vector_run_names:
+  - none
+  - z_isotr
+  - z_anisotr
+  - robust_isotr
+  - robust_anisotr
+
+scalar_run_names:
+  - none
+  - z_isotr
+  - robust_isotr
+
+# Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
+scalar_feature_names:
+  - von_mises
+  - edge_relative_pos_norm
+  - edge_rest_relative_pos_norm
+  - edge_displacement_norm
+
 hydra:
   run:
     dir: hydra/outputs/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}
