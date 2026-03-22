@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 import wandb
 from lightning.pytorch.loggers import WandbLogger
+from torch.utils.data import Subset
 from typing import Any
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory
@@ -18,7 +19,10 @@ from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import (make_beam_comparison_gif, plot_roll_err_pos_vs_time,
-                                             plot_err_heatmap_rollout, plot_volume_change, TARGET_FIELDS)
+                                             plot_err_heatmap_rollout, plot_volume_change,
+                                             plot_per_trajectory_bar, TARGET_FIELDS)
+from src.gnn.mesh_numerical_helpers.compute_volume import volume
+from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity
 from src.gnn.validation.diagnostic_plot_helpers import plot_mesh_diagnostics
 
 CHECK_NO_DEADLOCK = True
@@ -53,9 +57,12 @@ class LitModule(L.LightningModule):
     dt: float
     # Current rollout
     rollout_all_step_error: float  # current
-    # Dataloader
-    validation_loader: DataLoader
-    test_loader: DataLoader
+    # Datasets (for per-trajectory rollout access)
+    validation_dataset: Any
+    test_dataset: Any
+    # Which trajectories get in-depth plots
+    selected_validation_trajectories: list[int]
+    selected_test_trajectories: list[int]
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max):
@@ -110,8 +117,8 @@ class LitModule(L.LightningModule):
         self.edge_stats = None
         self.target_stats = None
         self.dt = None
-        self.validation_loader = None
-        self.test_loader = None
+        self.validation_dataset = None
+        self.test_dataset = None
         self.eval_split_name = "test"
         self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
@@ -122,6 +129,8 @@ class LitModule(L.LightningModule):
         self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
         self.enable_rollout_val = train_cfg.enable_rollout_val
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
+        self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
+        self.selected_test_trajectories = train_cfg.selected_test_trajectories
 
     def forward(self, batch):
         """
@@ -190,17 +199,17 @@ class LitModule(L.LightningModule):
         if self.scheduler is not None and "custom_scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["custom_scheduler_state_dict"])
 
-    def set_rollout_context(self, validation_loader, node_stats, edge_stats, target_stats, dt):
+    def set_rollout_context(self, validation_dataset, node_stats, edge_stats, target_stats, dt):
         """
-        Stores in the attributes statistics and the validation loader needed to run autoregressive rollout evaluations
+        Stores in the attributes statistics and the validation dataset needed to run autoregressive rollout evaluations
         during training. Called before training right after initialization.
 
         Stats are converted to StatsModule and registered as submodules so their tensors
         (registered as buffers) automatically move to the correct device with the parent module.
 
         Args:
-            validation_loader: pyg.DataLoader
-                Validation loader used for rollout.
+            validation_dataset: InMemoryTimeStepDataset
+                Validation dataset with trajectory boundary information for per-trajectory rollout.
             node_stats: Stats
                 Node feature statistics.
             edge_stats: Stats
@@ -210,26 +219,24 @@ class LitModule(L.LightningModule):
             dt: float
                 Time step size.
         """
-        self.validation_loader = validation_loader
+        self.validation_dataset = validation_dataset
         # Convert Stats to StatsModule and register as submodules for automatic device handling
         self.node_stats = StatsModule.from_stats(node_stats)
         self.edge_stats = StatsModule.from_stats(edge_stats)
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
 
-    def set_test_context(self, test_loader, split_name):
+    def set_test_context(self, test_dataset, split_name):
         """
-        Configures the module for a final evaluation pass, specifying the loader, split label, and whether to emit plots.
+        Configures the module for a final evaluation pass, specifying the dataset, split label.
 
         Args:
-            test_loader: pyg.DataLoader
-                Loader used for final evaluation rollout.
+            test_dataset: InMemoryTimeStepDataset
+                Dataset with trajectory boundary information for per-trajectory rollout.
             split_name: str
                 Prefix used for test logging.
-            log_media: bool
-                Whether to create and log media artifacts.
         """
-        self.test_loader = test_loader
+        self.test_dataset = test_dataset
         self.eval_split_name = split_name
 
     def _collect_train_batch_metrics_noroll(self, pred, target, batch):
@@ -244,6 +251,7 @@ class LitModule(L.LightningModule):
             return: dict
                 Dictionary with the minimal training metrics.
         """
+        metrics = {}
         total_loss = self.loss_fn(pred, target)
         if "curvature" in self.residual_list:
             curvature_residual = compute_thresholded_curvature_loss(pred, batch, self.target_stats, self.dt, self.theta_max)
@@ -403,9 +411,8 @@ class LitModule(L.LightningModule):
         2. Steps the custom LR scheduler using the epoch loss
         3. Halts training early if the scheduler signals stop.
         """
-        # Log epoch to W&B for x-axis alignment (only on rank 0)
-        # if self._has_wandb_logger() and self.trainer.is_global_zero:
-            # self.logger.experiment.log({"epoch": self.current_epoch})
+        if self._has_wandb_logger() and self.trainer.is_global_zero:
+            self.logger.experiment.log({"epoch": self.current_epoch + 1})
 
         if self.scheduler is None:
             return
@@ -426,21 +433,35 @@ class LitModule(L.LightningModule):
             print("\n\n\n\n" + "=" * 60)
             self.trainer.should_stop = True
 
-    def _run_rollout(self, data_loader):
+    def _get_trajectory_loader(self, dataset, traj_idx):
         """
-        FIXME: change this to take in input one trajectory, not the whole dataloader.
-            This will be called by on_validation_epoch_end and be averaged over all trajectories
-        Executes a full autoregressive rollout over the given loader and returns ground-truth/predicted trajectories
-        plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error during rollout.
+        Creates a DataLoader for a single trajectory by slicing the dataset.
 
         Args:
-            data_loader: pyg.DataLoader
-                Dataloader used for rollout evaluation.
+            dataset: InMemoryTimeStepDataset
+                Dataset with trajectory_boundaries.
+            traj_idx: int
+                Index of the trajectory to extract.
+            return: DataLoader
+                DataLoader yielding graphs for the single trajectory in order.
+        """
+        start, end = dataset.trajectory_boundaries[traj_idx]
+        subset = Subset(dataset, range(start, end))
+        return DataLoader(subset, batch_size=1, shuffle=False)
+
+    def _run_rollout(self, traj_loader):
+        """
+        Executes a full autoregressive rollout over a single-trajectory loader and returns ground-truth/predicted
+        trajectories plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error.
+
+        Args:
+            traj_loader: DataLoader
+                Single-trajectory dataloader used for rollout evaluation.
             return: (list, list, float)
                 Ground-truth rollout, predicted rollout, and final-step rollout MAE.
         """
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
-        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=data_loader, node_stats=self.node_stats,
+        true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats,
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
@@ -449,47 +470,222 @@ class LitModule(L.LightningModule):
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos
 
-    def _log_plot_rollout(self, true_rollout, pred_rollout):
+    def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
-        Generates and saves diagnostic plots and GIFs for a completed rollout, then uploads them to W&B if available.
-        Called by on_test_epoch_end. Only runs on rank 0 for distributed training.
+        Runs one-step (non-autoregressive) inference on every trajectory and returns
+        per-trajectory relative MAE for acceleration and stress.
+
+        Args:
+            dataset: InMemoryTimeStepDataset
+                Dataset with trajectory_boundaries.
+            return: (list[float], list[float])
+                Per-trajectory acceleration relative MAE and stress relative MAE.
+        """
+        per_traj_acc_rel_mae = []
+        per_traj_stress_rel_mae = []
+        self.eval()
+        with torch.no_grad():
+            for traj_idx in range(dataset.num_trajectories):
+                traj_loader = self._get_trajectory_loader(dataset, traj_idx)
+                acc_maes = []
+                stress_maes = []
+                for batch in traj_loader:
+                    batch = batch.to(self.device)
+                    pred = self(batch)
+                    target = batch.y
+                    pred_acc = pred[:, 0:3].contiguous()
+                    target_acc = target[:, 0:3].contiguous()
+                    pred_stress = pred[:, 3].contiguous()
+                    target_stress = target[:, 3].contiguous()
+                    acc_maes.append(compute_mean_relative_mae(pred_acc, target_acc).item())
+                    stress_maes.append(compute_mean_relative_mae(pred_stress, target_stress).item())
+                per_traj_acc_rel_mae.append(sum(acc_maes) / len(acc_maes) if acc_maes else 0.0)
+                per_traj_stress_rel_mae.append(sum(stress_maes) / len(stress_maes) if stress_maes else 0.0)
+        return per_traj_acc_rel_mae, per_traj_stress_rel_mae
+
+    @staticmethod
+    def _compute_final_volumes(all_true_rollouts, all_pred_rollouts):
+        """
+        Computes the total mesh volume at the final rollout timestep for each trajectory.
+
+        Args:
+            all_true_rollouts: dict[int, list]
+                Mapping of trajectory index to ground-truth rollout graphs.
+            all_pred_rollouts: dict[int, list]
+                Mapping of trajectory index to predicted rollout graphs.
+            return: (list[float], list[float])
+                Per-trajectory final true volume and final predicted volume.
+        """
+        true_volumes = []
+        pred_volumes = []
+        for traj_idx in sorted(all_true_rollouts.keys()):
+            true_final = all_true_rollouts[traj_idx][-1]
+            pred_final = all_pred_rollouts[traj_idx][-1]
+            cells = torch.as_tensor(extract_tetra_connectivity(true_final.x_element_connectivity), dtype=torch.long)
+            v_true = torch.abs(volume(true_final.x_pos_t, cells)).sum().item()
+            v_pred = torch.abs(volume(pred_final.x_pos_t, cells)).sum().item()
+            true_volumes.append(v_true)
+            pred_volumes.append(v_pred)
+        return true_volumes, pred_volumes
+
+    def in_depth(self, true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix):
+        """
+        Generates all in-depth diagnostic plots for a single trajectory rollout.
+        Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
+        computed with scikit-learn (see plot_rollout / diagnostic_plot_helpers).
 
         Args:
             true_rollout: list
-                Ground-truth rollout.
+                Ground-truth rollout graphs.
             pred_rollout: list
-                Predicted rollout.
+                Predicted rollout graphs.
+            output_dir: Path
+                Directory where all plots for this trajectory are saved.
+            traj_split_name: str
+                Label used in plot titles, e.g. "traj0, test".
+            filename_prefix: str
+                Prefix for saved filenames, e.g. "traj0_test".
+            return: dict
+                Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
         """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Paths and file names
-        path_split_name = self.model_evaluation_dir / self.eval_split_name
-        path_split_name.mkdir(parents=True, exist_ok=True)
-        gif_path = path_split_name / f"{self.eval_split_name}_beam_comparison.gif"
-        volume_png_path = path_split_name / f"{self.eval_split_name}_volume_change.png"
-        rollout_error_path = path_split_name / f"{self.eval_split_name}_rollout_error_vs_timestep.png"
+        gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"
+        volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"
+        rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"
 
-        # ================ Generate all rollout plots ================
-        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=self.eval_split_name)
+        plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name)
         make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout,
                                  L=1.0, W=0.1, D=0.04,
                                  gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
-                                 split_name=self.eval_split_name)
-        plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=self.eval_split_name)
-        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
-                                 filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-        # plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
-        #                          filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-        try: plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
-                                  filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-        except Exception as error: print(f"Error while plotting mesh diagnostics: {error}")
-        if not self._has_wandb_logger():
-            return
+                                 split_name=traj_split_name)
+        plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)
+        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                                 filename_prefix=filename_prefix, split_name=traj_split_name)
 
-        self._log_all_wandb_media_test(path_split_name, gif_path, volume_png_path, rollout_error_path)
+        try:
+            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                                  filename_prefix=filename_prefix, split_name=traj_split_name)
+        except Exception as error:
+            print(f"Error while plotting mesh diagnostics: {error}")
+
+        paths = {"images": {}, "videos": {}}
+        paths["videos"]["beam_comparison_gif"] = gif_path
+        paths["images"]["volume_change"] = volume_png_path
+        paths["images"]["rollout_error_vs_timestep"] = rollout_error_path
+        for field_name, _ in TARGET_FIELDS:
+            scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
+            if scatter_path.exists():
+                paths["images"][f"{field_name}_prediction_vs_target"] = scatter_path
+            corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
+            if corr_path.exists():
+                paths["images"][f"{field_name}_edge_error_correlation"] = corr_path
+            error_gif_path = output_dir / f"{filename_prefix}_{field_name}_signed_relative_error.gif"
+            if error_gif_path.exists():
+                paths["videos"][f"{field_name}_signed_relative_error"] = error_gif_path
+        if self.plot_diagnostics_advanced:
+            diag_dir = output_dir / "diagnostics"
+            if diag_dir.exists():
+                for field_name, _ in TARGET_FIELDS:
+                    for suffix in ["neighbor_abs_error", "error_vs_dist_worst",
+                                   "error_vs_curvature", "error_vs_boundary_dist"]:
+                        diag_path = diag_dir / f"{filename_prefix}_{field_name}_{suffix}.png"
+                        if diag_path.exists():
+                            paths["images"][f"diag/{field_name}_{suffix}"] = diag_path
+                dirichlet_path = diag_dir / f"{filename_prefix}_dirichlet_energy.png"
+                if dirichlet_path.exists():
+                    paths["images"]["diag/dirichlet_energy"] = dirichlet_path
+                spectral_path = diag_dir / f"{filename_prefix}_spectral_comparison.png"
+                if spectral_path.exists():
+                    paths["images"]["diag/spectral_comparison"] = spectral_path
+        return paths
+
+    def overall_plot(self, all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                     final_volumes_true, final_volumes_pred, output_dir):
+        """
+        Generates summary bar-chart plots that aggregate metrics across all trajectories.
+
+        Args:
+            all_final_roll_err_pos: list[float]
+                Per-trajectory final rollout position error.
+            per_traj_acc_rel_mae: list[float]
+                Per-trajectory acceleration relative MAE (no rollout).
+            per_traj_stress_rel_mae: list[float]
+                Per-trajectory stress relative MAE (no rollout).
+            final_volumes_true: list[float]
+                Per-trajectory ground-truth final volume.
+            final_volumes_pred: list[float]
+                Per-trajectory predicted final volume.
+            output_dir: Path
+                Directory where summary plots are saved.
+            return: dict
+                Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        traj_indices = list(range(len(all_final_roll_err_pos)))
+        split = self.eval_split_name
+        paths = {"images": {}, "videos": {}}
+
+        # 1) Final rollout position error per trajectory
+        p1 = output_dir / "final_roll_err_pos_per_traj.png"
+        plot_per_trajectory_bar(traj_indices, all_final_roll_err_pos,
+                                ylabel="Final Rollout Position MAE",
+                                title=f"Final Rollout Position Error per Trajectory [{split}]",
+                                output_path=p1, color="tomato", true_values=None)
+        paths["images"]["final_roll_err_pos_per_traj"] = p1
+
+        # 2) Acceleration relative MAE per trajectory (no rollout)
+        p2 = output_dir / "acc_rel_mae_noroll_per_traj.png"
+        plot_per_trajectory_bar(traj_indices, per_traj_acc_rel_mae,
+                                ylabel="Acceleration Relative MAE",
+                                title=f"Acceleration Relative MAE per Trajectory (no rollout) [{split}]",
+                                output_path=p2, color="mediumseagreen", true_values=None)
+        paths["images"]["acc_rel_mae_noroll_per_traj"] = p2
+
+        # 3) Stress relative MAE per trajectory (no rollout)
+        p3 = output_dir / "stress_rel_mae_noroll_per_traj.png"
+        plot_per_trajectory_bar(traj_indices, per_traj_stress_rel_mae,
+                                ylabel="Stress Relative MAE",
+                                title=f"Stress Relative MAE per Trajectory (no rollout) [{split}]",
+                                output_path=p3, color="mediumpurple", true_values=None)
+        paths["images"]["stress_rel_mae_noroll_per_traj"] = p3
+
+        # 4) Final rollout volume per trajectory (predicted vs true)
+        p4 = output_dir / "final_volume_per_traj.png"
+        plot_per_trajectory_bar(traj_indices, final_volumes_pred,
+                                ylabel="Final Volume",
+                                title=f"Final Rollout Volume per Trajectory [{split}]",
+                                output_path=p4, color="darkorange", true_values=final_volumes_true)
+        paths["images"]["final_volume_per_traj"] = p4
+
+        return paths
+
+    def _log_plot_rollout_single_traj(self, true_rollout, pred_rollout, traj_idx):
+        """
+        Sets up per-trajectory output directory and naming, then delegates to in_depth to generate
+        all diagnostic plots for one trajectory. Does not log to W&B.
+
+        Args:
+            true_rollout: list
+                Ground-truth rollout graphs.
+            pred_rollout: list
+                Predicted rollout graphs.
+            traj_idx: int
+                Index of the trajectory.
+            return: dict
+                Nested dict with keys "images" and "videos" from in_depth.
+        """
+        traj_split_name = f"traj{traj_idx}, {self.eval_split_name}"
+        filename_prefix = f"traj{traj_idx}_{self.eval_split_name}"
+        output_dir = self.model_evaluation_dir / self.eval_split_name / f"traj{traj_idx}"
+        return self.in_depth(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix)
 
     def on_validation_epoch_end(self):
         """
-        Runs a full rollout on the validation split only on rank 0 and logs the positional error.
+        Runs a full rollout on every trajectory of the validation split (rank 0 only),
+        averages the positional error across trajectories, and logs it.
         This metric is for reporting only and is not used by checkpoint callbacks.
         """
         if self.trainer.sanity_checking:
@@ -498,103 +694,126 @@ class LitModule(L.LightningModule):
         # strategy by lightning)
         if not self.trainer.is_global_zero:
             return
-        if self.enable_rollout_val:
-            # Returns
-            _, _, final_roll_err_pos = self._run_rollout(self.validation_loader)
-            self.rollout_all_step_error = final_roll_err_pos
-            self.log("val/final_roll_err_pos",
-                     torch.tensor(final_roll_err_pos, device=self.device),
-                     prog_bar=True,
-                     logger=self._has_wandb_logger(),
-                     sync_dist=False,
-                     rank_zero_only=True)
-
-    def on_test_epoch_end(self):
-        """
-        Runs a full rollout on the active test split only on rank 0, logs the positional error,
-        and optionally saves media artifacts.
-        """
-        if not self.trainer.is_global_zero:
+        if not self.enable_rollout_val or self.validation_dataset is None:
             return
-        # rollout_error = mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
-        true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(self.test_loader)
-        self.rollout_all_step_error = final_roll_err_pos
-        self.log(f"{self.eval_split_name}/final_roll_err_pos",
-                 torch.tensor(final_roll_err_pos, device=self.device),
+        all_final_roll_err_pos = []
+        for traj_idx in range(self.validation_dataset.num_trajectories):
+            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
+            _, _, final_roll_err_pos = self._run_rollout(traj_loader)
+            all_final_roll_err_pos.append(final_roll_err_pos)
+        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+        self.rollout_all_step_error = avg_final_roll_err_pos
+        self.log("val/final_roll_err_pos",
+                 torch.tensor(avg_final_roll_err_pos, device=self.device),
                  prog_bar=True,
                  logger=self._has_wandb_logger(),
                  sync_dist=False,
                  rank_zero_only=True)
-        if self.log_test_media:
-            self._log_plot_rollout(true_rollout, pred_rollout)
+
+    def on_test_epoch_end(self):
+        """
+        Runs a full rollout on every trajectory of the active test/validation split (rank 0 only),
+        averages the positional error, and optionally generates in-depth plots for selected
+        trajectories plus overall summary plots, all logged via a single _log_all_wandb_media call.
+        """
+        if not self.trainer.is_global_zero:
+            return
+
+        # 1. Run rollout for every trajectory, collect results
+        all_true_rollouts = {}
+        all_pred_rollouts = {}
+        all_final_roll_err_pos = []
+        num_trajectories = self.test_dataset.num_trajectories
+        for traj_idx in range(num_trajectories):
+            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
+            true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(traj_loader)
+            all_true_rollouts[traj_idx] = true_rollout
+            all_pred_rollouts[traj_idx] = pred_rollout
+            all_final_roll_err_pos.append(final_roll_err_pos)
+            print(f"\t[{self.eval_split_name}] traj{traj_idx} final_roll_err_pos = {final_roll_err_pos:.6f}")
+
+        # 2. Average and log rollout error across all trajectories
+        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+        self.rollout_all_step_error = avg_final_roll_err_pos
+        self.log(f"{self.eval_split_name}/final_roll_err_pos",
+                 torch.tensor(avg_final_roll_err_pos, device=self.device),
+                 prog_bar=True,
+                 logger=self._has_wandb_logger(),
+                 sync_dist=False,
+                 rank_zero_only=True)
+
+        if not self.log_test_media:
+            return
+
+        # 3. Compute per-trajectory no-rollout metrics (one-step inference)
+        print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
+        per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
+
+        # 4. Compute final volumes from rollout
+        final_volumes_true, final_volumes_pred = self._compute_final_volumes(all_true_rollouts, all_pred_rollouts)
+
+        # 5. Generate overall/summary plots (across all trajectories)
+        overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
+        overall_output_dir.mkdir(parents=True, exist_ok=True)
+        overall_paths = self.overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                          final_volumes_true, final_volumes_pred, overall_output_dir)
+
+        # 6. Generate in-depth plots for selected trajectories only
+        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
+                    else self.selected_validation_trajectories)
+        per_traj_paths = {}
+        for traj_idx in selected:
+            if traj_idx >= num_trajectories:
+                print(f"\tWarning: selected traj{traj_idx} out of range "
+                      f"(only {num_trajectories} trajectories), skipping.")
+                continue
+            print(f"\t[{self.eval_split_name}] Generating in-depth plots for traj{traj_idx}...")
+            per_traj_paths[traj_idx] = self._log_plot_rollout_single_traj(
+                all_true_rollouts[traj_idx], all_pred_rollouts[traj_idx], traj_idx)
+
+        # 7. Single wandb logging call
+        self._log_all_wandb_media(overall_paths, per_traj_paths)
 
     # =============================================================================================================
     #                                   BOILERPLATE WANDB CODE
     # ==============================================================================================================
 
-    def _log_all_wandb_media_test(self, path_split_name, gif_path, volume_png_path, rollout_error_path):
+    def _log_all_wandb_media(self, overall_plot_paths, per_traj_in_depth_paths):
         """
-        Log all plots to W&B, for test only
+        Single function that logs all media to W&B. Logs overall/summary plots first,
+        then per-trajectory in-depth plots for selected trajectories.
 
         Args:
-            path_split_name:
-            gif_path:
-            volume_png_path:
-            rollout_error_path:
+            overall_plot_paths: dict
+                Nested dict {"images": {name: Path}, "videos": {name: Path}} from overall_plot.
+            per_traj_in_depth_paths: dict[int, dict]
+                Mapping of traj_idx to nested dicts {"images": {...}, "videos": {...}} from in_depth.
         """
-
+        if not self._has_wandb_logger():
+            return
         experiment = self.logger.experiment
         prefix = self.eval_split_name
-        wandb_logs = {f"{prefix}/beam_comparison_gif": wandb.Video(str(gif_path), fps=4, format="gif"),
-                      f"{prefix}/volume_change": wandb.Image(str(volume_png_path)),
-                      f"{prefix}/rollout_error_vs_timestep": wandb.Image(str(rollout_error_path))}
-        # wandb_logs = {"epoch": self.current_epoch}
-        # Main plots
-        # Per-field diagnostic plots from plot_validation_diagnostics_norollout
-        for field_name, _ in TARGET_FIELDS:
-            # Prediction vs target scatter
-            scatter_path = path_split_name / f"{prefix}_{field_name}_prediction_vs_target.png"
-            if scatter_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_prediction_vs_target"] = wandb.Image(str(scatter_path))
-            # Edge error correlation
-            corr_path = path_split_name / f"{prefix}_{field_name}_edge_error_correlation.png"
-            if corr_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_edge_error_correlation"] = wandb.Image(str(corr_path))
-            # Signed relative error GIF
-            error_gif_path = path_split_name / f"{prefix}_{field_name}_signed_relative_error.gif"
-            if error_gif_path.exists():
-                wandb_logs[f"{prefix}/{field_name}_signed_relative_error"] = wandb.Video(
-                    str(error_gif_path), fps=4, format="gif")
-        if self.plot_diagnostics_advanced:
-            # Mesh diagnostics (in diagnostics/ subdirectory)
-            diag_dir = path_split_name / "diagnostics"
-            if diag_dir.exists():
-                for field_name, _ in TARGET_FIELDS:
-                    # Neighbor absolute error
-                    diag_path = diag_dir / f"{prefix}_{field_name}_neighbor_abs_error.png"
-                    if diag_path.exists():
-                        wandb_logs[f"{prefix}/diag/{field_name}_neighbor_abs_error"] = wandb.Image(str(diag_path))
-                    # Error vs distance from worst node
-                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_dist_worst.png"
-                    if diag_path.exists():
-                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_dist_worst"] = wandb.Image(str(diag_path))
-                    # Error vs curvature
-                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_curvature.png"
-                    if diag_path.exists():
-                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_curvature"] = wandb.Image(str(diag_path))
-                    # Error vs boundary distance
-                    diag_path = diag_dir / f"{prefix}_{field_name}_error_vs_boundary_dist.png"
-                    if diag_path.exists():
-                        wandb_logs[f"{prefix}/diag/{field_name}_error_vs_boundary_dist"] = wandb.Image(str(diag_path))
-                # Combined diagnostics
-                dirichlet_path = diag_dir / f"{prefix}_dirichlet_energy.png"
-                if dirichlet_path.exists():
-                    wandb_logs[f"{prefix}/diag/dirichlet_energy"] = wandb.Image(str(dirichlet_path))
-                spectral_path = diag_dir / f"{prefix}_spectral_comparison.png"
-                if spectral_path.exists():
-                    wandb_logs[f"{prefix}/diag/spectral_comparison"] = wandb.Image(str(spectral_path))
-        # Log all at once
-        experiment.log(wandb_logs)
+        wandb_logs = {}
+
+        # 1. Log overall/summary plots
+        for name, path in overall_plot_paths.get("images", {}).items():
+            if Path(path).exists():
+                wandb_logs[f"{prefix}/overall/{name}"] = wandb.Image(str(path))
+        for name, path in overall_plot_paths.get("videos", {}).items():
+            if Path(path).exists():
+                wandb_logs[f"{prefix}/overall/{name}"] = wandb.Video(str(path), fps=4, format="gif")
+
+        # 2. Log per-trajectory in-depth plots
+        for traj_idx, traj_paths in per_traj_in_depth_paths.items():
+            traj_prefix = f"{prefix}/traj{traj_idx}"
+            for name, path in traj_paths.get("images", {}).items():
+                if Path(path).exists():
+                    wandb_logs[f"{traj_prefix}/{name}"] = wandb.Image(str(path))
+            for name, path in traj_paths.get("videos", {}).items():
+                if Path(path).exists():
+                    wandb_logs[f"{traj_prefix}/{name}"] = wandb.Video(str(path), fps=4, format="gif")
+
+        experiment.log(wandb_logs, commit=False)
 
     def _has_wandb_logger(self):
         """
@@ -610,9 +829,9 @@ class LitModule(L.LightningModule):
         if not self._has_wandb_logger() or not self.trainer.is_global_zero:
             return
         experiment = self.logger.experiment
-        # Define epoch as the global step metric for x-axis experiment.define_metric("epoch")
-        # All metrics use epoch as x-axis by default experiment.define_metric("*", step_metric="epoch")
-        # Training metrics - track last value (default)
+        experiment.define_metric("epoch")
+        experiment.define_metric("*", step_metric="epoch")
+        # Training metrics
         experiment.define_metric("train/loss", summary="min")
         experiment.define_metric("train/supervised_loss", summary="min")
         experiment.define_metric("train/curvature_loss", summary="min")

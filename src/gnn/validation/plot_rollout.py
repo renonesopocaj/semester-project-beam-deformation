@@ -12,6 +12,11 @@ from src.gnn.validation.diagnostic_plot_helpers import (compute_coordinate_bound
                                                           update_surface_collection)
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity, to_numpy
+from src.gnn.misc_helpers.sklearn_metrics_helpers import (
+    format_r2_text,
+    r2_linear_fit_x_to_y,
+    r2_prediction_vs_target,
+)
 from pathlib import Path
 
 RELATIVE_ERROR_CLIP = 5.0  # 500 %
@@ -427,20 +432,27 @@ def plot_prediction_target_scatter(field_summary, output_path, split_name, num_t
             Cached values for one scalar field.
         output_path: Path
             Destination image path.
+        split_name: str
+            Split label for the title.
+        num_timesteps: int
+            Number of timesteps for the title.
         return: None
-            Saves the scatter plot to disk.
+            Saves the scatter plot to disk with sklearn.metrics.r2_score(target, prediction) annotated.
     """
     target_values = field_summary["target_values"]
     prediction_values = field_summary["prediction_values"]
     min_value = min(target_values.min(), prediction_values.min())
     max_value = max(target_values.max(), prediction_values.max())
 
+    r2 = r2_prediction_vs_target(target_values, prediction_values)
     fig, ax = plt.subplots(figsize=(7, 7))
     ax.scatter(target_values, prediction_values, s=10, alpha=0.15)
     ax.plot([min_value, max_value], [min_value, max_value], linestyle="--", color="black", linewidth=1.5)
     ax.set_xlabel("Target")
     ax.set_ylabel("Prediction")
     ax.set_title(f"{field_summary['label']} Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -454,8 +466,12 @@ def plot_edge_error_correlation(field_summary, output_path, split_name, num_time
             Cached values for one scalar field.
         output_path: Path
             Destination image path.
+        split_name: str
+            Split label for the title.
+        num_timesteps: int
+            Number of timesteps for the title.
         return: None
-            Saves the edge error correlation plot to disk.
+            Saves the hexbin plot to disk; annotates in-sample R^2 of OLS predicting error_j from error_i (sklearn).
     """
     error_i = field_summary["edge_error_i"]
     error_j = field_summary["edge_error_j"]
@@ -463,6 +479,7 @@ def plot_edge_error_correlation(field_summary, output_path, split_name, num_time
         correlation = np.nan
     else:
         correlation = float(np.corrcoef(error_i, error_j)[0, 1])
+    r2_lin = r2_linear_fit_x_to_y(error_i, error_j)
 
     fig, ax = plt.subplots(figsize=(8, 6))
     hexbin = ax.hexbin(error_i, error_j, gridsize=60, cmap="viridis", mincnt=1)
@@ -470,7 +487,11 @@ def plot_edge_error_correlation(field_summary, output_path, split_name, num_time
     colorbar.set_label("Edge count")
     ax.set_xlabel("error_i")
     ax.set_ylabel("error_j")
-    ax.set_title(f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.set_title(
+        f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})\n"
+        f"[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -532,6 +553,46 @@ def plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_pr
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout))
+
+def plot_per_trajectory_bar(traj_indices, values, ylabel, title, output_path, color, true_values):
+    """
+    Bar chart with one bar per trajectory.
+
+    Args:
+        traj_indices: list[int]
+            Trajectory indices for the x-axis.
+        values: list[float]
+            Values for the y-axis (one per trajectory).
+        ylabel: str
+            Label for the y-axis.
+        title: str
+            Plot title.
+        output_path: Path
+            Destination image path.
+        color: str
+            Bar color.
+        true_values: list[float] or None
+            If provided, draws a second bar group for ground-truth reference.
+    """
+    x = np.arange(len(traj_indices))
+    fig, ax = plt.subplots(figsize=(max(6, len(traj_indices) * 0.8), 5))
+    if true_values is not None:
+        bar_width = 0.35
+        ax.bar(x - bar_width / 2, true_values, bar_width, label="True", color="steelblue", alpha=0.7)
+        ax.bar(x + bar_width / 2, values, bar_width, label="Predicted", color=color, alpha=0.7)
+        ax.legend()
+    else:
+        ax.bar(x, values, color=color, alpha=0.7)
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(i) for i in traj_indices], rotation=45 if len(traj_indices) > 15 else 0)
+    ax.set_xlabel("Trajectory")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3, axis="y")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
 
 def plot_scatter_edge(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """

@@ -1,6 +1,7 @@
 """
 train.py
 Main training script.
+Final test/validation media may include scatter plots with R^2 from scikit-learn (see validation/plot_rollout.py).
 """
 
 import os
@@ -76,12 +77,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         preprocess_dict: dict
             Preprocess config.
         return: tuple
-            Lightning module, Lightning trainer, stats, dt, and validation loader.
+            Lightning module, Lightning trainer, stats, dt, validation dataset, and validation dataloader.
     """
     model_root = Path(os.getcwd()) / "saved_models"
     model_root.mkdir(parents=True, exist_ok=True)
 
     # ========================= Dataset stuff ===================
+    validation_dataset = None
     validation_dataloader = None
     print("Train dataset:")
     # device = "cpu" hardcoded for performance reason
@@ -127,7 +129,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
                                  train_cfg=train_cfg, theta_max=theta_max)
-    lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
+    lightning_module.set_rollout_context(validation_dataset=validation_dataset, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
     OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml")
@@ -206,7 +208,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
                     val_dataloaders=validation_dataloader, ckpt_path=train_cfg.resume_from)
 
-    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader
+    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
@@ -233,13 +235,13 @@ def main(cfg):
     print(f"Using device: {device}")
 
     # =================== Train + validation ===================
-    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader = \
+    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader = \
         train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
     # =================== Final validation ===================
-    if validation_dataloader is not None:
+    if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        lightning_module.set_test_context(test_loader=validation_dataloader, split_name="validation")
+        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation")
         fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
     # =================== Testing ===================
@@ -251,7 +253,7 @@ def main(cfg):
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
                                  pin_memory=True)
-    lightning_module.set_test_context(test_loader=test_dataloader, split_name="test")
+    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test")
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
 if __name__ == "__main__":

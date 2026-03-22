@@ -12,6 +12,7 @@ All the possible normalization are done.
 
 import copy
 import gc
+import json
 import math
 import os
 import shutil
@@ -23,20 +24,16 @@ import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 
-from src.gnn.misc_helpers.yamlobject import PreprocessYaml
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import TrainPreprocessor
 from src.gnn.preprocessing.build_features import (calculate_kinematics, build_valued_node_features,
                                                   build_edge_features, compute_von_mises_3d)
 from src.gnn.preprocessing.noiser import NoNoiser
+from src.gnn.preprocessing.stats import Stats
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
 
 EPS = 1e-6
 DEVICE = "cpu"
-RUN_COLORS = {"none": "gray",
-              "z_isotr": "tab:blue",
-              "z_anisotr": "tab:orange",
-              "robust_isotr": "tab:green",
-              "robust_anisotr": "tab:red"}
 
 
 def _to_cpu_clone(value):
@@ -149,14 +146,19 @@ def _get_display_label(run_name, attr_name, RUN_METADATA, SCALAR_FEATURE_NAMES):
     return RUN_METADATA[run_name]["label"]
 
 
-def plot_all_distributions(eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, RUN_METADATA,
-                           SCALAR_FEATURE_NAMES):
+def plot_all_distributions(eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
+                           scalar_feature_names, run_colors):
     """
     Args:
         eda_obj_dict: dict[str, EdaObj]
             One EdaObj per normalization run.
         save_dir: str or Path
             Directory where the plots will be saved.
+        scalar_run_names: list[str]
+        vector_run_names: list[str]
+        run_metadata: dict[str, dict]
+        scalar_feature_names: list[str]
+        run_colors: dict[str, str]
     """
     os.makedirs(save_dir, exist_ok=True)
     reference_eda_obj = eda_obj_dict["none"]
@@ -165,12 +167,12 @@ def plot_all_distributions(eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_
         if len(getattr(reference_eda_obj, key)) == 0:
             continue
         pbar.set_postfix({"key": key})
-        plot_distribution(key, eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, RUN_METADATA,
-                          SCALAR_FEATURE_NAMES)
+        plot_distribution(key, eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
+                          scalar_feature_names, run_colors)
 
 
-def plot_distribution(attr_name, eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, RUN_METADATA,
-                      SCALAR_FEATURE_NAMES):
+def plot_distribution(attr_name, eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
+                      scalar_feature_names, run_colors):
     """
     Plots non-normalized distribution on the left y-axis and the selected
     normalized distributions on the right y-axis (shared scale).
@@ -182,8 +184,13 @@ def plot_distribution(attr_name, eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTO
             Mapping run_name -> EdaObj.
         save_dir: str or Path
             Directory where the plots will be saved.
+        scalar_run_names: list[str]
+        vector_run_names: list[str]
+        run_metadata: dict[str, dict]
+        scalar_feature_names: list[str]
+        run_colors: dict[str, str]
     """
-    run_names = _get_variant_names_for_feature(attr_name, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, SCALAR_FEATURE_NAMES)
+    run_names = _get_variant_names_for_feature(attr_name, scalar_run_names, vector_run_names, scalar_feature_names)
     chunks_list = []
     labels = []
     colors = []
@@ -198,8 +205,8 @@ def plot_distribution(attr_name, eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTO
             chunks.append(tensor.reshape(-1, 1))
         merged_tensor = torch.cat(chunks, dim=0).to(torch.float32)
         chunks_list.append(merged_tensor.reshape(-1).detach().to(DEVICE).numpy())
-        labels.append(_get_display_label(run_name, attr_name, RUN_METADATA, SCALAR_FEATURE_NAMES))
-        colors.append(RUN_COLORS[run_name])
+        labels.append(_get_display_label(run_name, attr_name, run_metadata, scalar_feature_names))
+        colors.append(run_colors[run_name])
         del chunks
         del values
         del merged_tensor
@@ -242,10 +249,13 @@ class EdaPreprocessor(TrainPreprocessor):
     eda_obj: object
     artifact_dir: Path
     run_name: str
-    GIF_GENERATION_MODE: str
-    GIF_SAMPLE_PERCENTAGE: str
+    gif_generation_mode: str
+    gif_sample_percentage: float
+    eda_split: str
+    train_artifact_dir: Path
 
-    def __init__(self, cfg, artifact_dir, run_name, GIF_GENERATION_MODE, GIF_SAMPLE_PERCENTAGE):
+    def __init__(self, cfg, artifact_dir, run_name, gif_generation_mode, gif_sample_percentage,
+                 eda_split, train_artifact_dir):
         """
         Args:
             cfg: object
@@ -254,13 +264,24 @@ class EdaPreprocessor(TrainPreprocessor):
                 Root directory for EDA artifacts.
             run_name: str
                 Name of the current normalization run.
+            gif_generation_mode: str
+                GIF generation mode (ALL or UNIFORMLY_SAMPLED).
+            gif_sample_percentage: float
+                Percentage of trajectories to sample for GIFs.
+            eda_split: str
+                Current EDA split (train, val, or test).
+            train_artifact_dir: str or Path
+                Root directory for train EDA artifacts (used to load/save stats).
         """
         super().__init__(cfg)
         self.noiser = NoNoiser()
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
         self.eda_obj = EdaObj()
-        self.GIF_GENERATION_MODE, self.GIF_SAMPLE_PERCENTAGE = GIF_GENERATION_MODE, GIF_SAMPLE_PERCENTAGE
+        self.gif_generation_mode = gif_generation_mode
+        self.gif_sample_percentage = gif_sample_percentage
+        self.eda_split = eda_split
+        self.train_artifact_dir = Path(train_artifact_dir)
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         pass
@@ -271,6 +292,40 @@ class EdaPreprocessor(TrainPreprocessor):
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log):
         pass
+
+    def _save_eda_stats(self):
+        """
+        Persist node/edge/target stats to disk so that val/test runs can reuse
+        train-computed statistics.
+        """
+        stats_dir = self.train_artifact_dir / ".eda_stats" / self.run_name
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        stats = {
+            "node": self.node_stats.to_dict(),
+            "edge": self.edge_stats.to_dict(),
+            "target": self.target_stats.to_dict(),
+        }
+        with open(stats_dir / "stats.json", "w") as f:
+            json.dump(stats, f, indent=4)
+        print(f"EDA stats saved to {stats_dir / 'stats.json'}")
+
+    def _load_eda_stats(self):
+        """
+        Load train-computed node/edge/target stats so that val/test splits
+        are normalized with the same statistics used during training EDA.
+        """
+        stats_path = self.train_artifact_dir / ".eda_stats" / self.run_name / "stats.json"
+        if not stats_path.exists():
+            raise FileNotFoundError(
+                f"EDA stats not found at {stats_path}. "
+                f"Run EDA on the train split first to generate them."
+            )
+        with open(stats_path, "r") as f:
+            stats = json.load(f)
+        self.node_stats = Stats.from_dict(stats["node"])
+        self.edge_stats = Stats.from_dict(stats["edge"])
+        self.target_stats = Stats.from_dict(stats["target"])
+        print(f"EDA stats loaded from {stats_path}")
 
     def preprocess_data(self, cfg, graphs_dir, generate_gifs):
         """
@@ -298,7 +353,11 @@ class EdaPreprocessor(TrainPreprocessor):
         try:
             cache_files = self._cache_trajectories(cfg, filenames, cache_dir)
             split_idx_edge = 9 if cfg.displacement else 6
-            self._compute_stats_from_cache(cache_files, split_idx_edge)
+            if self.eda_split == "train":
+                self._compute_stats_from_cache(cache_files, split_idx_edge)
+                self._save_eda_stats()
+            else:
+                self._load_eda_stats()
             self._collect_normalized_eda(cache_files, cfg.displacement)
         finally:
             shutil.rmtree(cache_dir, ignore_errors=True)
@@ -315,8 +374,8 @@ class EdaPreprocessor(TrainPreprocessor):
             return: None
                 Fills self.eda_obj lazily.
         """
-        gif_indices = _build_gif_trajectory_indices(len(filenames), generate_gifs, self.GIF_SAMPLE_PERCENTAGE,
-                                                    self.GIF_GENERATION_MODE)
+        gif_indices = _build_gif_trajectory_indices(len(filenames), generate_gifs, self.gif_sample_percentage,
+                                                    self.gif_generation_mode)
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"EDA {self.run_name}")
         for traj_idx, filename in pbar:
             keep_gif_graphs = traj_idx in gif_indices
@@ -645,50 +704,38 @@ def main(cfg):
         cfg: object
             Hydra-composed configuration.
     """
-    NORMALIZATION_RUNS = [
-        {"name": "none", "label": "No norm", "normalizer_method": "None", "isotropic_normalizer": True,
-         "generate_gifs": True},
-        {"name": "z_isotr", "label": "Z isotr.", "normalizer_method": "z", "isotropic_normalizer": True,
-         "generate_gifs": False},
-        {"name": "z_anisotr", "label": "Z anisotr.", "normalizer_method": "z", "isotropic_normalizer": False,
-         "generate_gifs": False},
-        {"name": "robust_isotr", "label": "Robust isotr.", "normalizer_method": "robust", "isotropic_normalizer": True,
-         "generate_gifs": False},
-        {"name": "robust_anisotr", "label": "Robust anisotr.", "normalizer_method": "robust",
-         "isotropic_normalizer": False,
-         "generate_gifs": False}]
-    VECTOR_RUN_NAMES = ["none", "z_isotr", "z_anisotr", "robust_isotr", "robust_anisotr"]
-    SCALAR_RUN_NAMES = ["none", "z_isotr", "robust_isotr"]
-    RUN_METADATA = {run["name"]: run for run in NORMALIZATION_RUNS}
-    # Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
-    SCALAR_FEATURE_NAMES = ["von_mises", "edge_relative_pos_norm", "edge_rest_relative_pos_norm",
-                            "edge_displacement_norm"]
-    EDA_SPLIT = "train"  # Possible values: train | val | test
-    GIF_GENERATION_MODE = "UNIFORMLY_SAMPLED"  # Possible values: ALL | UNIFORMLY_SAMPLED
-    GIF_SAMPLE_PERCENTAGE = 10.0
-
+    eda_cfg = EdaYaml(cfg)
     base_cfg = PreprocessYaml(cfg)
-    if EDA_SPLIT not in ["train", "val", "test"]:
-        raise ValueError(f"Unknown EDA_SPLIT: {EDA_SPLIT}")
-    save_dir = Path(f"eda_artifacts/{str(base_cfg.dataset_type)}/{EDA_SPLIT}")
+
+    eda_split = eda_cfg.eda_split
+    if eda_split not in ["train", "val", "test"]:
+        raise ValueError(f"Unknown eda_split: {eda_split}")
+
+    run_metadata = {run["name"]: run for run in eda_cfg.normalization_runs}
+    save_dir = Path(f"eda_artifacts/{str(base_cfg.dataset_type)}/{eda_split}")
+    train_artifact_dir = Path(f"eda_artifacts/{str(base_cfg.dataset_type)}/train")
     print(f"Preprocessing size={base_cfg.dataset_size} dataset")
     print(f"\tSave dir of eda = {save_dir}\n")
 
-    graphs_dir = Path(base_cfg.raw_data_dir) / EDA_SPLIT / "graphs"
+    graphs_dir = Path(base_cfg.raw_data_dir) / eda_split / "graphs"
     eda_obj_dict = {}
 
-    for run in NORMALIZATION_RUNS:
+    for run in eda_cfg.normalization_runs:
         variant_cfg = _create_variant_cfg(base_cfg, run["normalizer_method"], run["isotropic_normalizer"])
-        print("\n" + "=" * 60 + f"\n{EDA_SPLIT}, {run['label'].lower()}\n" + "=" * 60)
-        preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"], GIF_GENERATION_MODE, GIF_SAMPLE_PERCENTAGE)
+        print("\n" + "=" * 60 + f"\n{eda_split}, {run['label'].lower()}\n" + "=" * 60)
+        preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"], eda_cfg.gif_generation_mode,
+                                       eda_cfg.gif_sample_percentage, eda_split, train_artifact_dir)
         preprocessor.preprocess_data(variant_cfg, graphs_dir, run["generate_gifs"])
         eda_obj_dict[run["name"]] = preprocessor.eda_obj
         del preprocessor
         gc.collect()
 
-    print("\n\n"+"=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
-    plot_all_distributions(eda_obj_dict, save_dir, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, RUN_METADATA,
-                           SCALAR_FEATURE_NAMES)
+    if eda_cfg.generate_distributions:
+        print("\n\n" + "=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
+        plot_all_distributions(eda_obj_dict, save_dir, eda_cfg.scalar_run_names, eda_cfg.vector_run_names,
+                               run_metadata, eda_cfg.scalar_feature_names, eda_cfg.run_colors)
+    else:
+        print("\n\nDistribution generation is disabled, skipping.\n")
     del eda_obj_dict
     gc.collect()
 

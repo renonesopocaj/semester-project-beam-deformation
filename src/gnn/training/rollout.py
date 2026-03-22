@@ -1,6 +1,8 @@
 """
 rollout.py
 Takes care of doing rollout.
+Validation scatter plots with R^2 annotations are produced in validation/plot_rollout.py and
+validation/diagnostic_plot_helpers.py after rollout graphs are built.
 """
 
 import torch

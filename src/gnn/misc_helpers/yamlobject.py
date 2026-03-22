@@ -30,6 +30,17 @@ def _extract_nested(cfg, key):
     return None
 
 class EdaYaml:
+    raw_data_dir: str
+    dataset_type: str
+    eda_split: str
+    gif_generation_mode: str
+    gif_sample_percentage: float
+    generate_distributions: bool
+    normalization_runs: list
+    run_colors: dict
+    vector_run_names: list
+    scalar_run_names: list
+    scalar_feature_names: list
 
     def __init__(self, cfg):
         """
@@ -41,6 +52,16 @@ class EdaYaml:
         """
         flattened_cfg = _to_dict_flatten(cfg)
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
+        self.dataset_type = flattened_cfg["dataset_type"]
+        self.eda_split = flattened_cfg["eda_split"]
+        self.gif_generation_mode = flattened_cfg["gif_generation_mode"]
+        self.gif_sample_percentage = flattened_cfg["gif_sample_percentage"]
+        self.generate_distributions = flattened_cfg["generate_distributions"]
+        self.normalization_runs = _extract_nested(cfg, "normalization_runs")
+        self.run_colors = _extract_nested(cfg, "run_colors")
+        self.vector_run_names = _extract_nested(cfg, "vector_run_names")
+        self.scalar_run_names = _extract_nested(cfg, "scalar_run_names")
+        self.scalar_feature_names = _extract_nested(cfg, "scalar_feature_names")
 
 
 class PreprocessYaml:
@@ -131,6 +152,8 @@ class TrainYaml:
         self.devices = flattened_cfg["devices"]
         self.residual_list = flattened_cfg["residual_list"]
         self.plot_diagnostics_advanced = flattened_cfg["plot_diagnostics_advanced"]
+        self.selected_validation_trajectories = flattened_cfg["selected_validation_trajectories"]
+        self.selected_test_trajectories = flattened_cfg["selected_test_trajectories"]
 
 def _to_dict_flatten(data):
     """

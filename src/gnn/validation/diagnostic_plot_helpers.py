@@ -7,6 +7,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
 from pathlib import Path
 from src.gnn.misc_helpers.misc import to_numpy
+from src.gnn.misc_helpers.sklearn_metrics_helpers import format_r2_text, r2_linear_fit_x_to_y
 from src.gnn.validation.plot_rollout import TARGET_FIELDS, extract_scalar
 
 # ---------------------------------------------------------------------------
@@ -267,6 +268,7 @@ def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, 
         correlation = np.nan
     else:
         correlation = float(np.corrcoef(a_i, a_j)[0, 1])
+    r2_lin = r2_linear_fit_x_to_y(a_i, a_j)
 
     fig, ax = plt.subplots(figsize=(8, 7))
     hexbin = ax.hexbin(a_i, a_j, gridsize=60, cmap="viridis", mincnt=1)
@@ -274,6 +276,8 @@ def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, 
     ax.set_xlabel("Absolute error node i")
     ax.set_ylabel("Absolute error node j")
     ax.set_title(f"{field_label} Neighbor Abs-Error (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -303,12 +307,17 @@ def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num
     worst_node = int(np.argmax(abs_error))
     distances = compute_shortest_path_distances(edge_index, [worst_node], num_nodes)
     reachable = distances >= 0
+    x_dist = distances[reachable].astype(np.float64)
+    y_err = abs_error[reachable]
+    r2_lin = r2_linear_fit_x_to_y(x_dist, y_err)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
+    ax.scatter(x_dist, y_err, s=8, alpha=0.3)
     ax.set_xlabel(f"Hop distance from worst node (node {worst_node})")
     ax.set_ylabel("Absolute error")
     ax.set_title(f"{field_label} Error vs Distance from Worst Node\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -435,12 +444,15 @@ def _plot_error_vs_curvature(true_values, pred_values, positions, element_connec
 
     abs_error = np.abs(pred_values - true_values)
     error_at_boundary = abs_error[node_indices]
+    r2_lin = r2_linear_fit_x_to_y(curvature, error_at_boundary)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(curvature, error_at_boundary, s=8, alpha=0.3)
     ax.set_xlabel("Mean Curvature")
     ax.set_ylabel("Absolute Error")
     ax.set_title(f"{field_label} Error vs Curvature (surface nodes)\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -474,12 +486,17 @@ def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_n
     reachable = distances >= 0
 
     abs_error = np.abs(pred_values - true_values)
+    x_dist = distances[reachable].astype(np.float64)
+    y_err = abs_error[reachable]
+    r2_lin = r2_linear_fit_x_to_y(x_dist, y_err)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
+    ax.scatter(x_dist, y_err, s=8, alpha=0.3)
     ax.set_xlabel("Hop distance to boundary")
     ax.set_ylabel("Absolute Error")
     ax.set_title(f"{field_label} Error vs Distance to Boundary\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
