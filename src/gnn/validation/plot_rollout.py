@@ -228,7 +228,7 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
         print(f"\t\tGIF saved => {gif_path}")
 
 
-def _extract_scalar(graph, field_name):
+def extract_scalar(graph, field_name):
     """
     Args:
         graph: Data
@@ -328,8 +328,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
         edge_error_j = []
 
         for true_graph, pred_graph in zip(true_rollout, pred_rollout):
-            target_values = _extract_scalar(true_graph, field_name)
-            prediction_values = _extract_scalar(pred_graph, field_name)
+            target_values = extract_scalar(true_graph, field_name)
+            prediction_values = extract_scalar(pred_graph, field_name)
             residual_errors = prediction_values - target_values
             absolute_errors = np.abs(residual_errors)
             signed_relative_errors = _compute_error(target_values, prediction_values, "signed_relative")

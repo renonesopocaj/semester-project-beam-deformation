@@ -449,7 +449,7 @@ class LitModule(L.LightningModule):
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos
 
-    def _log_rollout_media(self, true_rollout, pred_rollout):
+    def _log_plot_rollout(self, true_rollout, pred_rollout):
         """
         Generates and saves diagnostic plots and GIFs for a completed rollout, then uploads them to W&B if available.
         Called by on_test_epoch_end. Only runs on rank 0 for distributed training.
@@ -461,8 +461,7 @@ class LitModule(L.LightningModule):
                 Predicted rollout.
         """
 
-
-        # Paths
+        # Paths and file names
         path_split_name = self.model_evaluation_dir / self.eval_split_name
         path_split_name.mkdir(parents=True, exist_ok=True)
         gif_path = path_split_name / f"{self.eval_split_name}_beam_comparison.gif"
@@ -478,19 +477,15 @@ class LitModule(L.LightningModule):
         plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=self.eval_split_name)
         plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
                                  filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-        plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
-                                 filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-
-        try:
-            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
+        # plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
+        #                          filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
+        try: plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=path_split_name,
                                   filename_prefix=self.eval_split_name, split_name=self.eval_split_name)
-        except Exception as error:
-            print(f"Error while plotting mesh diagnostics: {error}")
-
+        except Exception as error: print(f"Error while plotting mesh diagnostics: {error}")
         if not self._has_wandb_logger():
             return
 
-        self._log_all_wandb_media(path_split_name, gif_path, volume_png_path, rollout_error_path)
+        self._log_all_wandb_media_test(path_split_name, gif_path, volume_png_path, rollout_error_path)
 
     def on_validation_epoch_end(self):
         """
@@ -531,15 +526,15 @@ class LitModule(L.LightningModule):
                  sync_dist=False,
                  rank_zero_only=True)
         if self.log_test_media:
-            self._log_rollout_media(true_rollout, pred_rollout)
+            self._log_plot_rollout(true_rollout, pred_rollout)
 
     # =============================================================================================================
     #                                   BOILERPLATE WANDB CODE
     # ==============================================================================================================
 
-    def _log_all_wandb_media(self, path_split_name, gif_path, volume_png_path, rollout_error_path):
+    def _log_all_wandb_media_test(self, path_split_name, gif_path, volume_png_path, rollout_error_path):
         """
-        Log all plots to W&B
+        Log all plots to W&B, for test only
 
         Args:
             path_split_name:
@@ -614,12 +609,9 @@ class LitModule(L.LightningModule):
         """
         if not self._has_wandb_logger() or not self.trainer.is_global_zero:
             return
-
         experiment = self.logger.experiment
-
         # Define epoch as the global step metric for x-axis experiment.define_metric("epoch")
         # All metrics use epoch as x-axis by default experiment.define_metric("*", step_metric="epoch")
-
         # Training metrics - track last value (default)
         experiment.define_metric("train/loss", summary="min")
         experiment.define_metric("train/supervised_loss", summary="min")

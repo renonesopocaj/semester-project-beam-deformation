@@ -4,6 +4,10 @@ import scipy.sparse.linalg as spla
 from collections import deque
 from src.gnn.mesh_numerical_helpers.compute_angle import extract_surface_faces
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import matplotlib.pyplot as plt
+from pathlib import Path
+from src.gnn.misc_helpers.misc import to_numpy
+from src.gnn.validation.plot_rollout import TARGET_FIELDS, extract_scalar
 
 # ---------------------------------------------------------------------------
 #                                    Diagnostic helpers
@@ -330,8 +334,8 @@ def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_pa
     energy_pred_list = []
 
     for field_name, field_label in TARGET_FIELDS:
-        true_vals = _extract_scalar(true_rollout_graph, field_name)
-        pred_vals = _extract_scalar(pred_rollout_graph, field_name)
+        true_vals = extract_scalar(true_rollout_graph, field_name)
+        pred_vals = extract_scalar(pred_rollout_graph, field_name)
         energy_true_list.append(compute_dirichlet_energy(true_vals, edge_index))
         energy_pred_list.append(compute_dirichlet_energy(pred_vals, edge_index))
         field_labels.append(field_label)
@@ -376,8 +380,8 @@ def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_pat
 
     for idx, (field_name, field_label) in enumerate(TARGET_FIELDS):
         ax = axes[idx]
-        true_signal = _extract_scalar(true_rollout_graph, field_name)
-        pred_signal = _extract_scalar(pred_rollout_graph, field_name)
+        true_signal = extract_scalar(true_rollout_graph, field_name)
+        pred_signal = extract_scalar(pred_rollout_graph, field_name)
 
         result_true = compute_graph_laplacian_spectrum(edge_index, true_signal, num_nodes, k)
         result_pred = compute_graph_laplacian_spectrum(edge_index, pred_signal, num_nodes, k)
@@ -509,8 +513,8 @@ def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefi
     print(f"Plotting mesh diagnostics for {split_name}...")
 
     for field_name, field_label in TARGET_FIELDS:
-        true_vals = _extract_scalar(true_graph, field_name)
-        pred_vals = _extract_scalar(pred_graph, field_name)
+        true_vals = extract_scalar(true_graph, field_name)
+        pred_vals = extract_scalar(pred_graph, field_name)
 
         # 5.1 Neighbor absolute error
         print(f"\t\tDiag 5.1 ({field_name})...")
