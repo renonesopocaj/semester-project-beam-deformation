@@ -1,4 +1,5 @@
 output_root: "./fem_dataset_generation/rotated"
+only_json: false
 
 defaults:
   D: 0.1

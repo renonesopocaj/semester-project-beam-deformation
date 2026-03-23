@@ -1,0 +1,4 @@
+training_id: "FILL_IN"
+model_root: "saved_models"
+checkpoint_name: "best"
+splits: ["validation", "test"]

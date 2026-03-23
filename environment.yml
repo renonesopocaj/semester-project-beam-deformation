@@ -283,6 +283,7 @@ dependencies:
   - zlib==1.3.1=h8359307_2
   - zstd==1.5.7=hbf9d68e_6
   - conda-forge::wandb
+  - conda-forge::scikit-learn
   - conda-forge::hydra-core
   - conda-forge::optuna
   - notebook

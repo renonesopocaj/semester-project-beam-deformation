@@ -372,7 +372,7 @@ class LitModule(L.LightningModule):
 
     def test_step(self, batch, batch_idx):
         """
-        Computes and logs metrics for one batch during final evaluation, using the active split name as prefix.
+        Computes and logs metrics for one batch during final evaluation, using the W&B final-eval prefix.
         Syncs everything: we don't care about performance in testing phase.
 
         Args:
@@ -383,9 +383,10 @@ class LitModule(L.LightningModule):
         """
         pred = self(batch)
         target = batch.y
-        metrics = self._collect_test_batch_metrics_noroll(pred, target, self.eval_split_name)
+        wb_prefix = self._wandb_final_eval_metric_prefix()
+        metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
         self._log_metrics(metrics,
-            [f"{self.eval_split_name}/loss", f"{self.eval_split_name}/overall_relative_mae"],
+            [f"{wb_prefix}/loss", f"{wb_prefix}/overall_relative_mae"],
             batch_size=batch.num_graphs,
             sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
@@ -603,7 +604,8 @@ class LitModule(L.LightningModule):
         # 2. Average and log rollout error across all trajectories
         avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
         self.rollout_all_step_error = avg_final_roll_err_pos
-        self.log(f"{self.eval_split_name}/final_roll_err_pos",
+        wb_prefix = self._wandb_final_eval_metric_prefix()
+        self.log(f"{wb_prefix}/final_roll_err_pos",
                  torch.tensor(avg_final_roll_err_pos, device=self.device),
                  prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
@@ -642,6 +644,35 @@ class LitModule(L.LightningModule):
     #                                   BOILERPLATE WANDB CODE
     # ==============================================================================================================
 
+    def _wandb_final_eval_metric_prefix(self):
+        """
+        W&B key prefix for final evaluation scalars (trainer.test on val or test split).
+
+        Args:
+            return: str
+                final_validation, final_test, or eval_split_name if unknown.
+        """
+        if self.eval_split_name == "validation":
+            return "final_validation"
+        if self.eval_split_name == "test":
+            return "final_test"
+        return self.eval_split_name
+
+    def _wandb_final_eval_media_roots(self):
+        """
+        W&B folder roots for overall summary media vs per-trajectory in-depth media.
+
+        Args:
+            return: (str, str)
+                overall_root and traj_root, e.g. final_validation and final_validation_traj.
+        """
+        if self.eval_split_name == "validation":
+            return "final_validation", "final_validation_traj"
+        if self.eval_split_name == "test":
+            return "final_test", "final_test_traj"
+        root = self.eval_split_name
+        return root, f"{root}_traj"
+
     def _log_all_wandb_media(self, overall_plot_paths, per_traj_in_depth_paths):
         """
         Single function that logs all media to W&B. Logs overall/summary plots first,
@@ -656,20 +687,20 @@ class LitModule(L.LightningModule):
         if not self._has_wandb_logger():
             return
         experiment = self.logger.experiment
-        prefix = self.eval_split_name
+        overall_root, traj_root = self._wandb_final_eval_media_roots()
         wandb_logs = {}
 
         # 1. Log overall/summary plots
         for name, path in overall_plot_paths.get("images", {}).items():
             if Path(path).exists():
-                wandb_logs[f"{prefix}/overall/{name}"] = wandb.Image(str(path))
+                wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Image(str(path))
         for name, path in overall_plot_paths.get("videos", {}).items():
             if Path(path).exists():
-                wandb_logs[f"{prefix}/overall/{name}"] = wandb.Video(str(path), fps=4, format="gif")
+                wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Video(str(path), fps=4, format="gif")
 
-        # 2. Log per-trajectory in-depth plots
+        # 2. Log per-trajectory in-depth plots (one W&B folder per trajectory index)
         for traj_idx, traj_paths in per_traj_in_depth_paths.items():
-            traj_prefix = f"{prefix}/traj{traj_idx}"
+            traj_prefix = f"{traj_root}/{traj_idx}"
             for name, path in traj_paths.get("images", {}).items():
                 if Path(path).exists():
                     wandb_logs[f"{traj_prefix}/{name}"] = wandb.Image(str(path))
@@ -720,8 +751,10 @@ class LitModule(L.LightningModule):
         experiment.define_metric("val/stress_rel_mae", summary="min")
         experiment.define_metric("val/final_roll_err_pos", summary="min")
 
-        # Test/validation final metrics (dynamic prefix)
-        for prefix in ["test", "validation"]:
+        # Final evaluation metrics (trainer.test on val or test)
+        for prefix in ["final_test", "final_validation"]:
             experiment.define_metric(f"{prefix}/loss", summary="min")
             experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
+            experiment.define_metric(f"{prefix}/acc_all_rel_mae", summary="min")
+            experiment.define_metric(f"{prefix}/stress_rel_mae", summary="min")
             experiment.define_metric(f"{prefix}/final_roll_err_pos", summary="min")

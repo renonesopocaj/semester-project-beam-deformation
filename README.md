@@ -335,10 +335,17 @@ The repository tracks different metrics for training, validation, and final eval
 - optional `val/acc_all_loss` and `val/stress_loss` exist in the code but are disabled by default in the current config
 - rollout validation metric `val/final_roll_err_pos` exists, but rollout-on-validation is disabled by default in the current config
 
-- Final validation and test evaluation:
-- `overall_relative_mae`: relative MAE over all four target channels together
-- `acc_all_rel_mae`: relative MAE over the three acceleration channels
-- `stress_rel_mae`: relative MAE over the stress channel
-- `final_roll_err_pos`: mean absolute position error at the last timestep of an autoregressive rollout
+- Final validation and test evaluation (Lightning `Trainer.test` after training):
+- One-step batch metrics and rollout summary `final_roll_err_pos` are logged to Weights & Biases under `final_validation/*` when the val split is evaluated and under `final_test/*` when the test split is evaluated. This keeps them separate from per-epoch training validation metrics under `val/*`.
+- Metric names mirror the training-style layout: `overall_relative_mae` (all four target channels), `acc_all_rel_mae`, `stress_rel_mae`, and `final_roll_err_pos` (mean absolute position error at the last rollout timestep).
+
+**Weights & Biases media layout.** When test-time media logging is enabled (`log_test_media` in training config), images and GIFs use the following key prefixes so each in-depth trajectory has its own folder in the W&B UI:
+
+- Training: `train/*` scalars; per-epoch validation: `val/*` (unchanged).
+- Final validation (val split, end of `train.py`): overall summary media under `final_validation/overall/…`; per selected trajectory under `final_validation_traj/<trajectory_index>/…`.
+- Test split: overall summary under `final_test/overall/…`; per selected trajectory under `final_test_traj/<trajectory_index>/…`.
+- W&B may also add automatic groups such as `charts/` and `system/`.
+
+On disk, plots still live under `saved_models/<run_id>/model_evaluation/validation/` or `…/test/`; only the W&B log keys use the `final_*` namespaces above.
 
 In short, the task is to learn a graph-based surrogate model that maps the current beam state and forcing to the next-step nodal acceleration and stress, and then to assess both one-step prediction quality and long-horizon rollout quality.
