@@ -20,8 +20,6 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 
-from src.fem_generation.beam_fea_solver import fea_simulation
-
 # Round-based equality used when deciding whether two float values should be treated as the same grid value.
 DECIMALS = 10
 # Small tolerance for interval checks.
@@ -874,6 +872,9 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             json.dump(ood_by_traj, f, indent=2)
         print(json.dumps(ood_by_traj, indent=2))
         return
+
+    # Deferred import so MPI/Dolfin is never initialized for only_json runs.
+    from src.fem_generation.beam_fea_solver import fea_simulation
 
     n_train, n_val, n_test = _split_target_counts(cfg)
     expected_counts = {"train": n_train, "val": n_val, "test": n_test}
