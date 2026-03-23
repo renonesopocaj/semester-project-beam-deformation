@@ -29,3 +29,4 @@ eda_artifacts
 multirun
 outputs
 fem_dataset_generation
+old_venv

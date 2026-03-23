@@ -689,7 +689,7 @@ class EdaObj:
             self.edge_rest_relative_pos_norm.append(edge_features[:, 7])
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_test")
 def main(cfg):
     """
     Args:
