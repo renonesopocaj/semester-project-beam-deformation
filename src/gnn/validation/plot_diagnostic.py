@@ -7,7 +7,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from collections import deque
-from src.gnn.mesh_numerical_helpers.compute_angle import extract_surface_faces
+from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_surface_faces
 import matplotlib.pyplot as plt
 from pathlib import Path
 from src.gnn.misc_helpers.misc import to_numpy
