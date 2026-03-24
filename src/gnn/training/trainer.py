@@ -24,7 +24,7 @@ from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
 from src.gnn.validation.plot_overall import overall_plot
 
-CHECK_NO_DEADLOCK = True
+CHECK_NO_DEADLOCK = False
 
 class LitModule(L.LightningModule):
     # Model, optimizer

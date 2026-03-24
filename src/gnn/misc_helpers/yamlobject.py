@@ -157,6 +157,10 @@ class TrainYaml:
         self.curvature_loss_weight = flattened_cfg["curvature_loss_weight"]
         self.optimizer = flattened_cfg["optimizer"]
         self.fused_adam = flattened_cfg["fused_adam"]
+        self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
+        self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
+        self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
+        self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
 
 def _to_dict_flatten(data):
     """

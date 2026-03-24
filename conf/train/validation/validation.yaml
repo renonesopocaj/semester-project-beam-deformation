@@ -4,6 +4,6 @@ profile_loss_stress_vs_acceleration: False # disabled because it worsens computa
 enable_wandb_watch: False # disabled because it worsens computational efficiency
 enable_rollout_val: False
 log_test_media: True
-plot_diagnostics_advanced: True
+plot_diagnostics_advanced: False
 selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
 selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]

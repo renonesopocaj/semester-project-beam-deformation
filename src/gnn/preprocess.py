@@ -27,8 +27,8 @@ import hydra
 from omegaconf import OmegaConf, open_dict
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
-                                                  build_edge_features,
-                                                  build_valued_node_features)
+                                                  build_edge_features, build_valued_node_features,
+                                                  compute_noisy_acc)
 from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
@@ -113,13 +113,13 @@ class Preprocessor(ABC):
             whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
             x_raw = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
-            v_raw, a = calculate_kinematics(x_raw, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
-            rest_pos_x = x_raw[0].clone()  # Rest (first) mesh position (N, 3), before noise
+            # add noise
+            x = self.noiser.add_noise_train(x_raw.clone())
+            v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
+            rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3), before noise
             # Compute angle
-            surface_left_triangles, surface_right_triangles = self._maybe_update_maxangle_train(x_raw, graphs_list_batch,
+            surface_left_triangles, surface_right_triangles = self._maybe_update_maxangle_train(x, graphs_list_batch,
                                                                                                 rest_pos_x, cfg)
-            # Noiser
-            x, v = self.noiser.add_noise_train(x_raw.clone(), v_raw, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
             # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3) FIXME: does it make any difference?

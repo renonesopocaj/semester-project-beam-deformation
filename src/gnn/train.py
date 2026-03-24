@@ -77,9 +77,17 @@ def maybe_compile_model(model, train_cfg):
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
+        # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
+        # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
+        # layer_norm_enable_processor
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
-                            latent_size=train_cfg.latent_dim,
-                            num_msgs=train_cfg.num_messages)
+                            encoder_latent_size=train_cfg.latent_dim, decoder_latent_size=train_cfg.latent_dim,
+                            processor_latent_size=train_cfg.latent_dim,
+                            num_msgs=train_cfg.num_messages,
+                            num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
+                            layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
+                            layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
+                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     else:

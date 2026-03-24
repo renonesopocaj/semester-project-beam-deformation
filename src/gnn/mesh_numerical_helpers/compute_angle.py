@@ -12,6 +12,7 @@ import numpy as np
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_surface_faces
 
 EPS = 1e-9
+EPS_ACOS = 1e-6
 
 def _iter_face_edges(face):
     """
@@ -231,9 +232,14 @@ def compute_surface_angles_torch(positions, left_triangles, right_triangles):
     # Obtain cosine of angle between normals: dot product sum(left * right) since left right is elementwise product,
     # and that's = cosine since we normalized normals
     cosine = torch.sum(left_unit * right_unit, dim=1)
-    cosine = torch.clamp(cosine, min=-1.0 + EPS, max=1.0 - EPS)
+    cosine = torch.clamp(cosine, min=-1.0 + EPS_ACOS, max=1.0 - EPS_ACOS)
     # Obtain angle (num_edges,)
     angle = torch.arccos(cosine)
+    # COMMENTED alternative: do it via arctan
+    # dot = torch.sum(left_unit * right_unit, dim=1)
+    # cross_norm = torch.linalg.norm(torch.cross(left_unit, right_unit, dim=1), dim=1)
+    #
+    # angle = torch.atan2(cross_norm, dot)
     return angle
 
 
