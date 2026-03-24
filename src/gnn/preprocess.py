@@ -116,7 +116,8 @@ class Preprocessor(ABC):
             v_raw, a = calculate_kinematics(x_raw, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
             rest_pos_x = x_raw[0].clone()  # Rest (first) mesh position (N, 3), before noise
             # Compute angle
-            self._maybe_update_maxangle_train(x_raw, graphs_list_batch, rest_pos_x, cfg)
+            surface_left_triangles, surface_right_triangles = self._maybe_update_maxangle_train(x_raw, graphs_list_batch,
+                                                                                                rest_pos_x, cfg)
             # Noiser
             x, v = self.noiser.add_noise_train(x_raw.clone(), v_raw, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
@@ -161,7 +162,7 @@ class Preprocessor(ABC):
                 # For val it's already normalized
                 self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                                        all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                                       boundary_left_triangles, boundary_right_triangles)
+                                       surface_left_triangles, surface_right_triangles)
 
         # --- Open: All these do nothing if split NOT train ---
         self._compute_stats_train(cfg, split_idx_edge)  # if val doesn't do anything
@@ -244,16 +245,18 @@ class TrainPreprocessor(Preprocessor):
         boundary_condition = graphs_list_batch[0].x_bc
         # Obtain triangles for angle computation
         fixed_mask = boundary_condition.squeeze(1) > 0.5
-        boundary_left_triangles, boundary_right_triangles = extract_surface_triangles_torch(
+        surface_left_triangles, surface_right_triangles = extract_surface_triangles_torch(
             graphs_list_batch[0].x_element_connectivity, rest_pos_x.device)
-        boundary_left_triangles, boundary_right_triangles, _ = filter_fixed_surface_triangles(boundary_left_triangles,
-                                                                                              boundary_right_triangles,
-                                                                                              fixed_mask)
+        surface_left_triangles, surface_right_triangles, _ = filter_fixed_surface_triangles(surface_left_triangles,
+                                                                                            surface_right_triangles,
+                                                                                            fixed_mask)
         max_timesteps = min(x_raw.shape[0], cfg.limit_timesteps)
         for timestep_idx in range(max_timesteps):
-            current_theta_max = max_surface_angle(x_raw[timestep_idx], boundary_left_triangles,
-                                                  boundary_right_triangles)
+            current_theta_max = max_surface_angle(x_raw[timestep_idx], surface_left_triangles,
+                                                  surface_right_triangles)
             self.theta_max = max(self.theta_max, float(current_theta_max.detach().item()))
+
+        return surface_left_triangles, surface_right_triangles
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
@@ -315,7 +318,15 @@ class ValPreprocessor(Preprocessor):
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
     def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
-        pass
+        boundary_condition = graphs_list_batch[0].x_bc
+        # Obtain triangles for angle computation
+        fixed_mask = boundary_condition.squeeze(1) > 0.5
+        surface_left_triangles, surface_right_triangles = extract_surface_triangles_torch(
+            graphs_list_batch[0].x_element_connectivity, rest_pos_x.device)
+        surface_left_triangles, surface_right_triangles, _ = filter_fixed_surface_triangles(surface_left_triangles,
+                                                                                            surface_right_triangles,
+                                                                                            fixed_mask)
+        return surface_left_triangles, surface_right_triangles
 
     def _save_auxiliary_train_artifacts(self, save_dir):
         pass
