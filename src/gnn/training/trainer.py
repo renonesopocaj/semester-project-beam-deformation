@@ -16,6 +16,7 @@ from src.gnn.misc_helpers.misc import compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.preprocessing.stats import StatsModule
 from torch_geometric.loader import DataLoader
+from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
 from src.gnn.training.losses import loss_factory, angle_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
@@ -590,7 +591,7 @@ class LitModule(L.LightningModule):
         # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
         per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
         # 4. Compute final volumes from rollout
-        final_volumes_true, final_volumes_pred = self._compute_final_volumes(all_true_rollouts, all_pred_rollouts)
+        final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
 
         # 5. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"

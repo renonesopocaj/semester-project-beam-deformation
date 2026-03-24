@@ -72,14 +72,15 @@ class ClofNet(nn.Module):
         5. Pass invariant features through stacked Clof_GCL blocks.
         6. Add the graph centroid back.
 
-    Relative to the paper, this class implements the "Scalarize -> invariant
-    message passing -> Vectorize" recipe from Eq. (9), but the actual
-    vectorization happens inside Clof_GCL.coord_model rather than in this file.
+    Relative to the paper, this class implements the "Scalarize -> invariant message passing -> Vectorize" recipe
+    from Eq. (9), but the actual vectorization happens inside Clof_GCL.coord_model rather than in this file.
     """
 
     def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device, act_fn,
                  n_layers, coords_weight, recurrent, norm_diff, tanh):
         """
+        Initializes the model
+
         Args:
             in_node_nf: int
                 Input dimensionality of node features h.
@@ -102,8 +103,6 @@ class ClofNet(nn.Module):
                 Whether to normalize edge-local frame directions.
             tanh: bool
                 Whether Clof_GCL should bound coordinate coefficients with tanh.
-            return: None
-                Initializes the model in-place.
         """
         super(ClofNet, self).__init__()
         self.hidden_nf = hidden_nf
@@ -115,10 +114,8 @@ class ClofNet(nn.Module):
         # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j = 8.
         # Concatenated with the 2-dim edge_attr used in the original code path.
         edge_embed_dim = 10
-        self.fuse_edge = nn.Sequential(
-            nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
-            nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn
-        )
+        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
+                                       nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn)
 
         self.norm_diff = norm_diff
 
@@ -587,20 +584,16 @@ class ClofNet_vel_gbf(nn.Module):
         self.norm_diff = True
 
         for i in range(0, self.n_layers):
-            self.add_module(
-                "gcl_%d" % i,
-                Clof_GCL(
-                    input_nf=self.hidden_nf,
-                    output_nf=self.hidden_nf,
-                    hidden_nf=self.hidden_nf,
-                    edges_in_d=self.hidden_nf // 2,
-                    act_fn=act_fn,
-                    recurrent=recurrent,
-                    coords_weight=coords_weight,
-                    norm_diff=norm_diff,
-                    tanh=tanh,
-                ),
-            )
+            clof_gcl = Clof_GCL(input_nf=self.hidden_nf,
+                                output_nf=self.hidden_nf,
+                                hidden_nf=self.hidden_nf,
+                                edges_in_d=self.hidden_nf // 2,
+                                                    act_fn=act_fn,
+                                recurrent=recurrent,
+                                                    coords_weight=coords_weight,
+                                                    norm_diff=norm_diff,
+                                                    tanh=tanh)
+            self.add_module("gcl_%d" % i, clof_gcl,)
 
         self.to(self.device)
         self.params = self.__str__()

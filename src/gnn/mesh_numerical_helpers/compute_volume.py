@@ -29,9 +29,10 @@ def volume(V, T):
     vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
     return vols
 
-def _compute_final_volumes(all_true_rollouts, all_pred_rollouts):
+def compute_final_volumes(all_true_rollouts, all_pred_rollouts):
     """
     Computes the total mesh volume at the final rollout timestep for each trajectory.
+    Used in trainer.
 
     Args:
         all_true_rollouts: dict[int, list]

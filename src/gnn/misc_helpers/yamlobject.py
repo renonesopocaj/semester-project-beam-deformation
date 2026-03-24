@@ -156,6 +156,7 @@ class TrainYaml:
         self.selected_test_trajectories = flattened_cfg["selected_test_trajectories"]
         self.curvature_loss_weight = flattened_cfg["curvature_loss_weight"]
         self.optimizer = flattened_cfg["optimizer"]
+        self.fused_adam = flattened_cfg["fused_adam"]
 
 def _to_dict_flatten(data):
     """
