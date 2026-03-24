@@ -1,16 +1,18 @@
 defaults:
   - computational: default
   - model: meshgraphnet
-  - training: sanity
+  - training: default
   - validation: validation
   - data: default
   - lr_scheduler: step
+  - residuals: default
   - devices: one_gpu
   - _self_
 
 seed: 42
 use_wandb: true
 initial_lr: 1e-3
+optimizer: adam
 
 hydra:
   run:

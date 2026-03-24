@@ -1,4 +1,4 @@
-training_type: sanity
+training_type: "sanity"
 total_epochs: 3
 loss_type: "mse"
 resume_from: null
