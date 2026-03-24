@@ -13,7 +13,7 @@ from src.gnn.validation.plot_diagnostic import (extract_surface_faces, extract_s
                                                 plot_mesh_diagnostics)
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from src.gnn.mesh_numerical_helpers.compute_volume import volume
-from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity, to_numpy
+from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity, to_numpy
 from src.gnn.misc_helpers.compute_r2 import (format_r2_text, r2_linear_fit_x_to_y,
                                              r2_prediction_vs_target)
 from pathlib import Path
@@ -44,7 +44,7 @@ def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
         # Obtain all cells as tensors of (N, 4) i.e. 4 nodes for everyone of the N tetrahedrons
-        cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
+        cells = torch.as_tensor(to_numpy_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
         # sum the absolute value of all volumes

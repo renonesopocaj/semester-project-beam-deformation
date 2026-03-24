@@ -37,11 +37,8 @@ from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from src.gnn.mesh_numerical_helpers.compute_angle import (
-    extract_boundary_dihedral_triangle_pairs_torch,
-    filter_all_fixed_boundary_dihedral_pairs,
-    compute_max_boundary_dihedral_angle_torch,
-)
+from src.gnn.mesh_numerical_helpers.compute_angle import (extract_surface_triangles_torch,
+                                                          filter_fixed_surface_triangles, max_surface_angle)
 
 EPS = 1e-6
 
@@ -118,15 +115,9 @@ class Preprocessor(ABC):
             x_raw = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
             v_raw, a = calculate_kinematics(x_raw, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
             rest_pos_x = x_raw[0].clone()  # Rest (first) mesh position (N, 3), before noise
-            boundary_condition = graphs_list_batch[0].x_bc
-            fixed_mask = boundary_condition.squeeze(1) > 0.5
-            boundary_left_triangles, boundary_right_triangles = extract_boundary_dihedral_triangle_pairs_torch(
-                graphs_list_batch[0].x_element_connectivity, rest_pos_x.device
-            )
-            boundary_left_triangles, boundary_right_triangles, _ = filter_all_fixed_boundary_dihedral_pairs(
-                boundary_left_triangles, boundary_right_triangles, fixed_mask
-            )
-            self._maybe_update_train_curvature_threshold(x_raw, boundary_left_triangles, boundary_right_triangles, cfg)
+            # Compute angle
+            self._maybe_update_maxangle_train(x_raw, graphs_list_batch, rest_pos_x, cfg)
+            # Noiser
             x, v = self.noiser.add_noise_train(x_raw.clone(), v_raw, cfg.dt)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
@@ -203,7 +194,7 @@ class Preprocessor(ABC):
         raise NotImplementedError("_normalize_append_outgraphs")
 
     @abstractmethod
-    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
         raise NotImplementedError("_maybe_update_train_curvature_threshold")
 
     @abstractmethod
@@ -249,11 +240,19 @@ class TrainPreprocessor(Preprocessor):
     def _load_stats(self, cfg):
         pass
 
-    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
+        boundary_condition = graphs_list_batch[0].x_bc
+        # Obtain triangles for angle computation
+        fixed_mask = boundary_condition.squeeze(1) > 0.5
+        boundary_left_triangles, boundary_right_triangles = extract_surface_triangles_torch(
+            graphs_list_batch[0].x_element_connectivity, rest_pos_x.device)
+        boundary_left_triangles, boundary_right_triangles, _ = filter_fixed_surface_triangles(boundary_left_triangles,
+                                                                                              boundary_right_triangles,
+                                                                                              fixed_mask)
         max_timesteps = min(x_raw.shape[0], cfg.limit_timesteps)
         for timestep_idx in range(max_timesteps):
-            current_theta_max = compute_max_boundary_dihedral_angle_torch(x_raw[timestep_idx], boundary_left_triangles,
-                                                                          boundary_right_triangles)
+            current_theta_max = max_surface_angle(x_raw[timestep_idx], boundary_left_triangles,
+                                                  boundary_right_triangles)
             self.theta_max = max(self.theta_max, float(current_theta_max.detach().item()))
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
@@ -315,7 +314,7 @@ class ValPreprocessor(Preprocessor):
               f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
-    def _maybe_update_train_curvature_threshold(self, x_raw, boundary_left_triangles, boundary_right_triangles, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
         pass
 
     def _save_auxiliary_train_artifacts(self, save_dir):

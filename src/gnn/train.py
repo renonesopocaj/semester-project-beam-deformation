@@ -29,6 +29,7 @@ from src.gnn.preprocessing.stats import load_stats, load_theta_max
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
+from src.gnn.training.optimizers import optimizer_factory
 
 matplotlib.use("Agg")
 plt.ioff()
@@ -120,7 +121,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
+    optimizer = optimizer_factory(model, train_cfg)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.

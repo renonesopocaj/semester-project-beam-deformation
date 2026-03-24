@@ -16,16 +16,13 @@ from src.gnn.misc_helpers.misc import compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.preprocessing.stats import StatsModule
 from torch_geometric.loader import DataLoader
-from src.gnn.training.losses import loss_factory, compute_thresholded_curvature_loss
+from src.gnn.training.losses import loss_factory, angle_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
 from src.gnn.validation.plot_overall import overall_plot
-from src.gnn.mesh_numerical_helpers.compute_volume import volume
-from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import extract_tetra_connectivity
 
 CHECK_NO_DEADLOCK = True
-CURVATURE_LOSS_WEIGHT = 1.0
 
 class LitModule(L.LightningModule):
     # Model, optimizer
@@ -90,10 +87,10 @@ class LitModule(L.LightningModule):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.loss_fn = loss_factory(loss_type, train_cfg.residual_list)
+        self.loss_fn = loss_factory(loss_type)
         self.residual_list = set(train_cfg.residual_list)
         self.theta_max = theta_max
-        self.curvature_loss_weight = CURVATURE_LOSS_WEIGHT
+        self.curvature_loss_weight = train_cfg.curvature_loss_weight
         if "curvature" in self.residual_list and self.theta_max is None:
             raise ValueError("Curvature residual requested but theta_max was not provided.")
 
@@ -253,8 +250,10 @@ class LitModule(L.LightningModule):
         metrics = {}
         total_loss = self.loss_fn(pred, target)
         if "curvature" in self.residual_list:
-            curvature_residual = compute_thresholded_curvature_loss(pred, batch, self.target_stats, self.dt, self.theta_max)
+            curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
+        if "volume" in self.residual_list:
+            pass
         metrics["train/loss"] = total_loss
         return metrics
 
@@ -503,31 +502,6 @@ class LitModule(L.LightningModule):
                 per_traj_stress_rel_mae.append(sum(stress_maes) / len(stress_maes) if stress_maes else 0.0)
         return per_traj_acc_rel_mae, per_traj_stress_rel_mae
 
-    @staticmethod
-    def _compute_final_volumes(all_true_rollouts, all_pred_rollouts):
-        """
-        Computes the total mesh volume at the final rollout timestep for each trajectory.
-
-        Args:
-            all_true_rollouts: dict[int, list]
-                Mapping of trajectory index to ground-truth rollout graphs.
-            all_pred_rollouts: dict[int, list]
-                Mapping of trajectory index to predicted rollout graphs.
-            return: (list[float], list[float])
-                Per-trajectory final true volume and final predicted volume.
-        """
-        true_volumes = []
-        pred_volumes = []
-        for traj_idx in sorted(all_true_rollouts.keys()):
-            true_final = all_true_rollouts[traj_idx][-1]
-            pred_final = all_pred_rollouts[traj_idx][-1]
-            cells = torch.as_tensor(extract_tetra_connectivity(true_final.x_element_connectivity), dtype=torch.long)
-            v_true = torch.abs(volume(true_final.x_pos_t, cells)).sum().item()
-            v_pred = torch.abs(volume(pred_final.x_pos_t, cells)).sum().item()
-            true_volumes.append(v_true)
-            pred_volumes.append(v_pred)
-        return true_volumes, pred_volumes
-
     def _log_plot_roll_single_traj(self, true_rollout, pred_rollout, traj_idx):
         """
         Sets up per-trajectory output directory and naming, then delegates to in_depth to generate
@@ -666,12 +640,7 @@ class LitModule(L.LightningModule):
             return: (str, str)
                 overall_root and traj_root, e.g. final_validation and final_validation_traj.
         """
-        if self.eval_split_name == "validation":
-            return "final_validation", "final_validation_traj"
-        if self.eval_split_name == "test":
-            return "final_test", "final_test_traj"
-        root = self.eval_split_name
-        return root, f"{root}_traj"
+
 
     def _log_all_wandb_media(self, overall_plot_paths, per_traj_in_depth_paths):
         """
@@ -687,9 +656,16 @@ class LitModule(L.LightningModule):
         if not self._has_wandb_logger():
             return
         experiment = self.logger.experiment
-        overall_root, traj_root = self._wandb_final_eval_media_roots()
-        wandb_logs = {}
 
+        # Naming
+        if self.eval_split_name == "validation":
+            overall_root, traj_root = "final_validation", "final_validation_traj"
+        elif self.eval_split_name == "test":
+            overall_root, traj_root = "final_test", "final_test_traj"
+        else:
+            overall_root, traj_root = self.eval_split_name, f"{self.eval_split_name}_traj"
+
+        wandb_logs = {}
         # 1. Log overall/summary plots
         for name, path in overall_plot_paths.get("images", {}).items():
             if Path(path).exists():

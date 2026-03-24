@@ -7,8 +7,10 @@ import numpy as np
 from src.gnn.misc_helpers.misc import to_numpy
 from collections import Counter
 
-def extract_tetra_connectivity(connectivity):
+def to_numpy_tetra_connectivity(connectivity):
     """
+    Transform mesh connectivity from pyg to stored as a numpy
+
     Args:
         connectivity: object
             Mesh connectivity stored in a graph.
@@ -20,16 +22,19 @@ def extract_tetra_connectivity(connectivity):
         cells = cells[0]
     return cells.astype(np.int64)
 
-def extract_boundary_faces(cells):
+def extract_surface_faces(cells):
     """
+    From cell connectivity array of the whole mesh, extract a list (np.ndarray) of only the boundary/surface faces.
+
     Args:
         cells: np.ndarray
-            Tetrahedral connectivity with shape `(num_tetrahedra, 4)`.
-        return: np.ndarray
-            Boundary triangle faces with shape `(num_faces, 3)`.
+            Tetrahedral connectivity with shape (num_tetrahedra, 4).
+
+    return: np.ndarray
+        Boundary triangle faces with shape (num_faces, 3).
     """
     face_counter = Counter()
-    face_lookup = {}
+    face_lookup = {} # hash table with sorted face as key and original face as value
     for tetrahedron in cells:
         tetrahedron = tetrahedron.tolist()
         tetra_faces = [(tetrahedron[0], tetrahedron[1], tetrahedron[2]),
@@ -41,16 +46,6 @@ def extract_boundary_faces(cells):
             face_counter[sorted_face] += 1
             if sorted_face not in face_lookup:
                 face_lookup[sorted_face] = face
+    # Surface faces are faces that appear only once.
     boundary_faces = [face_lookup[face] for face, count in face_counter.items() if count == 1]
-    return np.asarray(boundary_faces, dtype=np.int64)
-
-
-def extract_surface_faces(connectivity):
-    """
-    Args:
-        connectivity: object
-            Mesh connectivity stored in a graph.
-        return: np.ndarray
-            Boundary triangle faces with shape `(num_faces, 3)`.
-    """
-    return extract_boundary_faces(extract_tetra_connectivity(connectivity))
+    return to_numpy_tetra_connectivity(np.asarray(boundary_faces, dtype=np.int64))

@@ -1,16 +1,22 @@
 """
 losses.py
-Contains loss functions.
+Contains loss functions and residuals.
+Losses:
+- mse
+- mae
+- huber
+Residuals:
+- angle_residual
 """
 
 import torch
 import torch.nn.functional as F
-from src.gnn.mesh_numerical_helpers.compute_angle import compute_boundary_dihedral_angles_torch
+from src.gnn.mesh_numerical_helpers.compute_angle import compute_surface_angles_torch
 
 EPS = 1e-6
 TARGET_ACC_DIM = 3
 
-def loss_factory(loss_type, residual_list):
+def loss_factory(loss_type):
     """
     Maps a loss type string to the corresponding PyTorch loss function.
 
@@ -36,8 +42,36 @@ def volume_loss(pred, target):
     #       has to be minimized
     return
 
-def reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
+
+def angle_residual(pred, batch, target_stats, dt, theta_max):
     """
+    Computes Relu(theta - theta_max) for each angle between surface triangles.
+
+    Args:
+        pred: torch.Tensor
+            Model prediction with shape `(num_nodes, 4)`.
+        batch: Data
+            Batched PyG graph with cached boundary topology.
+        target_stats: Stats or StatsModule
+            Target normalization statistics.
+        dt: float
+            Simulation time step.
+        theta_max: float
+            Maximum allowed angle from the train set.
+    return: torch.Tensor
+        Mean thresholded curvature penalty.
+    """
+    predicted_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt)
+    triangle_angles = compute_surface_angles_torch(predicted_next_positions, batch.boundary_left_tri_index,
+                                                   batch.boundary_right_tri_index)
+    return torch.mean(torch.relu(triangle_angles - theta_max))
+
+
+def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
+    """
+    Denormalizes predicted acceleration and reconstructs predicted next positions.
+    Helper for angle_residual.
+
     Args:
         pred: torch.Tensor
             Model prediction with shape `(num_nodes, 4)`.
@@ -53,25 +87,3 @@ def reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
     pred_acc = pred[:, :TARGET_ACC_DIM]
     pred_acc_denorm = pred_acc * (target_stats.std[:TARGET_ACC_DIM] + EPS) + target_stats.mean[:TARGET_ACC_DIM]
     return batch.x_pos_t + batch.x_vel_t * dt + pred_acc_denorm * (dt ** 2)
-
-
-def compute_thresholded_curvature_loss(pred, batch, target_stats, dt, theta_max):
-    """
-    Args:
-        pred: torch.Tensor
-            Model prediction with shape `(num_nodes, 4)`.
-        batch: Data
-            Batched PyG graph with cached boundary topology.
-        target_stats: Stats or StatsModule
-            Target normalization statistics.
-        dt: float
-            Simulation time step.
-        theta_max: float
-            Maximum allowed dihedral angle from the train set.
-    return: torch.Tensor
-        Mean thresholded curvature penalty.
-    """
-    predicted_next_positions = reconstruct_predicted_next_positions(pred, batch, target_stats, dt)
-    dihedral_angles = compute_boundary_dihedral_angles_torch(predicted_next_positions, batch.boundary_left_tri_index,
-                                                             batch.boundary_right_tri_index, EPS)
-    return torch.mean(torch.relu(dihedral_angles - theta_max))

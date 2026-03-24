@@ -1,6 +1,6 @@
 # config_original.yaml
 output_root: "./fem_dataset_generation/original"
-only_json: false
+only_json: true
 
 defaults:
   D: 0.1

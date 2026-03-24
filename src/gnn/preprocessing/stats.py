@@ -55,8 +55,8 @@ class StatsModule(nn.Module):
         Args:
             stats: Stats
                 Stats dataclass to convert.
-            return: StatsModule
-                Module with registered buffers.
+        return: StatsModule
+            Module with registered buffers.
         """
         return cls(stats)
 
@@ -65,8 +65,8 @@ def load_stats(train_save_dir):
     Args:
         train_save_dir: str or Path
             Path to a stats file or to the directory where training data was saved.
-        return: (Stats, Stats, Stats)
-            node_stats, edge_stats, target_stats loaded from stats.json.
+    return: (Stats, Stats, Stats)
+        node_stats, edge_stats, target_stats loaded from stats.json.
     """
     stats_path = Path(train_save_dir) / "stats" / "stats.json"
     if not stats_path.exists():
@@ -84,8 +84,9 @@ def load_theta_max(train_save_dir):
     Args:
         train_save_dir: str or Path
             Path to the directory where training data was saved.
-        return: float
-            Maximum allowed boundary dihedral angle measured on the train set.
+
+    return: float
+        Maximum allowed surface triangle angle measured on the train set.
     """
     theta_max_path = Path(train_save_dir) / "stats" / "theta_max.json"
     if not theta_max_path.exists():
