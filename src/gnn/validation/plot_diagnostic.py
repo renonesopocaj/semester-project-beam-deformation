@@ -22,6 +22,47 @@ TARGET_FIELDS = [("acc_x", "Acceleration X"),
 #                                    Diagnostic helpers
 # ---------------------------------------------------------------------------
 
+def _pairwise_finite_mask(x, y):
+    """
+    Boolean mask where both inputs are finite (for scatter / hexbin).
+
+    Args:
+        x: np.ndarray
+            First array (same length as y).
+        y: np.ndarray
+            Second array.
+    return: np.ndarray
+        1D boolean mask.
+    """
+    x = np.asarray(x).reshape(-1)
+    y = np.asarray(y).reshape(-1)
+    return np.isfinite(x) & np.isfinite(y)
+
+
+def _save_no_data_figure(output_path, title, message):
+    """
+    Save a single-panel figure when there is insufficient finite data.
+
+    Args:
+        output_path: Path
+            Destination path.
+        title: str
+            Figure title.
+        message: str
+            Centered annotation text.
+    return: None
+        Writes PNG to disk.
+    """
+    print("[WARN] plot_diagnostic: writing placeholder figure (finite data missing) -> %s | %s"
+          % (output_path, message))
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.text(0.5, 0.5, message, ha="center", va="center", transform=ax.transAxes)
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def extract_scalar(graph, field_name):
     """
     Args:
@@ -235,8 +276,23 @@ def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, 
     abs_error = np.abs(pred_values - true_values)
     a_i = abs_error[edge_index[0]]
     a_j = abs_error[edge_index[1]]
+    pair_ok = _pairwise_finite_mask(a_i, a_j)
+    n_edge = int(pair_ok.size)
+    n_ok = int(pair_ok.sum())
+    if n_ok < n_edge:
+        print("[WARN] diag 5.1 %s: omitting %d of %d directed edges (non-finite abs error at endpoint)."
+              % (field_label, n_edge - n_ok, n_edge))
+    a_i = a_i[pair_ok]
+    a_j = a_j[pair_ok]
 
-    if len(a_i) == 0 or np.std(a_i) == 0.0 or np.std(a_j) == 0.0:
+    if len(a_i) == 0:
+        _save_no_data_figure(
+            output_path,
+            f"{field_label} Neighbor Abs-Error\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+            "No finite neighbor error pairs",
+        )
+        return
+    if np.std(a_i) == 0.0 or np.std(a_j) == 0.0:
         correlation = np.nan
     else:
         correlation = float(np.corrcoef(a_i, a_j)[0, 1])
@@ -276,11 +332,38 @@ def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num
             Destination image path.
     """
     abs_error = np.abs(pred_values - true_values)
-    worst_node = int(np.argmax(abs_error))
+    n_bad_err = int((~np.isfinite(abs_error)).sum())
+    if n_bad_err > 0:
+        print("[WARN] diag 5.2 %s: %d of %d nodes have non-finite abs error when locating worst node / distances."
+              % (field_label, n_bad_err, int(abs_error.size)))
+    finite_err = abs_error[np.isfinite(abs_error)]
+    if finite_err.size == 0:
+        _save_no_data_figure(
+            output_path,
+            f"{field_label} Error vs Distance from Worst Node\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+            "No finite absolute errors",
+        )
+        return
+    worst_node = int(np.argmax(np.where(np.isfinite(abs_error), abs_error, -np.inf)))
     distances = _compute_shortest_path_distances(edge_index, [worst_node], num_nodes)
     reachable = distances >= 0
     x_dist = distances[reachable].astype(np.float64)
     y_err = abs_error[reachable]
+    scatter_ok = _pairwise_finite_mask(x_dist, y_err)
+    n_pts = int(scatter_ok.size)
+    n_sc = int(scatter_ok.sum())
+    if n_sc < n_pts:
+        print("[WARN] diag 5.2 %s: omitting %d of %d reachable points (non-finite distance or error)."
+              % (field_label, n_pts - n_sc, n_pts))
+    x_dist = x_dist[scatter_ok]
+    y_err = y_err[scatter_ok]
+    if x_dist.size == 0:
+        _save_no_data_figure(
+            output_path,
+            f"{field_label} Error vs Distance from Worst Node\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+            "No finite scatter points",
+        )
+        return
     r2_lin = r2_linear_fit_x_to_y(x_dist, y_err)
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -317,8 +400,15 @@ def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_pa
     for field_name, field_label in TARGET_FIELDS:
         true_vals = extract_scalar(true_rollout_graph, field_name)
         pred_vals = extract_scalar(pred_rollout_graph, field_name)
-        energy_true_list.append(_compute_dirichlet_energy(true_vals, edge_index))
-        energy_pred_list.append(_compute_dirichlet_energy(pred_vals, edge_index))
+        n_bad_t = int((~np.isfinite(true_vals)).sum())
+        n_bad_p = int((~np.isfinite(pred_vals)).sum())
+        if n_bad_t > 0 or n_bad_p > 0:
+            print("[WARN] diag 7.1 %s: nan_to_num for Dirichlet energy (non-finite true: %d, pred: %d / %d nodes)."
+                  % (field_label, n_bad_t, n_bad_p, int(true_vals.size)))
+        true_clean = np.nan_to_num(true_vals, nan=0.0, posinf=0.0, neginf=0.0)
+        pred_clean = np.nan_to_num(pred_vals, nan=0.0, posinf=0.0, neginf=0.0)
+        energy_true_list.append(_compute_dirichlet_energy(true_clean, edge_index))
+        energy_pred_list.append(_compute_dirichlet_energy(pred_clean, edge_index))
         field_labels.append(field_label)
 
     x_pos = np.arange(len(field_labels))
@@ -361,8 +451,15 @@ def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_pat
 
     for idx, (field_name, field_label) in enumerate(TARGET_FIELDS):
         ax = axes[idx]
-        true_signal = extract_scalar(true_rollout_graph, field_name)
-        pred_signal = extract_scalar(pred_rollout_graph, field_name)
+        true_raw = extract_scalar(true_rollout_graph, field_name)
+        pred_raw = extract_scalar(pred_rollout_graph, field_name)
+        n_bad_tr = int((~np.isfinite(true_raw)).sum())
+        n_bad_pr = int((~np.isfinite(pred_raw)).sum())
+        if n_bad_tr > 0 or n_bad_pr > 0:
+            print("[WARN] diag 7.2 %s: nan_to_num before graph spectrum (non-finite true: %d, pred: %d / %d)."
+                  % (field_label, n_bad_tr, n_bad_pr, int(true_raw.size)))
+        true_signal = np.nan_to_num(true_raw, nan=0.0, posinf=0.0, neginf=0.0)
+        pred_signal = np.nan_to_num(pred_raw, nan=0.0, posinf=0.0, neginf=0.0)
 
         result_true = _compute_graph_laplacian_spectrum(edge_index, true_signal, num_nodes, k)
         result_pred = _compute_graph_laplacian_spectrum(edge_index, pred_signal, num_nodes, k)
@@ -416,10 +513,25 @@ def _plot_error_vs_curvature(true_values, pred_values, positions, element_connec
 
     abs_error = np.abs(pred_values - true_values)
     error_at_boundary = abs_error[node_indices]
-    r2_lin = r2_linear_fit_x_to_y(curvature, error_at_boundary)
+    scatter_ok = _pairwise_finite_mask(curvature, error_at_boundary)
+    n_b = int(scatter_ok.size)
+    n_ok_b = int(scatter_ok.sum())
+    if n_ok_b < n_b:
+        print("[WARN] diag 8.3 %s: omitting %d of %d boundary points (non-finite curvature or error)."
+              % (field_label, n_b - n_ok_b, n_b))
+    curv_f = curvature[scatter_ok]
+    err_f = error_at_boundary[scatter_ok]
+    if curv_f.size == 0:
+        _save_no_data_figure(
+            output_path,
+            f"{field_label} Error vs Curvature (surface nodes)\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+            "No finite curvature/error pairs",
+        )
+        return
+    r2_lin = r2_linear_fit_x_to_y(curv_f, err_f)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(curvature, error_at_boundary, s=8, alpha=0.3)
+    ax.scatter(curv_f, err_f, s=8, alpha=0.3)
     ax.set_xlabel("Mean Curvature")
     ax.set_ylabel("Absolute Error")
     ax.set_title(f"{field_label} Error vs Curvature (surface nodes)\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
@@ -460,6 +572,21 @@ def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_n
     abs_error = np.abs(pred_values - true_values)
     x_dist = distances[reachable].astype(np.float64)
     y_err = abs_error[reachable]
+    scatter_ok = _pairwise_finite_mask(x_dist, y_err)
+    n_b = int(scatter_ok.size)
+    n_ok_b = int(scatter_ok.sum())
+    if n_ok_b < n_b:
+        print("[WARN] diag 8.4 %s: omitting %d of %d boundary-reachable points (non-finite distance or error)."
+              % (field_label, n_b - n_ok_b, n_b))
+    x_dist = x_dist[scatter_ok]
+    y_err = y_err[scatter_ok]
+    if x_dist.size == 0:
+        _save_no_data_figure(
+            output_path,
+            f"{field_label} Error vs Distance to Boundary\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+            "No finite scatter points",
+        )
+        return
     r2_lin = r2_linear_fit_x_to_y(x_dist, y_err)
 
     fig, ax = plt.subplots(figsize=(10, 6))

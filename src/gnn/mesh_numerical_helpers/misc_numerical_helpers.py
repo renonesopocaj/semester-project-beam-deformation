@@ -34,6 +34,8 @@ def extract_surface_faces(cells):
         Boundary triangle faces with shape (num_faces, 3).
     """
     cells = to_numpy_tetra_connectivity(cells)
+    if len(cells) == 0:
+        return np.zeros((0, 3), dtype=np.int64)
     face_counter = Counter()
     face_lookup = {} # hash table with sorted face as key and original face as value
     for tetrahedron in cells:

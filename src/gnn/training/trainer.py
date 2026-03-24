@@ -422,6 +422,9 @@ class LitModule(L.LightningModule):
         if monitor_metric is None: # additional check
             monitor_metric = self.trainer.callback_metrics["train/loss"]
         monitor_metric_value = float(monitor_metric.detach().item())
+        if not math.isfinite(monitor_metric_value):
+            print("[WARN] Monitor metric %s is non-finite; using +inf for scheduler step." % monitor_name)
+            monitor_metric_value = float("inf")
         self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
 
         current_lr = float(self.optimizer.param_groups[0]["lr"])
