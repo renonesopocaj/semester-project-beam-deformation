@@ -35,6 +35,35 @@ matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
 
+
+def _cfg_for_wandb(cfg):
+    """
+    Resolved train config as plain nested dict, without Hydra metadata (for W&B).
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: dict
+        JSON-friendly nested mapping suitable for wandb.config.
+    """
+    container = OmegaConf.to_container(cfg, resolve=True)
+    if isinstance(container, dict) and "hydra" in container:
+        container = {key: value for key, value in container.items() if key != "hydra"}
+    return container
+
+
+def _train_cfg_yaml_for_wandb(cfg):
+    """
+    Same content as the resolved YAML printed in main(), minus the hydra: block.
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: str
+        Multi-line YAML string for wandb.summary.
+    """
+    return OmegaConf.to_yaml(OmegaConf.create(_cfg_for_wandb(cfg)), resolve=True)
+
 def assert_stats_finite(node_stats, edge_stats, target_stats):
     """
     Fail fast if normalization statistics contain NaN or Inf.
@@ -156,11 +185,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.
+    wandb_train_cfg_yaml = _train_cfg_yaml_for_wandb(train_dict) if train_cfg.use_wandb else ""
     lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=train_cfg.loss_type,
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
-                                 train_cfg=train_cfg, theta_max=theta_max)
+                                 train_cfg=train_cfg, theta_max=theta_max,
+                                 wandb_train_cfg_yaml=wandb_train_cfg_yaml)
     lightning_module.set_rollout_context(validation_dataset=validation_dataset, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
@@ -173,7 +204,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
         # MisconfigurationException.
         logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False, offline=True)
+                             log_model=False, offline=True, config=_cfg_for_wandb(train_dict))
     else:
         logger = False
 

@@ -86,7 +86,7 @@ def main():
         loss_type=train_cfg.loss_type, preprocess_cfg=preprocess_cfg,
         training_id=training_id, model_root=model_root,
         len_train_dataloader=1, enable_wandb_watch=False,
-        train_cfg=train_cfg, theta_max=theta_max)
+        train_cfg=train_cfg, theta_max=theta_max, wandb_train_cfg_yaml="")
 
     # Write standalone eval outputs to a separate subdirectory
     lightning_module.model_evaluation_dir = model_dir / "standalone_evaluation"

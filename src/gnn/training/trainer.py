@@ -63,7 +63,7 @@ class LitModule(L.LightningModule):
     selected_test_trajectories: list[int]
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max):
+                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -82,6 +82,8 @@ class LitModule(L.LightningModule):
                 Stable identifier for this training session.
             model_root: str or pathlib.Path
                 Root directory that contains saved training folders.
+            wandb_train_cfg_yaml: str
+                Resolved train config as YAML (no hydra: block); empty when W&B is disabled.
             return: None
                 Initializes the module.
         """
@@ -129,6 +131,7 @@ class LitModule(L.LightningModule):
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
+        self.wandb_train_cfg_yaml = wandb_train_cfg_yaml
 
     def forward(self, batch):
         """
@@ -159,6 +162,9 @@ class LitModule(L.LightningModule):
         """
         if not self._has_wandb_logger() or not self.trainer.is_global_zero:
             return
+
+        if self.wandb_train_cfg_yaml:
+            self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
 
         # Define all metrics with epoch as x-axis
         self._define_wandb_metrics()
