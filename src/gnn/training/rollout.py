@@ -1,7 +1,7 @@
 """
 rollout.py
 Takes care of doing rollout.
-Only thing from ground truth graph, i.e. is not predicted
+Only thing from ground truth graph, i.e. is not predicted, is the node force, that acts as an actuator.
 """
 
 import torch

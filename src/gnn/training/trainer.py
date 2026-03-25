@@ -24,8 +24,6 @@ from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
 from src.gnn.validation.plot_overall import overall_plot
 
-CHECK_NO_DEADLOCK = False
-
 class LitModule(L.LightningModule):
     # Model, optimizer
     model: torch.nn.Module
@@ -132,6 +130,11 @@ class LitModule(L.LightningModule):
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
         self.wandb_train_cfg_yaml = wandb_train_cfg_yaml
+
+        # performance stuff
+        self.rollout_num_workers = train_cfg.num_workers
+        self.pin_memory = train_cfg.pin_memory
+
 
     def forward(self, batch):
         """
@@ -337,7 +340,7 @@ class LitModule(L.LightningModule):
             self.log(metric_name, metric_value, on_step=False, on_epoch=True,
                      prog_bar=metric_name in prog_bar_key_set,
                      logger=has_logger, batch_size=batch_size,
-                     sync_dist=False if CHECK_NO_DEADLOCK else metric_name in sync_dist_key_set)
+                     sync_dist=metric_name in sync_dist_key_set)
 
     def training_step(self, batch, batch_idx):
         """
@@ -375,7 +378,7 @@ class LitModule(L.LightningModule):
         target = batch.y
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
         self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], batch_size=batch.num_graphs,
-                          sync_dist_keys=["val/overall_relative_mae"])
+                          sync_dist_keys=list(metrics.keys()))
 
     def test_step(self, batch, batch_idx):
         """
@@ -454,7 +457,9 @@ class LitModule(L.LightningModule):
         """
         start, end = dataset.trajectory_boundaries[traj_idx]
         subset = Subset(dataset, range(start, end))
-        return DataLoader(subset, batch_size=1, shuffle=False)
+        return DataLoader(subset, batch_size=1, shuffle=False,
+                          num_workers=self.rollout_num_workers,
+                          pin_memory=self.pin_memory)
 
     def _run_rollout(self, traj_loader):
         """

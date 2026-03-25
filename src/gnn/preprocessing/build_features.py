@@ -8,6 +8,8 @@ import torch
 def calculate_kinematics(x, dt):
     """
     Calculate velocities and accelerations from positions. The idea is to fix t=0 velocity at 0.
+    The velocity is integrated via a backwards difference of position, acceleration via a forward difference of
+    velocity, so acceleration is a second order centered difference wrt position.
 
     Args:
         x: Tensor (T, N, 3) = (#timesteps, #points in a graph, 3)
@@ -20,10 +22,13 @@ def calculate_kinematics(x, dt):
         a: Accelerations (T-1, N, 3)
     """
     v0 = torch.zeros(*x[0].shape, device=x.device, dtype=x.dtype).unsqueeze(0) # (1, N, 3)
+    # first order backwards
     dx = x[1:] - x[:-1]  # (T-1, N, 3) computes dx by shifting by 1, first excluding t=0 then excluding t=last
     v_steps = dx / dt  # (T-1, N, 3)
     v = torch.cat([v0, v_steps], dim=0) # (T, N, 3)
-    dv = v[1:] - v[:-1] # same as velocity  (T-1, N, 3): but why isn't it brought back to (T, N, 3)?
+    # NOTE: but why isn't it brought back to (T, N, 3)? Because then anyway I save single timesteps so no need to do
+    # it now. Note also this is a forward difference wrt v --> second order centered difference wrt x
+    dv = v[1:] - v[:-1] # same as velocity  (T-1, N, 3)
     a = dv / dt
     return v, a
 

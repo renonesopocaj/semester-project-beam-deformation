@@ -161,6 +161,7 @@ class TrainYaml:
         self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
         self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
         self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
+        self.pin_memory = flattened_cfg["pin_memory"]
 
 def _to_dict_flatten(data):
     """
@@ -181,3 +182,33 @@ def _to_dict_flatten(data):
         else:
             flat[key] = value
     return flat
+
+def cfg_for_wandb(cfg):
+    """
+    Resolved train config as plain nested dict, without Hydra metadata (for W&B).
+    Helper for train.py
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: dict
+        JSON-friendly nested mapping suitable for wandb.config.
+    """
+    container = OmegaConf.to_container(cfg, resolve=True)
+    if isinstance(container, dict) and "hydra" in container:
+        container = {key: value for key, value in container.items() if key != "hydra"}
+    return container
+
+
+def train_cfg_yaml_for_wandb(cfg):
+    """
+    Same content as the resolved YAML printed in main(), minus the hydra: block.
+    Helper for train.py
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: str
+        Multi-line YAML string for wandb.summary.
+    """
+    return OmegaConf.to_yaml(OmegaConf.create(cfg_for_wandb(cfg)), resolve=True)

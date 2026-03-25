@@ -23,9 +23,9 @@ from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
 
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.preprocessing.stats import load_stats, load_theta_max
+from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
@@ -34,55 +34,6 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
-
-
-def _cfg_for_wandb(cfg):
-    """
-    Resolved train config as plain nested dict, without Hydra metadata (for W&B).
-
-    Args:
-        cfg: omegaconf.DictConfig
-            Full Hydra-composed training config.
-    return: dict
-        JSON-friendly nested mapping suitable for wandb.config.
-    """
-    container = OmegaConf.to_container(cfg, resolve=True)
-    if isinstance(container, dict) and "hydra" in container:
-        container = {key: value for key, value in container.items() if key != "hydra"}
-    return container
-
-
-def _train_cfg_yaml_for_wandb(cfg):
-    """
-    Same content as the resolved YAML printed in main(), minus the hydra: block.
-
-    Args:
-        cfg: omegaconf.DictConfig
-            Full Hydra-composed training config.
-    return: str
-        Multi-line YAML string for wandb.summary.
-    """
-    return OmegaConf.to_yaml(OmegaConf.create(_cfg_for_wandb(cfg)), resolve=True)
-
-def assert_stats_finite(node_stats, edge_stats, target_stats):
-    """
-    Fail fast if normalization statistics contain NaN or Inf.
-
-    Args:
-        node_stats: Stats
-            Node feature statistics.
-        edge_stats: Stats
-            Edge feature statistics.
-        target_stats: Stats
-            Target statistics.
-    return: None
-        Raises ValueError if any mean or std is non-finite.
-    """
-    for label, stats in [("node", node_stats), ("edge", edge_stats), ("target", target_stats)]:
-        for attr_name in ("mean", "std"):
-            tensor = getattr(stats, attr_name)
-            if not torch.isfinite(tensor).all():
-                raise ValueError("Non-finite values in %s_stats.%s; regenerate or fix stats.json." % (label, attr_name))
 
 
 def maybe_compile_model(model, train_cfg):
@@ -151,7 +102,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # recommend CPU tensors plus pin_memory=True for faster transfer instead.
     train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
                                   num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                  pin_memory=True)
+                                  pin_memory=train_cfg.pin_memory)
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
@@ -160,7 +111,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # recommend CPU tensors plus pin_memory=True for faster transfer instead.
         validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
                                            num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                           pin_memory=True)
+                                           pin_memory=train_cfg.pin_memory)
     print(f"Loading stats from {train_cfg.train_dir}...")
     node_stats, edge_stats, target_stats = load_stats(train_cfg.train_dir)
     assert_stats_finite(node_stats, edge_stats, target_stats)
@@ -185,7 +136,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.
-    wandb_train_cfg_yaml = _train_cfg_yaml_for_wandb(train_dict) if train_cfg.use_wandb else ""
+    wandb_train_cfg_yaml = train_cfg_yaml_for_wandb(train_dict) if train_cfg.use_wandb else ""
     lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=train_cfg.loss_type,
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
@@ -204,7 +155,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
         # MisconfigurationException.
         logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False, offline=True, config=_cfg_for_wandb(train_dict))
+                             log_model=False, offline=True, config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
@@ -315,7 +266,7 @@ def main(cfg):
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
-                                 pin_memory=True)
+                                 pin_memory=train_cfg.pin_memory)
     lightning_module.set_test_context(test_dataset=test_dataset, split_name="test")
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 

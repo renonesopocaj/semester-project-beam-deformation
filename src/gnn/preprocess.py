@@ -229,11 +229,9 @@ class TrainPreprocessor(Preprocessor):
         print("\nComputing train stats...\n")
         # Compute statistics
         PLACEHOLDER_ALL_ISOTROPIC = self.valued_node_features[0].shape[1]
-        # print(f"valued_node_features.shape = {self.valued_node_features[0].shape}")
         self.node_stats = self.normalizer.compute_stats(self.valued_node_features, PLACEHOLDER_ALL_ISOTROPIC)
         # print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
-        # print(f"targets.shape = {self.targets[0].shape}")
         # isotropic acceleration iff normalizer is isotropic
         self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
         print("\nFinished computing train stats\n")
@@ -265,9 +263,9 @@ class TrainPreprocessor(Preprocessor):
         # used for NNs
         self.out_graphs.append(Data(edge_index=graph.edge_index, # global index
                                     t=graph.time, # global t attribute
-                                    y_acc_t=_a, # target feature acceleration
-                                    x_pos_t=_x, # feature position
-                                    x_vel_t=_v, # feature velocity
+                                    y_acc_t=_a, # TARGET feature acceleration
+                                    x_pos_t=_x, # FEATURE position
+                                    x_vel_t=_v, # FEATURE velocity
                                     boundary_left_tri_index=boundary_left_triangles,
                                     boundary_right_tri_index=boundary_right_triangles))
         self.targets.append(torch.concat([_a, _von_mises], dim=1))

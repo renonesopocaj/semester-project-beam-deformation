@@ -94,3 +94,23 @@ def load_theta_max(train_save_dir):
     with open(theta_max_path, "r") as f:
         theta_max_payload = json.load(f)
     return float(theta_max_payload["theta_max"])
+
+def assert_stats_finite(node_stats, edge_stats, target_stats):
+    """
+    Fail fast if normalization statistics contain NaN or Inf.
+
+    Args:
+        node_stats: Stats
+            Node feature statistics.
+        edge_stats: Stats
+            Edge feature statistics.
+        target_stats: Stats
+            Target statistics.
+    return: None
+        Raises ValueError if any mean or std is non-finite.
+    """
+    for label, stats in [("node", node_stats), ("edge", edge_stats), ("target", target_stats)]:
+        for attr_name in ("mean", "std"):
+            tensor = getattr(stats, attr_name)
+            if not torch.isfinite(tensor).all():
+                raise ValueError("Non-finite values in %s_stats.%s; regenerate or fix stats.json." % (label, attr_name))
