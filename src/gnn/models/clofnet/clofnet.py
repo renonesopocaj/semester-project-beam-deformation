@@ -57,7 +57,7 @@ import torch
 from torch import nn
 
 from src.gnn.models.clofnet.gcl import Clof_GCL
-from src.gnn.models.clofnet.layers import GaussianLayer
+from src.gnn.models.clofnet.gaussian import GaussianLayer
 
 
 class ClofNet(nn.Module):
@@ -525,7 +525,7 @@ class ClofNetVel(nn.Module):
         return x
 
 
-class ClofNet_vel_gbf(nn.Module):
+class ClofNetVelocityGaussian(nn.Module):
     """
     Velocity-aware ClofNet with Gaussian basis edge encoding.
 
@@ -565,7 +565,7 @@ class ClofNet_vel_gbf(nn.Module):
             return: None
                 Initializes the module.
         """
-        super(ClofNet_vel_gbf, self).__init__()
+        super(ClofNetVelocityGaussian, self).__init__()
         self.hidden_nf = hidden_nf
         self.device = device
         self.n_layers = n_layers
