@@ -1,5 +1,5 @@
 """
-clof.py
+clofnet.py
 ClofNet variants used for Newtonian rollouts.
 
 Paper mapping
@@ -56,7 +56,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl import Clof_GCL
+from src.gnn.models.clofnet.gcl import ClofGCL
 from src.gnn.models.clofnet.gaussian import GaussianLayer
 
 
@@ -122,7 +122,7 @@ class ClofNet(nn.Module):
         for i in range(0, self.n_layers):
             self.add_module(
                 "gcl_%d" % i,
-                Clof_GCL(
+                ClofGCL(
                     input_nf=self.hidden_nf,
                     output_nf=self.hidden_nf,
                     hidden_nf=self.hidden_nf,
@@ -380,7 +380,7 @@ class ClofNetVel(nn.Module):
         for i in range(0, self.n_layers):
             self.add_module(
                 "gcl_%d" % i,
-                Clof_GCL(
+                ClofGCL(
                     input_nf=self.hidden_nf,
                     output_nf=self.hidden_nf,
                     hidden_nf=self.hidden_nf,
@@ -584,7 +584,7 @@ class ClofNetVelocityGaussian(nn.Module):
         self.norm_diff = True
 
         for i in range(0, self.n_layers):
-            clof_gcl = Clof_GCL(input_nf=self.hidden_nf,
+            clof_gcl = ClofGCL(input_nf=self.hidden_nf,
                                 output_nf=self.hidden_nf,
                                 hidden_nf=self.hidden_nf,
                                 edges_in_d=self.hidden_nf // 2,

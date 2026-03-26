@@ -1,3 +1,7 @@
+"""
+attention_gcl_equivariant.py
+"""
+
 from torch import nn
 import torch
 from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean, unsorted_segment_sum

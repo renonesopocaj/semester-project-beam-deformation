@@ -1,3 +1,7 @@
+"""
+clofnet_gcl.py
+"""
+
 from src.gnn.models.clofnet.gcl.egnn_gcl import EgnnGCL
 from torch import nn
 import torch

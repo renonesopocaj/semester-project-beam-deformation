@@ -1,3 +1,8 @@
+"""
+egnn_gcl.py
+"""
+
+
 import torch
 from torch import nn
 from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean, unsorted_segment_sum
