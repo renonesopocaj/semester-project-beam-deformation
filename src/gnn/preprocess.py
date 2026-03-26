@@ -27,8 +27,7 @@ import hydra
 from omegaconf import OmegaConf, open_dict
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
-                                                  build_edge_features, build_valued_node_features,
-                                                  compute_noisy_acc)
+                                                  build_edge_features, build_valued_node_features)
 from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
@@ -88,6 +87,10 @@ class Preprocessor(ABC):
 
         Args:
             cfg: YamlObject
+            graphs_dir: Path/str
+                path to the directory containing the raw graphs
+            save_dir: Path/str
+                Path to save the preprocessed data
         """
         torch.manual_seed(cfg.seed)
         filenames = list(Path(graphs_dir).glob("*.pt"))
@@ -113,8 +116,9 @@ class Preprocessor(ABC):
             whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
             x_raw = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
-            # add noise
-            x = self.noiser.add_noise_train(x_raw.clone())
+            # **NOTE** do not add it during preprocess, add it during train
+            # x = self.noiser.add_noise_train(x_raw.clone())
+            x = x_raw.clone()
             v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
             rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3), before noise
             # Compute angle
