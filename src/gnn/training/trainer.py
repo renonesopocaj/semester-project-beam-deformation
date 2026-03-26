@@ -42,8 +42,6 @@ class LitModule(L.LightningModule):
     normalizer_method: str
     isotropic_normalizer: bool
     used_dataset_normalizer: NormalizerFactory
-    # Features
-    rest_minus_nonrest_pos: bool
     # Else
     log_test_media: bool
     node_stats: Any # Stats?
@@ -102,8 +100,6 @@ class LitModule(L.LightningModule):
         self.isotropic_normalizer = preprocess_cfg.isotropic_normalizer
         self.used_dataset_normalizer = NormalizerFactory.create_normalizer(self.normalizer_method,
                                                                            self.isotropic_normalizer)
-        self.rest_minus_nonrest_pos = preprocess_cfg.displacement
-
         self.model_dir = Path(model_root) / self.training_id
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.training_plots_dir = self.model_dir / "training"
@@ -476,8 +472,7 @@ class LitModule(L.LightningModule):
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats,
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
-                                                normalizer=self.used_dataset_normalizer,
-                                                rest_minus_nonrest_pos=self.rest_minus_nonrest_pos)
+                                                normalizer=self.used_dataset_normalizer)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos

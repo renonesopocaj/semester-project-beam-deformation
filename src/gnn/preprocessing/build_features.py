@@ -33,58 +33,47 @@ def calculate_kinematics(x, dt):
     return v, a
 
 
-def build_valued_node_features(x, v, rest_pos, node_force, rest_minus_nonrest_pos):
+def build_valued_node_features(x, v, rest_pos, node_force):
     """
-    Build valued node features: [position, velocity, rest_position, node_force]
+    Build valued node features: [position, velocity, rest_position, node_force, displacement]
 
     Args:
         x: Tensor
         v: Tensor
         rest_pos: Tensor
         node_force: Tensor
-    :return Tensor
-        concatenated features
+    return: Tensor
+        Concatenated features with shape (N, 15).
     """
     device = x.device
     rest_pos = rest_pos.to(device)
     v = v.to(device)
-    if rest_minus_nonrest_pos:
-        x_minus_u = x - rest_pos
-        node_attr = torch.concat([x, v, rest_pos, node_force, x_minus_u], dim=1) # (15)
-    else:
-        node_attr = torch.concat([x, v, rest_pos, node_force], dim=1) # (12)
-    return node_attr
+    x_minus_u = x - rest_pos
+    return torch.concat([x, v, rest_pos, node_force, x_minus_u], dim=1)
 
 
-def build_edge_features(x, u, edge_index, rest_minus_nonrest_pos_edge):
+def build_edge_features(x, u, edge_index):
     """
     Build edge features from node positions and rest positions.
-    Features: [relative_position, relative_position_norm,
-               rest_relative_position, rest_relative_position_norm]
+    Features: [xij, uij, xij-uij, ||xij||, ||uij||, ||xij-uij||]
+
     Args:
         x: torch.Tensor
             absolute position, from which I compute the relative one and the norm
         u: torch.Tensor
             rest absolute position
         edge_index: torch.Tensor (2, #edges)
-            Pairwise graph edges `(i,j)` for message passing, so it's a tensor of  i.e. a matrix with two columns/vecs
-            of length #edges
-    :return torch.Tensor (N, 8, 1)
-        xij (N, 3), xij_norm (N, 3), uij (N, 1), uij_norm (N, 1)
+            Pairwise graph edges `(i,j)` for message passing
+    return: torch.Tensor (E, 12)
     """
     src, dst = edge_index
-    xij = x[dst] - x[src] # (N, 3) relative position while not in rest, from which I compute the relative one
-    uij = u[dst] - u[src] # (N, 3) rest relative position
-    xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (N, 1) relative position in norm
-    uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (N, 1) rest_relative_position
-    if rest_minus_nonrest_pos_edge: # 12 feat
-        xij_minus_uij = xij - uij
-        xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
-        # (N, 12, 1)
-        edge_attr = torch.concat([xij, uij, xij_minus_uij, xij_norm, uij_norm, xij_minus_uij_norm], dim=1)
-    else: # 8 feat
-        edge_attr = torch.concat([xij, uij, xij_norm, uij_norm], dim=1) # (N, 8, 1)
-    return edge_attr
+    xij = x[dst] - x[src] # (E, 3) relative position
+    uij = u[dst] - u[src] # (E, 3) rest relative position
+    xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (E, 1)
+    uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (E, 1)
+    xij_minus_uij = xij - uij
+    xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
+    return torch.concat([xij, uij, xij_minus_uij, xij_norm, uij_norm, xij_minus_uij_norm], dim=1)
 
 
 def compute_von_mises_3d(stress_9):

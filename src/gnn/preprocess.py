@@ -94,7 +94,7 @@ class Preprocessor(ABC):
         """
         torch.manual_seed(cfg.seed)
         filenames = list(Path(graphs_dir).glob("*.pt"))
-        split_idx_edge = 9 if cfg.displacement else 6
+        split_idx_edge = 9
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Processing trajectories")
@@ -144,10 +144,10 @@ class Preprocessor(ABC):
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force, cfg.displacement)
+                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, cfg.displacement)
+                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
@@ -270,6 +270,9 @@ class TrainPreprocessor(Preprocessor):
                                     y_acc_t=_a, # TARGET feature acceleration
                                     x_pos_t=_x, # FEATURE position
                                     x_vel_t=_v, # FEATURE velocity
+                                    rest_pos=rest_pos_x, # rest position (for runtime noise injection)
+                                    node_force=all_node_force[t],
+                                    x_bc=_categorical_node_attr,
                                     boundary_left_tri_index=boundary_left_triangles,
                                     boundary_right_tri_index=boundary_right_triangles))
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -410,9 +413,8 @@ def main(cfg):
     # OmegaConf.save(cfg, save_dir / "config.yaml")
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else '_anisotr'
     miseslog_str = '_log' if cfg_obj.mises_log else '_nolog'
-    offset_str = '_displace' if cfg_obj.displacement else '_nodisplace'
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
-    processed_dir_name = f"{normalizer_str}{isotropic_str}{miseslog_str}{offset_str}"
+    processed_dir_name = f"{normalizer_str}{isotropic_str}{miseslog_str}"
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -426,11 +428,9 @@ def main(cfg):
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
 
-    # note: this is hardcoded to be quicker, but I could have just saved the shape[0] of the node and edge tensor
     with open_dict(cfg):
-        # note numerical feat resp 15 and 12, + 1 categorical
-        cfg.node_channels = 16 if cfg_obj.displacement is True else 13
-        cfg.edge_channels = 12 if cfg_obj.displacement is True else 8
+        cfg.node_channels = 16
+        cfg.edge_channels = 12
         cfg.train_dir = save_dir_train.as_posix()
         cfg.test_dir = save_dir_test.as_posix()
         cfg.val_dir = save_dir_val.as_posix()

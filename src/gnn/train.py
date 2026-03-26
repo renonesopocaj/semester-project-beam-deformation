@@ -24,7 +24,7 @@ from torch_geometric.loader import DataLoader
 
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
-from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
+from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
@@ -92,26 +92,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     model_root = Path(os.getcwd()) / "saved_models"
     model_root.mkdir(parents=True, exist_ok=True)
 
-    # ========================= Dataset stuff ===================
-    validation_dataset = None
-    validation_dataloader = None
-    print("Train dataset:")
-    # device = "cpu" hardcoded for performance reason
-    train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
-    # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
-    # recommend CPU tensors plus pin_memory=True for faster transfer instead.
-    train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
-                                  num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                  pin_memory=train_cfg.pin_memory)
-    if train_cfg.enable_val:
-        print("Validation dataset:")
-        # device = "cpu" hardcoded for performance reason
-        validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
-        # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
-        # recommend CPU tensors plus pin_memory=True for faster transfer instead.
-        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
-                                           num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                           pin_memory=train_cfg.pin_memory)
+    # ========================= Stats (loaded first, needed by noised dataset) ===================
     print(f"Loading stats from {train_cfg.train_dir}...")
     node_stats, edge_stats, target_stats = load_stats(train_cfg.train_dir)
     assert_stats_finite(node_stats, edge_stats, target_stats)
@@ -123,6 +104,34 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     if "curvature" in train_cfg.residual_list:
         theta_max = load_theta_max(train_cfg.train_dir) + THETA_MAX_MARGIN
         print(f"\tLoaded theta_max threshold = {theta_max}")
+
+    # ========================= Dataset stuff ===================
+    validation_dataset = None
+    validation_dataloader = None
+    print("Train dataset:")
+    # device = "cpu" hardcoded for performance reason
+    if train_cfg.noise_scale > 0:
+        train_dataset = InMemoryNoisedDataset(
+            sample_dir=train_cfg.train_dir, device="cpu",
+            noise_scale=train_cfg.noise_scale, gamma=train_cfg.noise_gamma,
+            dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats)
+        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
+    else:
+        train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
+    # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+    # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+    train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
+                                  num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                  pin_memory=train_cfg.pin_memory)
+    if train_cfg.enable_val:
+        print("Validation dataset:")
+        # device = "cpu" hardcoded for performance reason
+        validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
+        # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+        # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
+                                           num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                           pin_memory=train_cfg.pin_memory)
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)

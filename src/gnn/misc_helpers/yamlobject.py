@@ -162,6 +162,8 @@ class TrainYaml:
         self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
         self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
         self.pin_memory = flattened_cfg["pin_memory"]
+        self.noise_scale = flattened_cfg["noise_scale"]
+        self.noise_gamma = flattened_cfg["noise_gamma"]
 
 def _to_dict_flatten(data):
     """

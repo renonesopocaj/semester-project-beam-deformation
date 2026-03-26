@@ -350,13 +350,13 @@ class EdaPreprocessor(TrainPreprocessor):
         cache_dir.mkdir(parents=True, exist_ok=True)
         try:
             cache_files = self._cache_trajectories(cfg, filenames, cache_dir)
-            split_idx_edge = 9 if cfg.displacement else 6
+            split_idx_edge = 9
             if self.eda_split == "train":
                 self._compute_stats_from_cache(cache_files, split_idx_edge)
                 self._save_eda_stats()
             else:
                 self._load_eda_stats()
-            self._collect_normalized_eda(cache_files, cfg.displacement)
+            self._collect_normalized_eda(cache_files)
         finally:
             shutil.rmtree(cache_dir, ignore_errors=True)
 
@@ -378,7 +378,7 @@ class EdaPreprocessor(TrainPreprocessor):
         for traj_idx, filename in pbar:
             keep_gif_graphs = traj_idx in gif_indices
             payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs)
-            self._collect_payload(payload, cfg.displacement, normalize=False)
+            self._collect_payload(payload, normalize=False)
             if trajectory_graphs is not None:
                 self._generate_ground_truth_gif(trajectory_graphs, traj_idx)
             del payload
@@ -458,20 +458,18 @@ class EdaPreprocessor(TrainPreprocessor):
         gc.collect()
         print("\nFinished computing EDA stats\n")
 
-    def _collect_normalized_eda(self, cache_files, has_displacement):
+    def _collect_normalized_eda(self, cache_files):
         """
         Args:
             cache_files: list[Path]
                 Cache files created by _cache_trajectories().
-            has_displacement: bool
-                True iff displacement-derived features are enabled.
             return: None
                 Fills self.eda_obj from normalized cached trajectories.
         """
         pbar = tqdm(cache_files, total=len(cache_files), desc=f"Collecting {self.run_name}")
         for cache_path in pbar:
             payload = torch.load(cache_path, map_location="cpu", weights_only=False)
-            self._collect_payload(payload, has_displacement, normalize=True)
+            self._collect_payload(payload, normalize=True)
             del payload
             gc.collect()
 
@@ -486,13 +484,11 @@ class EdaPreprocessor(TrainPreprocessor):
         normalized_valued = self.normalizer.normalize(node_input[:, 1:], self.node_stats)
         return torch.concat([node_input[:, 0:1], normalized_valued], dim=1)
 
-    def _collect_payload(self, payload, has_displacement, normalize):
+    def _collect_payload(self, payload, normalize):
         """
         Args:
             payload: dict
                 Compact trajectory bundle containing node_inputs, edge_features, and targets.
-            has_displacement: bool
-                True iff displacement-derived features are enabled.
             normalize: bool
                 Whether to apply the current normalizer before appending to EdaObj.
             return: None
@@ -504,7 +500,7 @@ class EdaPreprocessor(TrainPreprocessor):
                 node_input = self._normalize_node_input(node_input)
                 edge_features = self.normalizer.normalize(edge_features, self.edge_stats)
                 target = self.normalizer.normalize(target, self.target_stats)
-            self.eda_obj.append_timestep(node_input, edge_features, target, has_displacement)
+            self.eda_obj.append_timestep(node_input, edge_features, target)
 
     def _build_trajectory_payload(self, cfg, filename, keep_gif_graphs):
         """
@@ -542,9 +538,9 @@ class EdaPreprocessor(TrainPreprocessor):
             x_t = x[t]
             v_t = v[t]
             a_t = a[t]
-            valued_node_attr = build_valued_node_features(x_t, v_t, rest_pos_x, node_force, cfg.displacement)
+            valued_node_attr = build_valued_node_features(x_t, v_t, rest_pos_x, node_force)
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
-            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, cfg.displacement)
+            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index)
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             if cfg.mises_log:
                 von_mises = von_mises_log
@@ -633,7 +629,7 @@ class EdaObj:
             ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
              [], [], [], [])
 
-    def append_timestep(self, node_features, edge_features, target, has_displacement):
+    def append_timestep(self, node_features, edge_features, target):
         """
         Args:
             node_features: torch.Tensor
@@ -642,8 +638,6 @@ class EdaObj:
                 Edge feature tensor.
             target: torch.Tensor
                 Target tensor `[acc_x, acc_y, acc_z, von_mises]`.
-            has_displacement: bool
-                True iff displacement-derived features are enabled.
             return: None
                 Appends the current timestep to the internal EDA lists.
         """
@@ -665,10 +659,9 @@ class EdaObj:
         self.force_y.append(node_features[:, 11])
         self.force_z.append(node_features[:, 12])
 
-        if has_displacement:
-            self.displacement_pos_x.append(node_features[:, 13])
-            self.displacement_pos_y.append(node_features[:, 14])
-            self.displacement_pos_z.append(node_features[:, 15])
+        self.displacement_pos_x.append(node_features[:, 13])
+        self.displacement_pos_y.append(node_features[:, 14])
+        self.displacement_pos_z.append(node_features[:, 15])
 
         self.edge_relative_pos_x.append(edge_features[:, 0])
         self.edge_relative_pos_y.append(edge_features[:, 1])
@@ -677,16 +670,12 @@ class EdaObj:
         self.edge_rest_relative_pos_y.append(edge_features[:, 4])
         self.edge_rest_relative_pos_z.append(edge_features[:, 5])
 
-        if has_displacement:
-            self.edge_displacement_pos_x.append(edge_features[:, 6])
-            self.edge_displacement_pos_y.append(edge_features[:, 7])
-            self.edge_displacement_pos_z.append(edge_features[:, 8])
-            self.edge_relative_pos_norm.append(edge_features[:, 9])
-            self.edge_rest_relative_pos_norm.append(edge_features[:, 10])
-            self.edge_displacement_norm.append(edge_features[:, 11])
-        else:
-            self.edge_relative_pos_norm.append(edge_features[:, 6])
-            self.edge_rest_relative_pos_norm.append(edge_features[:, 7])
+        self.edge_displacement_pos_x.append(edge_features[:, 6])
+        self.edge_displacement_pos_y.append(edge_features[:, 7])
+        self.edge_displacement_pos_z.append(edge_features[:, 8])
+        self.edge_relative_pos_norm.append(edge_features[:, 9])
+        self.edge_rest_relative_pos_norm.append(edge_features[:, 10])
+        self.edge_displacement_norm.append(edge_features[:, 11])
 
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_test")

@@ -3,3 +3,5 @@ total_epochs: 60
 loss_type: "mse"
 resume_from: null
 checkpoint_interval: 10
+noise_scale: 0.0003
+noise_gamma: 0.1
