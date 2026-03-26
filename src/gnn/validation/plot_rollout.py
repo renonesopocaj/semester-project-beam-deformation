@@ -1,6 +1,7 @@
 """
 plot_rollout.py
-Contains all files that plot metrics or diagnostics for the rollout.
+Contains all files that plot metrics or diagnostics for rollout, in depth for each trajectory.
+Main access points: in_depth_plots()
 """
 
 import numpy as np
@@ -8,25 +9,98 @@ import matplotlib.pyplot as plt
 import imageio
 import torch
 from matplotlib.ticker import FuncFormatter
-from src.gnn.validation.mesh_build_numerical import (compute_coordinate_bounds, extract_surface_faces,
-                                                     extract_tetra_connectivity, to_numpy,
-                                                     update_surface_collection, volume,
-                                                     compute_shortest_path_distances,
-                                                     extract_boundary_node_set,
-                                                     compute_discrete_mean_curvature,
-                                                     compute_dirichlet_energy,
-                                                     compute_graph_laplacian_spectrum)
+from src.gnn.validation.plot_diagnostic import (extract_surface_faces, extract_scalar,
+                                                plot_mesh_diagnostics)
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from src.gnn.mesh_numerical_helpers.compute_volume import volume
+from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity, to_numpy
+from src.gnn.misc_helpers.compute_r2 import (format_r2_text, r2_linear_fit_x_to_y,
+                                             r2_prediction_vs_target)
 from pathlib import Path
 
 RELATIVE_ERROR_CLIP = 5.0  # 500 %
-TARGET_FIELDS = [
-    ("acc_x", "Acceleration X"),
-    ("acc_y", "Acceleration Y"),
-    ("acc_z", "Acceleration Z"),
-    ("von_mises", "von Mises"),
-]
+TARGET_FIELDS = [("acc_x", "Acceleration X"),
+                 ("acc_y", "Acceleration Y"),
+                 ("acc_z", "Acceleration Z"),
+                 ("von_mises", "von Mises")]
 
-def plot_volume_change(pred_rollout, true_rollout, path, split_name):
+def _finite_coordinate_bounds_from_stack(all_coordinates):
+    """
+    Compute axis-aligned bounds using only rows with finite XYZ.
+
+    Args:
+        all_coordinates: np.ndarray
+            Stacked node coordinates, shape (N, 3).
+    return: tuple
+        (coordinate_min, coordinate_max, coordinate_span, padding) all shape-(3,) arrays.
+    """
+    mask = np.isfinite(all_coordinates).all(axis=1)
+    n_row = int(all_coordinates.shape[0])
+    n_finite_row = int(mask.sum())
+    if n_finite_row < n_row:
+        print("[WARN] _finite_coordinate_bounds_from_stack: %d of %d node rows have non-finite XYZ; "
+              "bounds use only finite rows." % (n_row - n_finite_row, n_row))
+    if not np.any(mask):
+        print("[WARN] _finite_coordinate_bounds_from_stack: no finite coordinates; using fallback bounds.")
+        coordinate_min = np.array([-1.0, -1.0, -1.0], dtype=np.float64)
+        coordinate_max = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+    else:
+        finite_coords = all_coordinates[mask]
+        coordinate_min = finite_coords.min(axis=0).astype(np.float64)
+        coordinate_max = finite_coords.max(axis=0).astype(np.float64)
+    eps = 1e-9
+    for axis in range(3):
+        if not np.isfinite(coordinate_min[axis]) or not np.isfinite(coordinate_max[axis]):
+            coordinate_min[axis] = -1.0
+            coordinate_max[axis] = 1.0
+        elif coordinate_max[axis] <= coordinate_min[axis]:
+            coordinate_max[axis] = coordinate_min[axis] + eps
+    coordinate_span = np.maximum(coordinate_max - coordinate_min, eps)
+    padding = 0.05 * coordinate_span
+    if not (np.isfinite(coordinate_min).all() and np.isfinite(coordinate_max).all()
+            and np.isfinite(coordinate_span).all() and np.isfinite(padding).all()):
+        print("[WARN] _finite_coordinate_bounds_from_stack: non-finite min/max/span/padding after fix; "
+              "forcing symmetric fallback box.")
+        coordinate_min = np.array([-1.0, -1.0, -1.0], dtype=np.float64)
+        coordinate_max = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+        coordinate_span = np.maximum(coordinate_max - coordinate_min, eps)
+        padding = 0.05 * coordinate_span
+    return coordinate_min, coordinate_max, coordinate_span, padding
+
+
+def _finite_scalar_max_from_arrays(arrays):
+    """
+    Maximum over finite entries of multiple 1D-array-like objects.
+
+    Args:
+        arrays: list
+            List of array-like scalars per node (von Mises, etc.).
+    return: float
+        Strictly positive scale for color normalization; 1.0 if nothing finite.
+    """
+    max_val = None
+    n_nonfinite = 0
+    n_totalElts = 0
+    for arr in arrays:
+        flat = np.asarray(arr).reshape(-1)
+        n_totalElts += int(flat.size)
+        n_nonfinite += int((~np.isfinite(flat)).sum())
+        finite = flat[np.isfinite(flat)]
+        if finite.size == 0:
+            continue
+        local_max = float(np.max(finite))
+        if max_val is None or local_max > max_val:
+            max_val = local_max
+    if n_nonfinite > 0:
+        print("[WARN] _finite_scalar_max_from_arrays: %d non-finite of %d scalar samples ignored for vmax."
+              % (n_nonfinite, n_totalElts))
+    if max_val is None or not np.isfinite(max_val) or max_val <= 0.0:
+        print("[WARN] _finite_scalar_max_from_arrays: no positive finite vmax; using 1.0 for color scale.")
+        return 1.0
+    return max_val
+
+
+def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
     """
     Plot volume change over time for predicted vs ground truth.
 
@@ -36,6 +110,8 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
         true_rollout: list[FIXME: TYPE]
             list of ground truth values (each element has attributes = targets)
         path: Path
+        split_name: str
+            string with split name
     """
     fig, ax = plt.subplots()
     true_volumes_list, pred_volumes_list = [], []
@@ -44,12 +120,15 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
         x_true = true.x_pos_t
         x_pred = pred.x_pos_t
         # Obtain all cells as tensors of (N, 4) i.e. 4 nodes for everyone of the N tetrahedrons
-        cells = torch.as_tensor(extract_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
+        cells = torch.as_tensor(to_numpy_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
         true_volumes = volume(x_true, cells)
         pred_volumes = volume(x_pred, cells)
         # sum the absolute value of all volumes
         V_true = torch.abs(true_volumes).sum().detach().cpu().item()
         V_pred = torch.abs(pred_volumes).sum().detach().cpu().item()
+        if not np.isfinite(V_true) or not np.isfinite(V_pred):
+            print("[WARN] _plot_volume_change: timestep non-finite aggregate volume (V_true=%s, V_pred=%s); "
+                  "plot may be misleading." % (V_true, V_pred))
 
         true_volumes_list.append(V_true)
         pred_volumes_list.append(V_pred)
@@ -63,7 +142,70 @@ def plot_volume_change(pred_rollout, true_rollout, path, split_name):
     plt.savefig(path)
     plt.close()
 
-def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
+def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, poly_collection):
+    """
+    Helper function to beam renderings.
+
+    Args:
+        ax: matplotlib.axes._subplots.Axes3DSubplot
+            Target 3D axis.
+        faces: np.ndarray
+            Boundary faces with shape `(num_faces, 3)`.
+        coordinates: np.ndarray
+            Node coordinates with shape `(num_nodes, 3)`.
+        node_values: np.ndarray
+            Scalar values defined per node.
+        cmap: matplotlib.colors.Colormap
+            Colormap used for rendering.
+        norm: matplotlib.colors.Normalize
+            Normalization used for rendering.
+        poly_collection: Poly3DCollection or None
+            Existing collection to update.
+    return: Poly3DCollection
+        Created or updated collection.
+    """
+    if faces.size == 0:
+        return poly_collection
+    valid_nodes = np.isfinite(coordinates).all(axis=1) & np.isfinite(node_values)
+    n_bad_nodes = int((~valid_nodes).sum())
+    if n_bad_nodes > 0 and poly_collection is None:
+        print("[WARN] update_surface_collection (first draw): %d nodes have non-finite position or nodal scalar; "
+              "boundary faces incident on them are dropped in this view." % n_bad_nodes)
+    use_faces = faces[valid_nodes[faces].all(axis=1)]
+    if use_faces.size < faces.size and poly_collection is None:
+        print("[WARN] update_surface_collection (first draw): using %d of %d boundary faces (others touch omitted nodes)."
+              % (use_faces.size, faces.size))
+    if use_faces.size == 0:
+        print("[WARN] update_surface_collection: no faces left after dropping non-finite nodes; frame may be empty.")
+        if poly_collection is not None:
+            try:
+                poly_collection.set_verts(np.zeros((0, 3, 3), dtype=np.float64))
+            except Exception:
+                pass
+        return poly_collection
+
+    polygons = coordinates[use_faces]
+    face_values = np.mean(node_values[use_faces], axis=1)
+    finite_face = np.isfinite(face_values)
+    if not np.all(finite_face):
+        n_bad_face = int((~finite_face).sum())
+        print("[WARN] update_surface_collection: %d faces have non-finite mean nodal value; "
+              "replacing with 0.0 for coloring." % n_bad_face)
+        face_values = np.where(finite_face, face_values, 0.0)
+    face_colors = cmap(norm(face_values))
+
+    if poly_collection is None:
+        poly_collection = Poly3DCollection(polygons)
+        poly_collection.set_facecolors(face_colors)
+        poly_collection.set_edgecolor("none")
+        ax.add_collection3d(poly_collection)
+        return poly_collection
+
+    poly_collection.set_verts(polygons)
+    poly_collection.set_facecolors(face_colors)
+    return poly_collection
+
+def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
 
@@ -91,7 +233,7 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
 
     faces = extract_surface_faces(true_rollout[0].x_element_connectivity)
     coordinates_for_bounds = []
-    vm_min, vm_max = 0.0, 0.0
+    vm_arrays = []
 
     for g_pred, g_true in zip(pred_rollout, true_rollout):
         coords_pred = to_numpy(g_pred.x_pos_t)
@@ -99,8 +241,8 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
         von_mises_pred = to_numpy(g_pred.von_mises).reshape(-1)
         von_mises_true = to_numpy(g_true.von_mises).reshape(-1)
 
-        vm_max = max(vm_max, np.max(von_mises_pred))
-        vm_max = max(vm_max, np.max(von_mises_true))
+        vm_arrays.append(von_mises_pred)
+        vm_arrays.append(von_mises_true)
         coordinates_for_bounds.append(coords_true)
 
         if bbox_only_on_true:
@@ -108,6 +250,8 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
         coordinates_for_bounds.append(coords_pred)
 
     coordinate_min, coordinate_max, _, _ = compute_coordinate_bounds(coordinates_for_bounds)
+    vm_min = 0.0
+    vm_max = _finite_scalar_max_from_arrays(vm_arrays)
 
     # Create figure
     fig, axarr = plt.subplots(1, 2, figsize=(16, 8), subplot_kw={"projection": "3d"})
@@ -158,11 +302,14 @@ def make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps,
     plt.close(fig)
 
     # Create GIF
+    if len(frames) == 0:
+        print(f"[WARN] _make_beam_comparison_gif: no frames; skipping {gif_path}.")
+        return
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
     print(f"\tGIF saved => {gif_path}")
 
 
-def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name="eda"):
+def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name, traj_idx):
     """
     Create a single-panel GIF showing ground truth mesh colored by von Mises stress.
 
@@ -179,19 +326,26 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
         fps: int
             Frames per second.
         verbose: bool
+            if true, prints more
+        split_name: str
+            name of split
+        traj_idx: idx
+            index of trajectory in the split
     """
     frames = []
     faces = extract_surface_faces(trajectory_graphs[0].x_element_connectivity)
 
     coordinates_for_bounds = []
-    vm_min, vm_max = 0.0, 0.0
+    vm_arrays = []
     for graph in trajectory_graphs:
         coords = to_numpy(graph.x_pos_t)
         vm = to_numpy(graph.von_mises).reshape(-1)
-        vm_max = max(vm_max, float(np.max(vm)))
+        vm_arrays.append(vm)
         coordinates_for_bounds.append(coords)
 
     coordinate_min, coordinate_max, _, _ = compute_coordinate_bounds(coordinates_for_bounds)
+    vm_min = 0.0
+    vm_max = _finite_scalar_max_from_arrays(vm_arrays)
 
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
@@ -216,32 +370,18 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
         coords = to_numpy(graph.x_pos_t)
         vm = to_numpy(graph.von_mises).reshape(-1)
         poly_collection = update_surface_collection(ax, faces, coords, vm, cmap, norm, poly_collection)
-        ax.set_title(f"Ground Truth, step {i}\n[{split_name}, 1 sample, {len(trajectory_graphs)} timesteps]")
+        ax.set_title(f"Ground Truth, step {i}\n[{split_name}, traj {traj_idx}, {len(trajectory_graphs)} timesteps]")
 
         fig.canvas.draw()
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
     plt.close(fig)
+    if len(frames) == 0:
+        print(f"[WARN] make_ground_truth_gif: no frames; skipping {gif_path}.")
+        return
     imageio.mimsave(gif_path, frames, fps=fps, loop=0)
     if verbose:
         print(f"\t\tGIF saved => {gif_path}")
-
-
-def _extract_scalar(graph, field_name):
-    """
-    Args:
-        graph: Data
-            Rollout graph containing nodewise prediction or target values.
-        field_name: str
-            One of `acc_x`, `acc_y`, `acc_z`, `von_mises`.
-        return: np.ndarray
-            Flattened scalar values for all nodes.
-    """
-    if field_name == "von_mises":
-        return to_numpy(graph.von_mises).reshape(-1)
-
-    component_index = {"acc_x": 0, "acc_y": 1, "acc_z": 2}[field_name]
-    return to_numpy(graph.acceleration)[:, component_index].reshape(-1)
 
 
 def _compute_error(true_values, pred_values, error_mode):
@@ -278,13 +418,22 @@ def _compute_limits(all_values, error_mode):
         return: tuple
             `(vmin, vmax)` for a stable color scale.
     """
+    flat = np.asarray(all_values).reshape(-1)
+    finite = flat[np.isfinite(flat)]
+    if finite.size == 0:
+        print("[WARN] _compute_limits: no finite error values; using tiny symmetric range.")
+        tiny = 1e-12
+        if error_mode == "signed_relative":
+            return -tiny, tiny
+        return 0.0, tiny
+
     if error_mode == "signed_relative":
-        max_abs = min(float(np.max(np.abs(all_values))), RELATIVE_ERROR_CLIP)
+        max_abs = min(float(np.max(np.abs(finite))), RELATIVE_ERROR_CLIP)
         if max_abs == 0.0:
             max_abs = 1e-12
         return -max_abs, max_abs
 
-    vmax = float(np.max(all_values))
+    vmax = float(np.max(finite))
     if error_mode == "relative":
         vmax = min(vmax, RELATIVE_ERROR_CLIP)
     if vmax == 0.0:
@@ -292,30 +441,28 @@ def _compute_limits(all_values, error_mode):
     return 0.0, vmax
 
 
-def build_rollout_summary(true_rollout, pred_rollout):
+def _build_rollout_summary(true_rollout, pred_rollout):
     """
     Args:
         true_rollout: list
             Ground-truth rollout graphs.
         pred_rollout: list
             Predicted rollout graphs.
-        return: dict
-            Cached rollout data shared by all validation plots.
+    return: dict
+        Rollout data shared by all validation plots.
     """
     coordinates_per_step = []
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
         coordinates_per_step.append(to_numpy(true_graph.x_pos_t))
 
     coordinate_min, coordinate_max, coordinate_span, padding = compute_coordinate_bounds(coordinates_per_step)
-    summary = {
-        "coordinates_per_step": coordinates_per_step,
-        "faces": extract_surface_faces(true_rollout[0].x_element_connectivity),
-        "coordinate_min": coordinate_min,
-        "coordinate_max": coordinate_max,
-        "coordinate_span": coordinate_span,
-        "padding": padding,
-        "fields": {},
-    }
+    summary = {"coordinates_per_step": coordinates_per_step,
+               "faces": extract_surface_faces(true_rollout[0].x_element_connectivity),
+               "coordinate_min": coordinate_min,
+               "coordinate_max": coordinate_max,
+               "coordinate_span": coordinate_span,
+               "padding": padding,
+               "fields": {}}
 
     for field_name, field_label in TARGET_FIELDS:
         target_per_step = []
@@ -327,8 +474,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
         edge_error_j = []
 
         for true_graph, pred_graph in zip(true_rollout, pred_rollout):
-            target_values = _extract_scalar(true_graph, field_name)
-            prediction_values = _extract_scalar(pred_graph, field_name)
+            target_values = extract_scalar(true_graph, field_name)
+            prediction_values = extract_scalar(pred_graph, field_name)
             residual_errors = prediction_values - target_values
             absolute_errors = np.abs(residual_errors)
             signed_relative_errors = _compute_error(target_values, prediction_values, "signed_relative")
@@ -342,10 +489,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
             edge_error_i.append(residual_errors[edge_index[0]])
             edge_error_j.append(residual_errors[edge_index[1]])
 
-        errors_by_mode = {
-            "absolute": absolute_errors_per_step,
-            "signed_relative": signed_relative_errors_per_step,
-        }
+        errors_by_mode = {"absolute": absolute_errors_per_step,
+                          "signed_relative": signed_relative_errors_per_step    }
         summary["fields"][field_name] = {
             "label": field_label,
             "target_values": np.concatenate(target_per_step),
@@ -353,11 +498,8 @@ def build_rollout_summary(true_rollout, pred_rollout):
             "edge_error_i": np.concatenate(edge_error_i),
             "edge_error_j": np.concatenate(edge_error_j),
             "errors_by_mode": errors_by_mode,
-            "limits_by_mode": {
-                error_mode: _compute_limits(np.concatenate(error_values), error_mode)
-                for error_mode, error_values in errors_by_mode.items()
-            },
-        }
+            "limits_by_mode": {error_mode: _compute_limits(np.concatenate(error_values), error_mode)
+                               for error_mode, error_values in errors_by_mode.items()}}
 
     return summary
 
@@ -407,8 +549,14 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
 
     poly_collection = None
     frames = []
+    n_err_sanitized = 0
     for timestep, (coordinates, error_values) in enumerate(zip(coordinates_per_step, error_per_step)):
-        error_values = np.clip(error_values, vmin, vmax)
+        err = np.asarray(error_values, dtype=np.float64)
+        n_bad = int((~np.isfinite(err)).sum())
+        if n_bad > 0:
+            n_err_sanitized += n_bad
+        err = np.where(np.isfinite(err), err, 0.0)
+        error_values = np.clip(err, vmin, vmax)
         poly_collection = update_surface_collection(ax, faces, coordinates, error_values, cmap, norm, poly_collection)
         ax.set_title(f"{field_label} Signed Relative Error [%, clipped \u00b1500%], step {timestep}\n[{split_name}, "
                      f"1 sample, {num_timesteps} timesteps]")
@@ -416,66 +564,116 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
         frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
 
     plt.close(fig)
+    if n_err_sanitized > 0:
+        print("[WARN] _render_error_mesh_gif (%s): replaced %d non-finite nodal error values with 0.0 before clip."
+              % (field_name, n_err_sanitized))
+    if len(frames) == 0:
+        print(f"[WARN] _render_error_mesh_gif: no frames for {output_path}; skipping GIF.")
+        return
     imageio.mimsave(output_path, frames, fps=4, loop=0)
 
 
-def plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
+def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
             Cached values for one scalar field.
         output_path: Path
             Destination image path.
+        split_name: str
+            Split label for the title.
+        num_timesteps: int
+            Number of timesteps for the title.
         return: None
-            Saves the scatter plot to disk.
+            Saves the scatter plot to disk with sklearn.metrics.r2_score(target, prediction) annotated.
     """
     target_values = field_summary["target_values"]
     prediction_values = field_summary["prediction_values"]
-    min_value = min(target_values.min(), prediction_values.min())
-    max_value = max(target_values.max(), prediction_values.max())
+    pair_mask = np.isfinite(target_values) & np.isfinite(prediction_values)
+    n_tot = int(pair_mask.size)
+    n_ok = int(pair_mask.sum())
+    if n_ok < n_tot:
+        print("[WARN] _plot_prediction_target_scatter (%s): omitting %d non-finite of %d nodewise pairs from plot."
+              % (field_summary["label"], n_tot - n_ok, n_tot))
+    tgt_f = target_values[pair_mask]
+    pred_f = prediction_values[pair_mask]
+    if tgt_f.size == 0:
+        print("[WARN] _plot_prediction_target_scatter: no finite target/prediction pairs; skipping scatter.")
+        fig, ax = plt.subplots(figsize=(7, 7))
+        ax.text(0.5, 0.5, "No finite data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(f"{field_summary['label']} Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+        fig.tight_layout()
+        fig.savefig(output_path)
+        plt.close(fig)
+        return
+    min_value = float(min(tgt_f.min(), pred_f.min()))
+    max_value = float(max(tgt_f.max(), pred_f.max()))
 
+    r2 = r2_prediction_vs_target(tgt_f, pred_f)
     fig, ax = plt.subplots(figsize=(7, 7))
-    ax.scatter(target_values, prediction_values, s=10, alpha=0.15)
+    ax.scatter(tgt_f, pred_f, s=10, alpha=0.15)
     ax.plot([min_value, max_value], [min_value, max_value], linestyle="--", color="black", linewidth=1.5)
     ax.set_xlabel("Target")
     ax.set_ylabel("Prediction")
     ax.set_title(f"{field_summary['label']} Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
 
-def plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
+def _plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
         field_summary: dict
             Cached values for one scalar field.
         output_path: Path
             Destination image path.
+        split_name: str
+            Split label for the title.
+        num_timesteps: int
+            Number of timesteps for the title.
         return: None
-            Saves the edge error correlation plot to disk.
+            Saves the hexbin plot to disk; annotates in-sample R^2 of OLS predicting error_j from error_i (sklearn).
     """
     error_i = field_summary["edge_error_i"]
     error_j = field_summary["edge_error_j"]
-    if len(error_i) == 0 or np.std(error_i) == 0.0 or np.std(error_j) == 0.0:
+    pair_mask = np.isfinite(error_i) & np.isfinite(error_j)
+    n_tot = int(pair_mask.size)
+    n_ok = int(pair_mask.sum())
+    if n_ok < n_tot:
+        print("[WARN] _plot_edge_error_correlation (%s): omitting %d non-finite of %d edge pairs from hexbin."
+              % (field_summary["label"], n_tot - n_ok, n_tot))
+    ei = error_i[pair_mask]
+    ej = error_j[pair_mask]
+    if len(ei) == 0 or np.std(ei) == 0.0 or np.std(ej) == 0.0:
         correlation = np.nan
     else:
-        correlation = float(np.corrcoef(error_i, error_j)[0, 1])
+        correlation = float(np.corrcoef(ei, ej)[0, 1])
+    r2_lin = r2_linear_fit_x_to_y(ei, ej)
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    hexbin = ax.hexbin(error_i, error_j, gridsize=60, cmap="viridis", mincnt=1)
-    colorbar = fig.colorbar(hexbin, ax=ax)
-    colorbar.set_label("Edge count")
+    if ei.size == 0:
+        ax.text(0.5, 0.5, "No finite edge errors", ha="center", va="center", transform=ax.transAxes)
+    else:
+        hexbin = ax.hexbin(ei, ej, gridsize=60, cmap="viridis", mincnt=1)
+        colorbar = fig.colorbar(hexbin, ax=ax)
+        colorbar.set_label("Edge count")
     ax.set_xlabel("error_i")
     ax.set_ylabel("error_j")
-    ax.set_title(f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.set_title(
+        f"{field_summary['label']} Edge Error Correlation (corr={correlation:.4f})\n"
+        f"[{split_name}, 1 sample, {num_timesteps} timesteps]")
+    ax.text(0.03, 0.97, format_r2_text(r2_lin), transform=ax.transAxes, fontsize=11, verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path)
     plt.close(fig)
 
-def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_name):
+def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_name):
     """
     Plot position MAE at each rollout timestep.
 
@@ -491,7 +689,16 @@ def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_nam
     print("Plot rollout position error vs timestep...")
     errors = []
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
-        step_mae = torch.mean(torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)).item()
+        diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)
+        if torch.isfinite(diff).all():
+            step_mae = torch.mean(diff).item()
+        else:
+            n_bad = int((~torch.isfinite(diff)).sum().item())
+            n_all = int(diff.numel())
+            print("[WARN] _plot_roll_err_pos_vs_time: timestep %s has %d non-finite |pos_diff| of %d nodes; "
+                  "MAE uses finite entries only." % (len(errors), n_bad, n_all))
+            finite = diff[torch.isfinite(diff)]
+            step_mae = float(torch.mean(finite).item()) if finite.numel() > 0 else float("nan")
         errors.append(step_mae)
 
     timesteps = np.arange(len(errors))
@@ -506,7 +713,7 @@ def plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_nam
     plt.close(fig)
 
 
-def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
+def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
     which corresponds to the signed relative error
@@ -525,260 +732,18 @@ def plot_validation_diagnostics_rollout(true_rollout, pred_rollout, output_dir, 
             Saves all requested validation plots.
     """
     output_dir = Path(output_dir)
-    rollout_summary = build_rollout_summary(true_rollout, pred_rollout)
+    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     print("Printing validation rollout...")
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"
             _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout))
 
-def _plot_neighbor_abs_error(true_values, pred_values, edge_index, field_label, output_path, split_name, num_timesteps):
+
+def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
     """
-    Diagnostic 5.1 -- scatter of absolute error on neighboring nodes.
-
-    Args:
-        true_values: np.ndarray
-            (N,) ground-truth scalar field.
-        pred_values: np.ndarray
-            (N,) predicted scalar field.
-        edge_index: np.ndarray
-            (2, E) edge endpoints.
-        field_label: str
-            Human-readable field name for the title.
-        output_path: Path
-            Destination image path.
-    """
-    abs_error = np.abs(pred_values - true_values)
-    a_i = abs_error[edge_index[0]]
-    a_j = abs_error[edge_index[1]]
-
-    if len(a_i) == 0 or np.std(a_i) == 0.0 or np.std(a_j) == 0.0:
-        correlation = np.nan
-    else:
-        correlation = float(np.corrcoef(a_i, a_j)[0, 1])
-
-    fig, ax = plt.subplots(figsize=(8, 7))
-    hexbin = ax.hexbin(a_i, a_j, gridsize=60, cmap="viridis", mincnt=1)
-    fig.colorbar(hexbin, ax=ax, label="Edge count")
-    ax.set_xlabel("Absolute error node i")
-    ax.set_ylabel("Absolute error node j")
-    ax.set_title(f"{field_label} Neighbor Abs-Error (corr={correlation:.4f})\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
-    ax.grid(True, alpha=0.2)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _plot_error_vs_distance_from_worst(true_values, pred_values, edge_index, num_nodes, field_label, output_path, split_name, num_timesteps):
-    """
-    Diagnostic 5.2 -- scatter of absolute error vs hop-distance from the
-    worst-error node.
-
-    Args:
-        true_values: np.ndarray
-            (N,) ground-truth scalar field.
-        pred_values: np.ndarray
-            (N,) predicted scalar field.
-        edge_index: np.ndarray
-            (2, E) edge endpoints.
-        num_nodes: int
-            Total number of nodes.
-        field_label: str
-            Human-readable field name for the title.
-        output_path: Path
-            Destination image path.
-    """
-    abs_error = np.abs(pred_values - true_values)
-    worst_node = int(np.argmax(abs_error))
-    distances = compute_shortest_path_distances(edge_index, [worst_node], num_nodes)
-    reachable = distances >= 0
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
-    ax.set_xlabel(f"Hop distance from worst node (node {worst_node})")
-    ax.set_ylabel("Absolute error")
-    ax.set_title(f"{field_label} Error vs Distance from Worst Node\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _plot_dirichlet_energy_bar(true_rollout_graph, pred_rollout_graph, output_path, split_name, num_timesteps):
-    """
-    Diagnostic 7.1 -- grouped bar chart of Dirichlet energy E(y) vs E(y_hat)
-    for all target fields, computed at a single timestep.
-
-    Args:
-        true_rollout_graph: Data
-            Single ground-truth rollout graph.
-        pred_rollout_graph: Data
-            Single predicted rollout graph.
-        output_path: Path
-            Destination image path.
-    """
-    edge_index = to_numpy(true_rollout_graph.edge_index).astype(np.int64)
-    field_labels = []
-    energy_true_list = []
-    energy_pred_list = []
-
-    for field_name, field_label in TARGET_FIELDS:
-        true_vals = _extract_scalar(true_rollout_graph, field_name)
-        pred_vals = _extract_scalar(pred_rollout_graph, field_name)
-        energy_true_list.append(compute_dirichlet_energy(true_vals, edge_index))
-        energy_pred_list.append(compute_dirichlet_energy(pred_vals, edge_index))
-        field_labels.append(field_label)
-
-    x_pos = np.arange(len(field_labels))
-    bar_width = 0.35
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(x_pos - bar_width / 2, energy_true_list, bar_width, label="True E(y)")
-    ax.bar(x_pos + bar_width / 2, energy_pred_list, bar_width, label=r"Predicted E($\hat{y}$)")
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(field_labels, rotation=15, ha="right")
-    ax.set_ylabel("Dirichlet Energy")
-    ax.set_title(f"Dirichlet Energy: True vs Predicted\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
-    ax.legend()
-    ax.grid(True, alpha=0.3, axis="y")
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _plot_spectral_comparison(true_rollout_graph, pred_rollout_graph, output_path, k, split_name, num_timesteps):
-    """
-    Diagnostic 7.2 -- line plots comparing spectral content (graph Laplacian)
-    of true vs predicted fields. One subplot per target field.
-
-    Args:
-        true_rollout_graph: Data
-            Single ground-truth rollout graph.
-        pred_rollout_graph: Data
-            Single predicted rollout graph.
-        output_path: Path
-            Destination image path.
-        k: int
-            Number of Laplacian eigenvalues to compute.
-    """
-    edge_index = to_numpy(true_rollout_graph.edge_index).astype(np.int64)
-    num_nodes = int(to_numpy(true_rollout_graph.x_pos_t).shape[0])
-
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    axes = axes.ravel()
-
-    for idx, (field_name, field_label) in enumerate(TARGET_FIELDS):
-        ax = axes[idx]
-        true_signal = _extract_scalar(true_rollout_graph, field_name)
-        pred_signal = _extract_scalar(pred_rollout_graph, field_name)
-
-        result_true = compute_graph_laplacian_spectrum(edge_index, true_signal, num_nodes, k)
-        result_pred = compute_graph_laplacian_spectrum(edge_index, pred_signal, num_nodes, k)
-
-        if result_true is None or result_pred is None:
-            ax.text(0.5, 0.5, "Spectral analysis unavailable", ha="center", va="center",
-                    transform=ax.transAxes)
-            ax.set_title(field_label)
-            continue
-
-        eig_true, coeff_true = result_true
-        eig_pred, coeff_pred = result_pred
-
-        ax.plot(np.arange(len(coeff_true)), coeff_true, label="True", linewidth=1.5)
-        ax.plot(np.arange(len(coeff_pred)), coeff_pred, label="Predicted", linewidth=1.5, linestyle="--")
-        ax.set_xlabel("Eigenvalue index")
-        ax.set_ylabel(r"$|c_k|^2$")
-        ax.set_title(f"{field_label} Spectral Content")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.set_yscale("log", nonpositive="clip")
-
-    fig.suptitle(f"Low-Frequency vs High-Frequency Content\n[{split_name}, 1 sample, {num_timesteps} timesteps]", fontsize=14)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _plot_error_vs_curvature(true_values, pred_values, positions, element_connectivity, field_label, output_path, split_name, num_timesteps):
-    """
-    Diagnostic 8.3 -- scatter of absolute error vs mean curvature at
-    surface (boundary) nodes.
-
-    Args:
-        true_values: np.ndarray
-            (N,) ground-truth scalar field.
-        pred_values: np.ndarray
-            (N,) predicted scalar field.
-        positions: np.ndarray
-            (N, 3) node coordinates (true mesh).
-        element_connectivity: object
-            Tetrahedral connectivity from the graph.
-        field_label: str
-            Human-readable field name for the title.
-        output_path: Path
-            Destination image path.
-    """
-    boundary_faces = extract_surface_faces(element_connectivity)
-    boundary_nodes = np.unique(boundary_faces.ravel())
-    node_indices, curvature = compute_discrete_mean_curvature(positions, boundary_faces, boundary_nodes)
-
-    abs_error = np.abs(pred_values - true_values)
-    error_at_boundary = abs_error[node_indices]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(curvature, error_at_boundary, s=8, alpha=0.3)
-    ax.set_xlabel("Mean Curvature")
-    ax.set_ylabel("Absolute Error")
-    ax.set_title(f"{field_label} Error vs Curvature (surface nodes)\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def _plot_error_vs_boundary_distance(true_values, pred_values, edge_index, num_nodes, element_connectivity,
-                                     field_label, output_path, split_name, num_timesteps):
-    """
-    Diagnostic 8.4 -- scatter of absolute error vs hop-distance to the
-    nearest surface (boundary) node.
-
-    Args:
-        true_values: np.ndarray
-            (N,) ground-truth scalar field.
-        pred_values: np.ndarray
-            (N,) predicted scalar field.
-        edge_index: np.ndarray
-            (2, E) edge endpoints.
-        num_nodes: int
-            Total number of nodes.
-        element_connectivity: object
-            Tetrahedral connectivity from the graph.
-        field_label: str
-            Human-readable field name for the title.
-        output_path: Path
-            Destination image path.
-    """
-    boundary_nodes = extract_boundary_node_set(element_connectivity)
-    distances = compute_shortest_path_distances(edge_index, boundary_nodes, num_nodes)
-    reachable = distances >= 0
-
-    abs_error = np.abs(pred_values - true_values)
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(distances[reachable], abs_error[reachable], s=8, alpha=0.3)
-    ax.set_xlabel("Hop distance to boundary")
-    ax.set_ylabel("Absolute Error")
-    ax.set_title(f"{field_label} Error vs Distance to Boundary\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-
-
-def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
-    """
-    Orchestrator that runs all six mesh diagnostics (5.1, 5.2, 7.1, 7.2,
-    8.3, 8.4) on the last rollout timestep.
+    Plot
+    1. scatter plots: prediction vs target, where every point is one node
 
     Args:
         true_rollout: list
@@ -786,59 +751,112 @@ def plot_mesh_diagnostics(true_rollout, pred_rollout, output_dir, filename_prefi
         pred_rollout: list
             Predicted rollout graphs.
         output_dir: Path
-            Parent directory for output; a ``diagnostics/`` subdirectory is created.
+            Directory where diagnostic artifacts will be saved.
         filename_prefix: str
-            Prefix used for saved file names.
+            Prefix used for saved artifact names.
+    return: None
+        Saves all requested validation plots.
     """
-    diag_dir = Path(output_dir) / "diagnostics"
-    diag_dir.mkdir(parents=True, exist_ok=True)
-
-    true_graph = true_rollout[-1]
-    pred_graph = pred_rollout[-1]
+    print("Printing validation scatter plots and edge correlation...")
+    output_dir = Path(output_dir)
+    rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)
     num_timesteps = len(true_rollout)
-    edge_index = to_numpy(true_graph.edge_index).astype(np.int64)
-    positions = to_numpy(true_graph.x_pos_t)
-    num_nodes = positions.shape[0]
-    print(f"Plotting mesh diagnostics for {split_name}...")
-
     for field_name, field_label in TARGET_FIELDS:
-        true_vals = _extract_scalar(true_graph, field_name)
-        pred_vals = _extract_scalar(pred_graph, field_name)
+        scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
+        field_summary = rollout_summary["fields"][field_name]
+        _plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps)
+        # correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
+        # plot_edge_error_correlation(field_summary, correlation_path, split_name, num_timesteps)
 
-        # 5.1 Neighbor absolute error
-        print(f"\t\tDiag 5.1 ({field_name})...")
-        _plot_neighbor_abs_error(true_vals, pred_vals, edge_index, field_label,
-                                 diag_dir / f"{filename_prefix}_{field_name}_neighbor_abs_error.png",
-                                 split_name, num_timesteps)
+def compute_coordinate_bounds(coordinates_per_step):
+    """
+    Args:
+        coordinates_per_step: list
+            List of coordinate arrays with shape `(num_nodes, 3)`.
+        return: tuple
+            `(coordinate_min, coordinate_max, coordinate_span, padding)`.
+    """
+    if len(coordinates_per_step) == 0:
+        return _finite_coordinate_bounds_from_stack(np.zeros((0, 3), dtype=np.float64))
+    all_coordinates = np.concatenate(coordinates_per_step, axis=0)
+    return _finite_coordinate_bounds_from_stack(all_coordinates)
 
-        # 5.2 Error vs distance from worst node
-        print(f"\t\tDiag 5.2 ({field_name})...")
-        _plot_error_vs_distance_from_worst(true_vals, pred_vals, edge_index, num_nodes, field_label,
-                                           diag_dir / f"{filename_prefix}_{field_name}_error_vs_dist_worst.png",
-                                           split_name, num_timesteps)
+def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
+                   plot_diagnostics_advanced):
+    """
+    Generates all in-depth diagnostic plots for a single trajectory rollout.
+    Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
+    computed with scikit-learn (see plot_rollout / diagnostic_plot_helpers).
 
-        # 8.3 Error vs curvature
-        print(f"\t\tDiag 8.3 ({field_name})...")
-        _plot_error_vs_curvature(true_vals, pred_vals, positions, true_graph.x_element_connectivity,
-                                 field_label,
-                                 diag_dir / f"{filename_prefix}_{field_name}_error_vs_curvature.png",
-                                 split_name, num_timesteps)
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+        output_dir: Path
+            Directory where all plots for this trajectory are saved.
+        traj_split_name: str
+            Label used in plot titles, e.g. "traj0, test".
+        filename_prefix: str
+            Prefix for saved filenames, e.g. "traj0_test".
+        return: dict
+            Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 8.4 Error vs boundary distance
-        print(f"\t\tDiag 8.4 ({field_name})...")
-        _plot_error_vs_boundary_distance(true_vals, pred_vals, edge_index, num_nodes,
-                                         true_graph.x_element_connectivity, field_label,
-                                         diag_dir / f"{filename_prefix}_{field_name}_error_vs_boundary_dist.png",
-                                         split_name, num_timesteps)
+    # Paths (for _scatter generated inside the function itself)
+    gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"
+    volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"
+    rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"
 
-    # 7.1 Dirichlet energy (single combined plot)
-    print("\t\tDiag 7.1 (Dirichlet energy)...")
-    _plot_dirichlet_energy_bar(true_graph, pred_graph,
-                               diag_dir / f"{filename_prefix}_dirichlet_energy.png",
-                               split_name, num_timesteps)
+    # Plots
+    _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name)
+    _make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
+                              gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
+                              split_name=traj_split_name)
+    _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)
+    _plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                              filename_prefix=filename_prefix, split_name=traj_split_name)
+    _plot_scatter_edge_corr(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                            filename_prefix=filename_prefix, split_name=traj_split_name)
 
-    # 7.2 Spectral comparison (single combined figure)
-    print("\t\tDiag 7.2 (spectral comparison)...")
-    _plot_spectral_comparison(true_graph, pred_graph,
-                              diag_dir / f"{filename_prefix}_spectral_comparison.png", k=50,
-                              split_name=split_name, num_timesteps=num_timesteps)
+    if plot_diagnostics_advanced:
+        try:
+            plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
+                                  filename_prefix=filename_prefix, split_name=traj_split_name)
+        except Exception as e:
+            print(f"Error while plotting mesh diagnostics: {e}")
+
+    paths = {"images": {}, "videos": {}}
+    paths["videos"]["beam_comparison_gif"] = gif_path
+    paths["images"]["volume_change"] = volume_png_path
+    paths["images"]["rollout_error_vs_timestep"] = rollout_error_path
+    for field_name, _ in TARGET_FIELDS:
+        scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
+        if scatter_path.exists():
+            paths["images"][f"{field_name}_prediction_vs_target"] = scatter_path
+        error_gif_path = output_dir / f"{filename_prefix}_{field_name}_signed_relative_error.gif"
+        if error_gif_path.exists():
+            paths["videos"][f"{field_name}_signed_relative_error"] = error_gif_path
+        if plot_diagnostics_advanced:
+            corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
+            if corr_path.exists():
+                paths["images"][f"{field_name}_edge_error_correlation"] = corr_path
+
+    if plot_diagnostics_advanced:
+        diag_dir = output_dir / "diagnostics"
+        if diag_dir.exists():
+            for field_name, _ in TARGET_FIELDS:
+                for suffix in ["neighbor_abs_error", "error_vs_dist_worst",
+                               "error_vs_curvature", "error_vs_boundary_dist"]:
+                    diag_path = diag_dir / f"{filename_prefix}_{field_name}_{suffix}.png"
+                    if diag_path.exists():
+                        paths["images"][f"diag/{field_name}_{suffix}"] = diag_path
+            dirichlet_path = diag_dir / f"{filename_prefix}_dirichlet_energy.png"
+            if dirichlet_path.exists():
+                paths["images"]["diag/dirichlet_energy"] = dirichlet_path
+            spectral_path = diag_dir / f"{filename_prefix}_spectral_comparison.png"
+            if spectral_path.exists():
+                paths["images"]["diag/spectral_comparison"] = spectral_path
+    return paths

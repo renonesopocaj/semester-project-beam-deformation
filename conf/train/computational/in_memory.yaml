@@ -2,3 +2,4 @@ num_workers: 0
 batch_size: 64
 torch_compile: False
 profiling: False # disabled because it worsens computational efficiency
+pin_memory: True

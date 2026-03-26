@@ -1,3 +1,8 @@
+"""
+models_helpers.py
+Contains helper functions for building models.
+"""
+
 import torch.nn as nn
 
 def build_mlp_d(in_size, hidden_size, out_size, num_layers, layer_norm, use_sigmoid, use_softmax):

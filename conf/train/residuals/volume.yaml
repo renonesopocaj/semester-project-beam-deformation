@@ -1,0 +1,2 @@
+residual_list: ["volume"]
+curvature_loss_weight: 1.0

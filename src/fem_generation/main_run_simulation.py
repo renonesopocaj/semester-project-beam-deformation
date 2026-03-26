@@ -11,6 +11,7 @@ are test samples that have only one feature (between force_x, force_y, force_z, 
 and then some that have 2, some 3, and so on. Every test sample has at least one feature out of distribution.
 """
 
+import json
 from itertools import combinations, product
 from math import ceil
 from pathlib import Path
@@ -18,8 +19,6 @@ from pathlib import Path
 import numpy as np
 import yaml
 from tqdm import tqdm
-
-from src.fem_generation.beam_fea_solver import fea_simulation
 
 # Round-based equality used when deciding whether two float values should be treated as the same grid value.
 DECIMALS = 10
@@ -297,6 +296,35 @@ def _in_range(val, lo, hi, tol):
     return (float(lo) - float(tol)) <= float(val) <= (float(hi) + float(tol))
 
 
+def _list_ood_feature_names(combo, train_ranges):
+    """
+    List split-defining features whose values fall outside the train interval.
+
+    Names match cfg train / test_ood_ranges keys: force_x, force_y, force_z, lengths, widths.
+
+    Args:
+        combo: tuple
+            combo in the form ((fx, fy, fz), L, W)
+        train_ranges: dict
+            dict with keys fx, fy, fz, L, W mapping to (min, max)
+        return: list of str
+            OOD feature names in axis order
+    """
+    (fx, fy, fz), L, W = combo
+    names = []
+    if not _in_range(fx, train_ranges["fx"][0], train_ranges["fx"][1], TOL):
+        names.append("force_x")
+    if not _in_range(fy, train_ranges["fy"][0], train_ranges["fy"][1], TOL):
+        names.append("force_y")
+    if not _in_range(fz, train_ranges["fz"][0], train_ranges["fz"][1], TOL):
+        names.append("force_z")
+    if not _in_range(L, train_ranges["L"][0], train_ranges["L"][1], TOL):
+        names.append("lengths")
+    if not _in_range(W, train_ranges["W"][0], train_ranges["W"][1], TOL):
+        names.append("widths")
+    return names
+
+
 def _count_ood_features(combo, train_ranges):
     """
     Count how many of the five split-defining features are outside the train interval.
@@ -309,27 +337,7 @@ def _count_ood_features(combo, train_ranges):
         return: int
             number of OOD features in the combo
     """
-    # Unpack the combo.
-    (fx, fy, fz), L, W = combo
-    # Count how many features are outside the train intervals.
-    n_ood = 0
-    # Check force_x.
-    if not _in_range(fx, train_ranges["fx"][0], train_ranges["fx"][1], TOL):
-        n_ood += 1
-    # Check force_y.
-    if not _in_range(fy, train_ranges["fy"][0], train_ranges["fy"][1], TOL):
-        n_ood += 1
-    # Check force_z.
-    if not _in_range(fz, train_ranges["fz"][0], train_ranges["fz"][1], TOL):
-        n_ood += 1
-    # Check length.
-    if not _in_range(L, train_ranges["L"][0], train_ranges["L"][1], TOL):
-        n_ood += 1
-    # Check width.
-    if not _in_range(W, train_ranges["W"][0], train_ranges["W"][1], TOL):
-        n_ood += 1
-    # Return the exact number of OOD features.
-    return n_ood
+    return len(_list_ood_feature_names(combo, train_ranges))
 
 
 def _split_target_counts(cfg):
@@ -815,6 +823,9 @@ def run_simulations(config_path, verbose, skip_existing, modes):
     3. create output folders
     4. launch fea_simulation once per parameter combination
 
+    Split construction is deterministic (no randomness): same config yields the same
+    combo order and trajectory indices as enumerate(combos) in the simulation loop.
+
     Args:
         config_path: str
             path of config file
@@ -824,8 +835,11 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             skip existing graphs if True
         modes: tuple or list
             requested splits, e.g. ("val", "test")
+        only_json: bool
+            if True, only build the test split, write and print test_ood_features.json;
+            no FEA runs. Requires "test" in modes and a non-empty test split.
         return: None
-            runs the simulations
+            runs the simulations or writes JSON only
     """
     cfg = load_config(config_path)
     defaults = cfg["defaults"]
@@ -837,6 +851,31 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         if mode not in valid_modes:
             raise ValueError(f"Unknown mode '{mode}'. Valid modes are: train, val, test.")
 
+    if cfg["only_json"]:
+        if "test" not in requested_modes:
+            raise ValueError("only_json requires 'test' in modes.")
+        n_train, n_val, n_test = _split_target_counts(cfg)
+        if n_test == 0:
+            raise ValueError("only_json requires a non-zero test split (check test_fraction / train size).")
+        test_combos = build_test(cfg)
+        if len(test_combos) != n_test:
+            raise RuntimeError(f"Test split has length {len(test_combos)}, expected {n_test}.")
+        test_dir = Path(output_root) / "test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        train_ranges = _train_ranges(cfg)
+        ood_by_traj = {
+            str(idx): _list_ood_feature_names(combo, train_ranges)
+            for idx, combo in enumerate(test_combos)
+        }
+        ood_path = test_dir / "test_ood_features.json"
+        with open(ood_path, "w") as f:
+            json.dump(ood_by_traj, f, indent=2)
+        print(json.dumps(ood_by_traj, indent=2))
+        return
+
+    # Deferred import so MPI/Dolfin is never initialized for only_json runs.
+    from src.fem_generation.beam_fea_solver import fea_simulation
+
     n_train, n_val, n_test = _split_target_counts(cfg)
     expected_counts = {"train": n_train, "val": n_val, "test": n_test}
     builders = {"train": build_train, "val": build_val, "test": build_test}
@@ -847,6 +886,18 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         if len(splits[mode]) != expected_counts[mode]:
             raise RuntimeError(f"Split '{mode}' has length {len(splits[mode])}, "
                                f"but the expected target is {expected_counts[mode]}.")
+
+    if "test" in requested_modes and len(splits["test"]) > 0:
+        test_dir = Path(output_root) / "test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        train_ranges = _train_ranges(cfg)
+        ood_by_traj = {
+            str(idx): _list_ood_feature_names(combo, train_ranges)
+            for idx, combo in enumerate(splits["test"])
+        }
+        ood_path = test_dir / "test_ood_features.json"
+        with open(ood_path, "w") as f:
+            json.dump(ood_by_traj, f, indent=2)
 
     for mode in requested_modes:
         combos = splits[mode]
@@ -886,6 +937,6 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
 
 if __name__ == "__main__":
-    # Default manual entrypoint used when invoking this file directly.
     config = "conf/fem_generation/config_original.yaml"
+
     run_simulations(config, verbose=False, skip_existing=False, modes=("val", "test"))

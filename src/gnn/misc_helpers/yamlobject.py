@@ -30,6 +30,17 @@ def _extract_nested(cfg, key):
     return None
 
 class EdaYaml:
+    raw_data_dir: str
+    dataset_type: str
+    eda_split: str
+    gif_generation_mode: str
+    gif_sample_percentage: float
+    generate_distributions: bool
+    normalization_runs: list
+    run_colors: dict
+    vector_run_names: list
+    scalar_run_names: list
+    scalar_feature_names: list
 
     def __init__(self, cfg):
         """
@@ -41,6 +52,16 @@ class EdaYaml:
         """
         flattened_cfg = _to_dict_flatten(cfg)
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
+        self.dataset_type = flattened_cfg["dataset_type"]
+        self.eda_split = flattened_cfg["eda_split"]
+        self.gif_generation_mode = flattened_cfg["gif_generation_mode"]
+        self.gif_sample_percentage = flattened_cfg["gif_sample_percentage"]
+        self.generate_distributions = flattened_cfg["generate_distributions"]
+        self.normalization_runs = _extract_nested(cfg, "normalization_runs")
+        self.run_colors = _extract_nested(cfg, "run_colors")
+        self.vector_run_names = _extract_nested(cfg, "vector_run_names")
+        self.scalar_run_names = _extract_nested(cfg, "scalar_run_names")
+        self.scalar_feature_names = _extract_nested(cfg, "scalar_feature_names")
 
 
 class PreprocessYaml:
@@ -130,6 +151,19 @@ class TrainYaml:
         self.log_test_media = flattened_cfg["log_test_media"]
         self.devices = flattened_cfg["devices"]
         self.residual_list = flattened_cfg["residual_list"]
+        self.plot_diagnostics_advanced = flattened_cfg["plot_diagnostics_advanced"]
+        self.selected_validation_trajectories = flattened_cfg["selected_validation_trajectories"]
+        self.selected_test_trajectories = flattened_cfg["selected_test_trajectories"]
+        self.curvature_loss_weight = flattened_cfg["curvature_loss_weight"]
+        self.optimizer = flattened_cfg["optimizer"]
+        self.fused_adam = flattened_cfg["fused_adam"]
+        self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
+        self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
+        self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
+        self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
+        self.pin_memory = flattened_cfg["pin_memory"]
+        self.noise_scale = flattened_cfg["noise_scale"]
+        self.noise_gamma = flattened_cfg["noise_gamma"]
 
 def _to_dict_flatten(data):
     """
@@ -150,3 +184,33 @@ def _to_dict_flatten(data):
         else:
             flat[key] = value
     return flat
+
+def cfg_for_wandb(cfg):
+    """
+    Resolved train config as plain nested dict, without Hydra metadata (for W&B).
+    Helper for train.py
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: dict
+        JSON-friendly nested mapping suitable for wandb.config.
+    """
+    container = OmegaConf.to_container(cfg, resolve=True)
+    if isinstance(container, dict) and "hydra" in container:
+        container = {key: value for key, value in container.items() if key != "hydra"}
+    return container
+
+
+def train_cfg_yaml_for_wandb(cfg):
+    """
+    Same content as the resolved YAML printed in main(), minus the hydra: block.
+    Helper for train.py
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Full Hydra-composed training config.
+    return: str
+        Multi-line YAML string for wandb.summary.
+    """
+    return OmegaConf.to_yaml(OmegaConf.create(cfg_for_wandb(cfg)), resolve=True)

@@ -1,6 +1,7 @@
 """
 train.py
 Main training script.
+Final test/validation media may include scatter plots with R^2 from scikit-learn (see validation/plot_rollout.py).
 """
 
 import os
@@ -22,15 +23,18 @@ from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
 
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
-from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
-from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
-from src.gnn.preprocessing.stats import load_stats
+from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
+from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
+from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
+from src.gnn.training.optimizers import optimizer_factory
 
 matplotlib.use("Agg")
 plt.ioff()
+THETA_MAX_MARGIN = 1e-6
+
 
 def maybe_compile_model(model, train_cfg):
     """
@@ -53,9 +57,17 @@ def maybe_compile_model(model, train_cfg):
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
+        # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
+        # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
+        # layer_norm_enable_processor
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
-                            latent_size=train_cfg.latent_dim,
-                            num_msgs=train_cfg.num_messages)
+                            encoder_latent_size=train_cfg.latent_dim, decoder_latent_size=train_cfg.latent_dim,
+                            processor_latent_size=train_cfg.latent_dim,
+                            num_msgs=train_cfg.num_messages,
+                            num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
+                            layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
+                            layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
+                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     else:
@@ -75,36 +87,51 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         preprocess_dict: dict
             Preprocess config.
         return: tuple
-            Lightning module, Lightning trainer, stats, dt, and validation loader.
+            Lightning module, Lightning trainer, stats, dt, validation dataset, and validation dataloader.
     """
     model_root = Path(os.getcwd()) / "saved_models"
     model_root.mkdir(parents=True, exist_ok=True)
 
-    # ========================= Dataset stuff ===================
-    validation_dataloader = None
-    print("Train dataset:")
-    # device = "cpu" hardcoded for performance reason
-    train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
-    # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
-    # recommend CPU tensors plus pin_memory=True for faster transfer instead.
-    train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
-                                  num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                  pin_memory=True)
-    if train_cfg.enable_val:
-        print("Validation dataset:")
-        # device = "cpu" hardcoded for performance reason
-        validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
-        # PyTorch’s docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
-        # recommend CPU tensors plus pin_memory=True for faster transfer instead.
-        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
-                                           num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                           pin_memory=True)
+    # ========================= Stats (loaded first, needed by noised dataset) ===================
     print(f"Loading stats from {train_cfg.train_dir}...")
     node_stats, edge_stats, target_stats = load_stats(train_cfg.train_dir)
+    assert_stats_finite(node_stats, edge_stats, target_stats)
     dt = preprocess_cfg.dt
     print(f"\tNode features: mean shape = {node_stats.mean.shape}, std shape = {node_stats.std.shape}")
     print(f"\tEdge features: mean shape = {edge_stats.mean.shape}, std shape = {edge_stats.std.shape}")
     print(f"\tTarget features: mean shape = {target_stats.mean.shape}, std shape = {target_stats.std.shape}")
+    theta_max = None
+    if "curvature" in train_cfg.residual_list:
+        theta_max = load_theta_max(train_cfg.train_dir) + THETA_MAX_MARGIN
+        print(f"\tLoaded theta_max threshold = {theta_max}")
+
+    # ========================= Dataset stuff ===================
+    validation_dataset = None
+    validation_dataloader = None
+    print("Train dataset:")
+    # device = "cpu" hardcoded for performance reason
+    if train_cfg.noise_scale > 0:
+        train_dataset = InMemoryNoisedDataset(
+            sample_dir=train_cfg.train_dir, device="cpu",
+            noise_scale=train_cfg.noise_scale, gamma=train_cfg.noise_gamma,
+            dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats)
+        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
+    else:
+        train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
+    # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+    # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+    train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
+                                  num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                  pin_memory=train_cfg.pin_memory)
+    if train_cfg.enable_val:
+        print("Validation dataset:")
+        # device = "cpu" hardcoded for performance reason
+        validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
+        # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
+        # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
+                                           num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
+                                           pin_memory=train_cfg.pin_memory)
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
@@ -113,16 +140,19 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
+    optimizer = optimizer_factory(model, train_cfg)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
     training_id = time.strftime("%Y-%m-%d_%H-%M-%S")
     # Set Lightning Wrapper of Model.
+    wandb_train_cfg_yaml = train_cfg_yaml_for_wandb(train_dict) if train_cfg.use_wandb else ""
     lightning_module = LitModule(model=model, optimizer=optimizer, scheduler=scheduler, loss_type=train_cfg.loss_type,
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
-                                 train_cfg=train_cfg)
-    lightning_module.set_rollout_context(validation_loader=validation_dataloader, node_stats=node_stats,
+                                 train_cfg=train_cfg, theta_max=theta_max,
+                                 wandb_train_cfg_yaml=wandb_train_cfg_yaml)
+    lightning_module.set_rollout_context(validation_dataset=validation_dataset, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
     OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml")
@@ -134,7 +164,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
         # MisconfigurationException.
         logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False, offline=True)
+                             log_model=False, offline=True, config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
@@ -201,7 +231,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
                     val_dataloaders=validation_dataloader, ckpt_path=train_cfg.resume_from)
 
-    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader
+    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
@@ -223,18 +253,18 @@ def main(cfg):
 
     preprocess_cfg = PreprocessYaml(preprocess_dict)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if not torch.cuda.is_available():
+    if not torch.cuda.is_available() and train_cfg.training_type == "slurm":
         raise RuntimeError("CUDA is not available.")
     print(f"Using device: {device}")
 
     # =================== Train + validation ===================
-    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataloader = \
+    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader = \
         train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
     # =================== Final validation ===================
-    if validation_dataloader is not None:
+    if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        lightning_module.set_test_context(test_loader=validation_dataloader, split_name="validation")
+        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation")
         fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
     # =================== Testing ===================
@@ -245,8 +275,8 @@ def main(cfg):
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
-                                 pin_memory=True)
-    lightning_module.set_test_context(test_loader=test_dataloader, split_name="test")
+                                 pin_memory=train_cfg.pin_memory)
+    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test")
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
 if __name__ == "__main__":
