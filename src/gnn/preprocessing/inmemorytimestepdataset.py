@@ -115,7 +115,9 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         """
         data = self.data[idx]
 
-        eps = self.noise_scale * torch.randn_like(data.x_pos_t) # (N, 3)
+        eps = self.noise_scale * torch.randn_like(data.x_pos_t)  # (N, 3)
+        fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
+        eps[fixed_mask] = 0.0
         x_noised = data.x_pos_t + eps
         v_noised = data.x_vel_t + eps / self.dt
 
