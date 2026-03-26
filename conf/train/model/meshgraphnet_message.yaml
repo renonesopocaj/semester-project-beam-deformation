@@ -1,0 +1,3 @@
+model_name: "MGN"
+num_messages: 15
+latent_dim: 128
