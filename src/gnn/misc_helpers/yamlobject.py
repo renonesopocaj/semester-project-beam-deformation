@@ -164,6 +164,7 @@ class TrainYaml:
         self.pin_memory = flattened_cfg["pin_memory"]
         self.noise_scale = flattened_cfg["noise_scale"]
         self.noise_gamma = flattened_cfg["noise_gamma"]
+        self.noise_seed = flattened_cfg["noise_seed"]
 
 def _to_dict_flatten(data):
     """

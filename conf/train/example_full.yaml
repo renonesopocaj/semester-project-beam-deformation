@@ -13,6 +13,7 @@ training:
   loss_type: "mse"
   resume_from: null
   checkpoint_interval: 20
+  noise_seed: 42
 validation:
   enable_val: True
   validation_interval: 1

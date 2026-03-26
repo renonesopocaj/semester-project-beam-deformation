@@ -114,7 +114,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         train_dataset = InMemoryNoisedDataset(
             sample_dir=train_cfg.train_dir, device="cpu",
             noise_scale=train_cfg.noise_scale, gamma=train_cfg.noise_gamma,
-            dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats)
+            dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
+            base_seed=train_cfg.noise_seed)
         print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
     else:
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")

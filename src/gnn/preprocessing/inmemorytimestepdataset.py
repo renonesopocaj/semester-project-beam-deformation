@@ -67,9 +67,10 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     edge_stats_mean: torch.Tensor
     edge_stats_std: torch.Tensor
     target_stats_std_acc: torch.Tensor
+    base_seed: int
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt,
-                 node_stats, edge_stats, target_stats):
+                 node_stats, edge_stats, target_stats, base_seed):
         """
         Args:
             sample_dir: str
@@ -88,6 +89,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                 Edge feature normalization statistics.
             target_stats: Stats
                 Target normalization statistics.
+            base_seed: int
+                Base seed used to build deterministic per-sample noise.
         """
         super().__init__(sample_dir, device)
         self.noise_scale = noise_scale
@@ -98,6 +101,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_mean = edge_stats.mean.clone()
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
+        self.base_seed = int(base_seed)
 
     def __getitem__(self, idx):
         """
@@ -115,7 +119,11 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         """
         data = self.data[idx]
 
-        eps = self.noise_scale * torch.randn_like(data.x_pos_t)  # (N, 3)
+        # Derive noise from a deterministic per-sample seed so repeated runs are reproducible.
+        noise_generator = torch.Generator(device=data.x_pos_t.device)
+        noise_generator.manual_seed(self.base_seed + int(idx))
+        eps = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
+                                             device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
         eps[fixed_mask] = 0.0
         x_noised = data.x_pos_t + eps
