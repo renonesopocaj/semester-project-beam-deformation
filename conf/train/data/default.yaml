@@ -1,4 +1,4 @@
-dataset_dir: "dataset/processed/single_direction_beam/z_isotr_log_displace/large"
+dataset_dir: "dataset/processed/single_direction_beam/z_isotr_log/large"
 train_dir: ${data.dataset_dir}/train
 val_dir: ${data.dataset_dir}/val
 test_dir: ${data.dataset_dir}/test

@@ -89,15 +89,13 @@ class MLP(nn.Module):
     def __init__(self, size_in, size_out, size_hidden):
         super().__init__()
         # FIXME: call activation factory instead of this
-        self.net = nn.Sequential(
-            nn.Linear(size_in, size_hidden),
-            nn.LeakyReLU(0.2),
-            nn.Linear(size_hidden, size_hidden),
-            nn.LeakyReLU(0.2),
-            nn.Linear(size_hidden, size_hidden),
-            nn.LeakyReLU(0.2),
-            nn.Linear(size_hidden, size_out),
-        )
+        self.net = nn.Sequential(nn.Linear(size_in, size_hidden),
+                                nn.LeakyReLU(0.2),
+                                nn.Linear(size_hidden, size_hidden),
+                                nn.LeakyReLU(0.2),
+                                nn.Linear(size_hidden, size_hidden),
+                                nn.LeakyReLU(0.2),
+                                nn.Linear(size_hidden, size_out))
 
     def forward(self, x):
         """

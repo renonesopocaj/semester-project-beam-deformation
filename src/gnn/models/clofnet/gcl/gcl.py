@@ -130,7 +130,7 @@ class VanillaGCL(AbstractGCL):
     """
 
     def __init__(self, input_nf, output_nf, hidden_nf, edges_in_nf=0, act_fn=nn.ReLU(), bias=True, attention=False,
-                 t_eq=False, recurrent=True):
+                 t_eq=False, skip_connection=True):
         """
         Args:
             input_nf: int
@@ -149,13 +149,13 @@ class VanillaGCL(AbstractGCL):
                 Whether to apply a scalar gate to each edge message.
             t_eq: bool
                 Legacy flag kept for compatibility. It is unused in this code.
-            recurrent: bool
+            skip_connection: bool
                 Whether to add a residual connection on node updates.
         """
         super().__init__()
         self.attention = attention
         self.t_eq = t_eq
-        self.recurrent = recurrent
+        self.skip_connection = skip_connection
         input_edge_nf = input_nf * 2
         # Edge MLP
         self.edge_mlp = nn.Sequential(nn.Linear(input_edge_nf + edges_in_nf, hidden_nf, bias=bias),
@@ -222,6 +222,6 @@ class VanillaGCL(AbstractGCL):
         agg = unsorted_segment_sum(edge_attr, row, num_segments=h.size(0))
         in_node = torch.cat([h, agg], dim=1)
         out_pred = self.node_mlp(in_node)
-        if self.recurrent: # residual connection
+        if self.skip_connection: # residual connection
             out_pred = out_pred + h
         return out_pred

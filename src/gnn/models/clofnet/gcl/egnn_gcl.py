@@ -67,7 +67,7 @@ class EgnnGCL(nn.Module):
         edge_coords_nf = 1
 
         self.coords_weight = coords_weight
-        self.recurrent = recurrent
+        self.skip_connection = recurrent
         self.attention = attention
         self.norm_diff = norm_diff
         self.tanh = tanh
@@ -96,7 +96,7 @@ class EgnnGCL(nn.Module):
             self.att_mlp = nn.Sequential(nn.Linear(hidden_nf, 1),
                                          nn.Sigmoid())
 
-    def edge_model(self, source, target, radial, edge_attr):
+    def edge_model_forward(self, source, target, radial, edge_attr):
         """
         Compute edge features/messages from node states and radial geometry.
 
@@ -114,19 +114,18 @@ class EgnnGCL(nn.Module):
             Edge features/messages, shape [E, hidden_nf].
         """
         if edge_attr is None:
-            out = torch.cat([source, target, radial], dim=1)
+            in_feat = torch.cat([source, target, radial], dim=1)
         else:
-            out = torch.cat([source, target, radial, edge_attr], dim=1)
-
-        out = self.edge_mlp(out)
+            in_feat = torch.cat([source, target, radial, edge_attr], dim=1)
+        out_pred = self.edge_mlp(in_feat)
 
         if self.attention:
-            att_val = self.att_mlp(out)
-            out = out * att_val
+            att_val = self.att_mlp(out_pred)
+            out_pred = out_pred * att_val
 
-        return out
+        return out_pred
 
-    def node_model(self, x, edge_index, edge_attr, node_attr):
+    def node_model_forward(self, x, edge_index, edge_attr, node_attr):
         """
         Aggregate messages and update node embeddings.
 
@@ -143,28 +142,24 @@ class EgnnGCL(nn.Module):
             node_attr: torch.Tensor or None
                 Optional extra node attributes concatenated before the node MLP.
 
-            return: (out, agg_input)
-                out: torch.Tensor
-                    Updated node features, shape [N, output_nf].
-                agg_input: torch.Tensor
-                    The concatenated tensor fed to the node MLP.
+        return: (out, agg_input)
+            out: torch.Tensor
+                Updated node features, shape [N, output_nf].
+            agg_input: torch.Tensor
+                The concatenated tensor fed to the node MLP.
         """
-        row, col = edge_index
-        del col
+        row, _ = edge_index
+        del _
 
-        agg = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
-
+        aggregation = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
         if node_attr is not None:
-            agg = torch.cat([x, agg, node_attr], dim=1)
+            in_feat = torch.cat([x, aggregation, node_attr], dim=1)
         else:
-            agg = torch.cat([x, agg], dim=1)
-
-        out = self.node_mlp(agg)
-
-        if self.recurrent:
-            out = x + out
-
-        return out, agg
+            in_feat = torch.cat([x, aggregation], dim=1)
+        out_pred = self.node_mlp(in_feat)
+        if self.skip_connection:
+            out_pred = x + out_pred
+        return out_pred, in_feat
 
     def coord_model(self, coord, edge_index, coord_diff, edge_feat):
         """
@@ -254,9 +249,9 @@ class EgnnGCL(nn.Module):
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
+        edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
         coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
-        h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
+        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         del agg
 
         return h, coord, edge_attr
@@ -348,11 +343,11 @@ class EgnnGCLVelocity(EgnnGCL):
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
+        edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
         coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
         coord = coord + self.coord_mlp_vel(h) * vel
 
-        h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
+        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         del agg
 
         return h, coord, edge_attr

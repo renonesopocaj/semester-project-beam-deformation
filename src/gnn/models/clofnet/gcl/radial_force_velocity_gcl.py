@@ -31,16 +31,16 @@ class RadialForceGCL(AbstractGCL):
     def __init__(self, nf=64, edge_attr_nf=0, reg=0, act_fn=nn.LeakyReLU(0.2), clamp=False):
         """
         Args:
-        nf: int
-            Hidden dimension inside the radial force MLP.
-        edge_attr_nf: int
-            Number of extra edge attributes appended to the radial distance.
-        reg: float
-            Damping coefficient applied directly to coordinates.
-        act_fn: nn.Module
-            Activation used in the radial force MLP.
-        clamp: bool
-            Whether to clamp force vectors elementwise to [-100, 100].
+            nf: int
+                Hidden dimension inside the radial force MLP.
+            edge_attr_nf: int
+                Number of extra edge attributes appended to the radial distance.
+            reg: float
+                Damping coefficient applied directly to coordinates.
+            act_fn: nn.Module
+                Activation used in the radial force MLP.
+            clamp: bool
+                Whether to clamp force vectors elementwise to [-100, 100].
         """
         super().__init__()
         self.clamp = clamp

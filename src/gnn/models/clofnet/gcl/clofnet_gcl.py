@@ -184,17 +184,10 @@ class ClofGCL(EgnnGCL):
             return: torch.Tensor
                 Updated coordinates, shape [N, 3].
         """
-        row, col = edge_index
-        del col
-
+        row, _ = edge_index
+        del _
         coff = self.coord_mlp(edge_feat)
-
-        trans = (
-            coord_diff * coff[:, :1]
-            + coord_cross * coff[:, 1:2]
-            + coord_vertical * coff[:, 2:3]
-        )
-
+        trans = (coord_diff * coff[:, :1] + coord_cross * coff[:, 1:2] + coord_vertical * coff[:, 2:3])
         trans = torch.clamp(trans, min=-100, max=100)
 
         agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
@@ -247,12 +240,12 @@ class ClofGCL(EgnnGCL):
 
         radial, coord_diff, coord_cross, coord_vertical = self.coord2localframe(edge_index, coord)
 
-        edge_feat = self.edge_model(h[row], h[col], radial, edge_attr)
+        edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
         coord = self.coord_model(coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat)
 
         coord = coord + self.coord_mlp_vel(h) * vel
 
-        h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
+        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         del agg
 
         h = residue + h
