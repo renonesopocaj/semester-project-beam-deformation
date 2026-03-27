@@ -1,12 +1,34 @@
 """
 egnn_gcl.py
-"""
 
+Defines two GCL classes inspired from EGNN. One with velocity, one without.
+
+- Since squared distances are invariant to rotation and translation, the produced message m_ij is invariant too.
+- `h` and `edge_feat`, that means rotation/translation invariance
+- For coordinates `coord`, that means SE(3) equivariance
+
+
+EGNN GCL:
+    m_ij = phi_m(h_i, h_j, r_ij, e_ij)
+    x_i' = x_i + sum_j (x_i - x_j) * phi_x(m_ij)
+    h_i' = phi_h(h_i, sum_j m_ij)
+Where
+    r_ij = ||x_i - x_j||^2
+
+EGNN_GCL_VELOCITY
+    m_ij = phi_m(h_i, h_j, r_ij, e_ij)
+    x_i <- x_i  + mean_j ((x_i - x_j) * phi_x(m_ij)) + psi(h_i) * vel_i
+    h_i' = phi_h(h_i, sum_j m_ij)
+
+How is velocity equivariant? Let Q rotation matrix
+   psi_i * vel_i -> psi_i * (Q vel_i) = Q(psi_i * vel_i).
+
+TODO: EgnnGCL is INHERITED AND THUS USED, EgnnGCLVelocity is not
+"""
 
 import torch
 from torch import nn
 from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean, unsorted_segment_sum
-
 
 class EgnnGCL(nn.Module):
     """
@@ -119,6 +141,10 @@ class EgnnGCL(nn.Module):
             in_feat = torch.cat([source, target, radial, edge_attr], dim=1)
         out_pred = self.edge_mlp(in_feat)
 
+        # out_pred: [E, hidden_nf] att_val = self.att_mlp(out_pred): [E, 1]
+        # I do a term by term mul: this is basically a "soft importance" weight on each edge message, for which given
+        # an edge e_ij i have a weight and if the weight is near to 0 the edge is ignored. Since the gate is
+        # a scalar computed from invariant edge features, it does not break the equivariance argument.
         if self.attention:
             att_val = self.att_mlp(out_pred)
             out_pred = out_pred * att_val
@@ -148,8 +174,7 @@ class EgnnGCL(nn.Module):
             agg_input: torch.Tensor
                 The concatenated tensor fed to the node MLP.
         """
-        row, _ = edge_index
-        del _
+        row = edge_index[0]
 
         aggregation = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
         if node_attr is not None:
@@ -161,16 +186,13 @@ class EgnnGCL(nn.Module):
             out_pred = x + out_pred
         return out_pred, in_feat
 
-    def coord_model(self, coord, edge_index, coord_diff, edge_feat):
+    def coord_model_forward(self, coord, edge_index, coord_diff, edge_feat):
         """
-        Update coordinates along the relative direction only.
-
-        This is the EGNN-style coordinate update corresponding to Eq. (1):
+        Update coordinates along the relative direction only. FIXME: meaning "along the relative direction only"?
+        This is the SE(3) equivariant update corresponding to Eq. (1):
             x_i <- x_i + sum_j (x_i - x_j) * phi_x(m_ij)
-
         In this implementation:
             trans_ij = coord_diff_ij * coord_mlp(edge_feat_ij)
-
         and nodewise updates are the mean over incoming edge transforms.
 
         Args:
@@ -183,22 +205,23 @@ class EgnnGCL(nn.Module):
             edge_feat: torch.Tensor
                 Edge messages/features, shape [E, hidden_nf].
 
-            return: torch.Tensor
-                Updated coordinates, shape [N, 3].
+        return: torch.Tensor
+            Updated coordinates, shape [N, 3].
         """
-        row, col = edge_index
-        del col
-
+        row = edge_index[0]
+        # sum_j (x_i - x_j) * phi_x(m_ij)
         trans = coord_diff * self.coord_mlp(edge_feat)
         trans = torch.clamp(trans, min=-100, max=100)
-
-        agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
-        coord = coord + agg * self.coords_weight
+        # edge e is typically col[e] -> row[e], so you're saying to take all edges that come INSIDE a given i, for all
+        # nodes i
+        aggregation = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
+        # x_i := x_i + aggregation(trans)
+        coord = coord + aggregation * self.coords_weight
         return coord
 
     def coord2radial(self, edge_index, coord):
         """
-        Compute squared distances and relative directions for each edge.
+        Compute squared distances ||x_i - x_j||^2 and relative directions cord_diff = x_i - x_j for each edge.
 
         Args:
             edge_index: tuple[torch.Tensor, torch.Tensor]
@@ -206,11 +229,11 @@ class EgnnGCL(nn.Module):
             coord: torch.Tensor
                 Coordinates, shape [N, 3].
 
-            return: (radial, coord_diff)
-                radial: torch.Tensor
-                    Squared distances, shape [E, 1].
-                coord_diff: torch.Tensor
-                    Relative directions x_i - x_j, shape [E, 3].
+        return: (radial, coord_diff)
+            radial: torch.Tensor
+                Squared distances, shape [E, 1].
+            coord_diff: torch.Tensor
+                Relative directions x_i - x_j, shape [E, 3].
         """
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
@@ -238,22 +261,21 @@ class EgnnGCL(nn.Module):
             node_attr: torch.Tensor or None
                 Optional node features, shape [N, nodes_att_dim].
 
-            return: (h, coord, edge_attr)
-                h: torch.Tensor
-                    Updated node features.
-                coord: torch.Tensor
-                    Updated coordinates.
-                edge_attr: torch.Tensor or None
-                    Returned unchanged for interface compatibility.
+        return: (h, coord, edge_attr)
+            h: torch.Tensor
+                Updated node features.
+            coord: torch.Tensor
+                Updated coordinates.
+            edge_attr: torch.Tensor or None
+                Returned unchanged for interface compatibility.
         """
         row, col = edge_index
+        # Compute ||x_i-x_j||
         radial, coord_diff = self.coord2radial(edge_index, coord)
-
+        # Do all forward steps
         edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
-        coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
-        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
-        del agg
-
+        coord = self.coord_model_forward(coord, edge_index, coord_diff, edge_feat)
+        h, _ = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         return h, coord, edge_attr
 
 class EgnnGCLVelocity(EgnnGCL):
@@ -265,38 +287,37 @@ class EgnnGCLVelocity(EgnnGCL):
     - The velocity addition is a repository-side dynamics adaptation.
 
     Coordinate update:
-        x_i <- x_i
-             + mean_j ((x_i - x_j) * phi_x(m_ij))
-             + psi(h_i) * vel_i
-
-    Args:
-        input_nf: int
-            Input node feature dimension.
-        output_nf: int
-            Output node feature dimension.
-        hidden_nf: int
-            Hidden feature dimension.
-        edges_in_d: int
-            Extra edge feature dimension.
-        nodes_att_dim: int
-            Extra node attribute dimension.
-        act_fn: nn.Module
-            Activation used by the MLPs.
-        recurrent: bool
-            Whether node updates are residual.
-        coords_weight: float
-            Scaling for the aggregated coordinate update.
-        attention: bool
-            Whether to gate edge features.
-        norm_diff: bool
-            Whether to normalize relative directions.
-        tanh: bool
-            Whether to apply tanh on the scalar coefficient used in the radial
-            coordinate update.
+        x_i <- x_i  + mean_j ((x_i - x_j) * phi_x(m_ij)) + psi(h_i) * vel_i
     """
 
     def __init__( self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
                   coords_weight=1.0, attention=False, norm_diff=False, tanh=False):
+        """
+        Args:
+            input_nf: int
+                Input node feature dimension.
+            output_nf: int
+                Output node feature dimension.
+            hidden_nf: int
+                Hidden feature dimension.
+            edges_in_d: int
+                Extra edge feature dimension.
+            nodes_att_dim: int
+                Extra node attribute dimension.
+            act_fn: nn.Module
+                Activation used by the MLPs.
+            recurrent: bool
+                Whether node updates are residual.
+            coords_weight: float
+                Scaling for the aggregated coordinate update.
+            attention: bool
+                Whether to gate edge features.
+            norm_diff: bool
+                Whether to normalize relative directions.
+            tanh: bool
+                Whether to apply tanh on the scalar coefficient used in the radial
+                coordinate update.
+        """
         super().__init__(input_nf,
                          output_nf,
                          hidden_nf,
@@ -332,22 +353,20 @@ class EgnnGCLVelocity(EgnnGCL):
             node_attr: torch.Tensor or None
                 Optional node features.
 
-            return: (h, coord, edge_attr)
-                h: torch.Tensor
-                    Updated node features.
-                coord: torch.Tensor
-                    Updated coordinates.
-                edge_attr: torch.Tensor or None
-                    Returned unchanged.
+        return: (h, coord, edge_attr)
+            h: torch.Tensor
+                Updated node features.
+            coord: torch.Tensor
+                Updated coordinates.
+            edge_attr: torch.Tensor or None
+                Returned unchanged.
         """
         row, col = edge_index
         radial, coord_diff = self.coord2radial(edge_index, coord)
 
         edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
-        coord = self.coord_model(coord, edge_index, coord_diff, edge_feat)
+        coord = self.coord_model_forward(coord, edge_index, coord_diff, edge_feat)
         coord = coord + self.coord_mlp_vel(h) * vel
 
-        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
-        del agg
-
+        h, _ = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         return h, coord, edge_attr

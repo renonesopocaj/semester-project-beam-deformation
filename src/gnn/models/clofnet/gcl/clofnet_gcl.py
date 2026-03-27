@@ -1,5 +1,7 @@
 """
 clofnet_gcl.py
+
+ClofNet graph block with complete local frames.
 """
 
 from src.gnn.models.clofnet.gcl.egnn_gcl import EgnnGCL
@@ -10,7 +12,6 @@ from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean
 class ClofGCL(EgnnGCL):
     """
     ClofNet graph block with complete local frames.
-
     This is the key ClofNet layer in the file.
 
     Paper mapping:
@@ -121,15 +122,15 @@ class ClofGCL(EgnnGCL):
             coord: torch.Tensor
                 Coordinates, shape [N, 3].
 
-            return: (radial, coord_diff, coord_cross, coord_vertical)
-                radial: torch.Tensor
-                    Squared distances, shape [E, 1].
-                coord_diff: torch.Tensor
-                    First basis vector a_ij, shape [E, 3].
-                coord_cross: torch.Tensor
-                    Second basis vector b_ij, shape [E, 3].
-                coord_vertical: torch.Tensor
-                    Third basis vector c_ij, shape [E, 3].
+        return: (radial, coord_diff, coord_cross, coord_vertical)
+            radial: torch.Tensor
+                Squared distances, shape [E, 1].
+            coord_diff: torch.Tensor
+                First basis vector a_ij, shape [E, 3].
+            coord_cross: torch.Tensor
+                Second basis vector b_ij, shape [E, 3].
+            coord_vertical: torch.Tensor
+                Third basis vector c_ij, shape [E, 3].
         """
         row, col = edge_index
 
@@ -149,7 +150,7 @@ class ClofGCL(EgnnGCL):
 
         return radial, coord_diff, coord_cross, coord_vertical
 
-    def coord_model(self, coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat):
+    def coord_model_forward(self, coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat):
         """
         Vectorize learned scalar coefficients back into a 3D coordinate update.
 
@@ -181,17 +182,18 @@ class ClofGCL(EgnnGCL):
             edge_feat: torch.Tensor
                 Invariant edge embeddings/messages, shape [E, hidden_nf].
 
-            return: torch.Tensor
-                Updated coordinates, shape [N, 3].
+        return: torch.Tensor
+            Updated coordinates, shape [N, 3].
         """
-        row, _ = edge_index
-        del _
+        row = edge_index[0]
         coff = self.coord_mlp(edge_feat)
+        # this is vectorization V_ij reconstructing from local frame to then compute coordinates update
         trans = (coord_diff * coff[:, :1] + coord_cross * coff[:, 1:2] + coord_vertical * coff[:, 2:3])
         trans = torch.clamp(trans, min=-100, max=100)
-
-        agg = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
-        coord = coord + agg * self.coords_weight
+        # edge e is typically col[e] -> row[e], so you're saying to take all edges that come INSIDE a given i, for all
+        # nodes i, and then use aggregation
+        aggregation = unsorted_segment_mean(trans, row, num_segments=coord.size(0))
+        coord = coord + aggregation * self.coords_weight
         return coord
 
     def forward(self, h, edge_index, coord, vel, edge_attr=None, node_attr=None):
@@ -237,18 +239,13 @@ class ClofGCL(EgnnGCL):
         """
         row, col = edge_index
         residue = h
-
         radial, coord_diff, coord_cross, coord_vertical = self.coord2localframe(edge_index, coord)
-
         edge_feat = self.edge_model_forward(h[row], h[col], radial, edge_attr)
-        coord = self.coord_model(coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat)
-
+        # coord feat
+        coord = self.coord_model_forward(coord, edge_index, coord_diff, coord_cross)
         coord = coord + self.coord_mlp_vel(h) * vel
-
-        h, agg = self.node_model_forward(h, edge_index, edge_feat, node_attr)
-        del agg
-
+        # node feat + add skip connection + layer norm
+        h, _ = self.node_model_forward(h, edge_index, edge_feat, node_attr)
         h = residue + h
         h = self.layer_norm(h)
-
         return h, coord, edge_attr

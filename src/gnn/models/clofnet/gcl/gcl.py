@@ -192,7 +192,9 @@ class VanillaGCL(AbstractGCL):
             edge_in = torch.cat([edge_in, edge_attr], dim=1)
         out_pred = self.edge_mlp(edge_in)
         if self.attention:
-            # FIXME: what is this?
+            # I do a term by term mul: this is basically a "soft importance" weight on each edge message, for which given
+            # an edge e_ij i have a weight and if the weight is near to 0 the edge is ignored. Since the gate is
+            # a scalar computed from invariant edge features, it does not break the equivariance argument.
             att = self.att_mlp(torch.abs(source - target))
             out_pred = out_pred * att
 
@@ -217,8 +219,7 @@ class VanillaGCL(AbstractGCL):
         return: torch.Tensor
             Updated node features, shape [N, output_nf].
         """
-        row, _ = edge_index
-        del _ # FIXME: why del col? memory issues?
+        row = edge_index[0]
         agg = unsorted_segment_sum(edge_attr, row, num_segments=h.size(0))
         in_node = torch.cat([h, agg], dim=1)
         out_pred = self.node_mlp(in_node)
