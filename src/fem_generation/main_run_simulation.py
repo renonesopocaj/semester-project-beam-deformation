@@ -447,6 +447,7 @@ def _validate_test_ood_ranges(cfg):
     """
     Validate that each configured test OOD range is fully outside the corresponding train range.
     This keeps the semantics sharp: values coming from test_ood_ranges must really be out-of-distribution.
+    Each axis can have a "below" and/or "above" sub-range (or be empty {} for no OOD).
 
     Args:
         cfg: dict
@@ -461,25 +462,31 @@ def _validate_test_ood_ranges(cfg):
     axis_names = ["force_x", "force_y", "force_z", "lengths", "widths"]
     # Validate one axis at a time.
     for axis_name in axis_names:
-        # Read the train and OOD xinterval.
+        axis_ood = ood[axis_name]
+        # Skip axes with no OOD ranges (empty dict).
+        if not axis_ood:
+            continue
+
         train_start = float(t[axis_name]["start"])
         train_stop = float(t[axis_name]["stop"])
-        ood_start = float(ood[axis_name]["start"])
-        ood_stop = float(ood[axis_name]["stop"])
-
-        # Convert both to ordered intervals.
         train_lo = min(train_start, train_stop)
         train_hi = max(train_start, train_stop)
-        ood_lo = min(ood_start, ood_stop)
-        ood_hi = max(ood_start, ood_stop)
 
-        # Accept only intervals fully on the left or fully on the right.
-        is_fully_left = ood_hi < (train_lo - TOL)
-        is_fully_right = ood_lo > (train_hi + TOL)
+        # Validate each configured direction independently.
+        for direction in ("below", "above"):
+            if direction not in axis_ood:
+                continue
+            ood_start = float(axis_ood[direction]["start"])
+            ood_stop = float(axis_ood[direction]["stop"])
+            ood_lo = min(ood_start, ood_stop)
+            ood_hi = max(ood_start, ood_stop)
 
-        # Reject any overlap.
-        if not (is_fully_left or is_fully_right):
-            raise ValueError(f"test_ood_ranges['{axis_name}'] overlaps the train range.")
+            is_fully_left = ood_hi < (train_lo - TOL)
+            is_fully_right = ood_lo > (train_hi + TOL)
+
+            if not (is_fully_left or is_fully_right):
+                raise ValueError(f"test_ood_ranges['{axis_name}']['{direction}'] "
+                                 f"overlaps the train range.")
 
 
 def build_train(cfg):
@@ -549,23 +556,24 @@ def build_val(cfg):
         scale_factor += 1
 
 
-def _test_axis_values(id_start, id_stop, ood_start, ood_stop, n_axis, train_vals):
+def _test_axis_values(id_start, id_stop, ood_below, ood_above, n_axis, train_vals):
     """
     Generate the candidate values for one test axis.
 
     The returned dict contains:
     - "id": in-distribution values inside the train interval, but off the exact train grid
-    - "ood": out-of-distribution values coming from the configured OOD interval
+    - "ood": out-of-distribution values coming from the configured OOD intervals
+             (merged from below and above ranges when both are present)
 
     Args:
         id_start: float
             train-range start
         id_stop: float
             train-range stop
-        ood_start: float
-            OOD-range start
-        ood_stop: float
-            OOD-range stop
+        ood_below: dict or None
+            {"start": float, "stop": float} for the below-train OOD range, or None
+        ood_above: dict or None
+            {"start": float, "stop": float} for the above-train OOD range, or None
         n_axis: int
             target number of values for both the ID and the OOD part
         train_vals: list of float
@@ -575,9 +583,18 @@ def _test_axis_values(id_start, id_stop, ood_start, ood_stop, n_axis, train_vals
     """
     # Build the in-distribution off-grid values.
     id_values = vals_excluding(id_start, id_stop, n_axis, train_vals)
-    # Build the OOD values directly from the OOD interval.
-    # They are unique by construction at the axis level.
-    ood_values = _build_unique_axis_values(ood_start, ood_stop, n_axis, "test_ood_axis")
+    # Build OOD values from both below and above ranges, then merge.
+    ood_values = []
+    if ood_below is not None:
+        below_vals = _build_unique_axis_values(
+            ood_below["start"], ood_below["stop"], n_axis, "test_ood_below")
+        ood_values.extend(below_vals)
+    if ood_above is not None:
+        above_vals = _build_unique_axis_values(
+            ood_above["start"], ood_above["stop"], n_axis, "test_ood_above")
+        ood_values.extend(above_vals)
+    # Deduplicate in case the two ranges overlap at a boundary.
+    ood_values = _unique_float_list(ood_values, DECIMALS)
     # Return the two groups.
     return {"id": id_values, "ood": ood_values}
 
@@ -696,6 +713,23 @@ def _allocate_bucket_counts(total_count, bucket_capacities):
     return counts
 
 
+def _extract_ood_below_above(axis_ood):
+    """
+    Extract the below/above sub-dicts from an axis entry in test_ood_ranges.
+
+    Args:
+        axis_ood: dict
+            the per-axis OOD config, e.g. {"below": {...}, "above": {...}} or {}
+        return: tuple
+            (below_dict_or_None, above_dict_or_None)
+    """
+    if not axis_ood:
+        return None, None
+    below = axis_ood.get("below", None)
+    above = axis_ood.get("above", None)
+    return below, above
+
+
 def build_test(cfg):
     """
     Test:
@@ -739,6 +773,13 @@ def build_test(cfg):
     # Start from scale 1.
     scale_factor = 1
 
+    # Extract below/above for each axis.
+    fx_below, fx_above = _extract_ood_below_above(ood["force_x"])
+    fy_below, fy_above = _extract_ood_below_above(ood["force_y"])
+    fz_below, fz_above = _extract_ood_below_above(ood["force_z"])
+    L_below, L_above = _extract_ood_below_above(ood["lengths"])
+    W_below, W_above = _extract_ood_below_above(ood["widths"])
+
     # Keep increasing density until enough exact-k-OOD candidates exist.
     while True:
         # Build the per-axis candidate size for this iteration.
@@ -747,19 +788,19 @@ def build_test(cfg):
         # Build the ID / OOD candidate values for each axis.
         axis_value_groups = [
             _test_axis_values(t["force_x"]["start"], t["force_x"]["stop"],
-                              ood["force_x"]["start"], ood["force_x"]["stop"], n_axis, fx_tr),
+                              fx_below, fx_above, n_axis, fx_tr),
 
             _test_axis_values(t["force_y"]["start"], t["force_y"]["stop"],
-                              ood["force_y"]["start"], ood["force_y"]["stop"], n_axis, fy_tr),
+                              fy_below, fy_above, n_axis, fy_tr),
 
             _test_axis_values(t["force_z"]["start"], t["force_z"]["stop"],
-                              ood["force_z"]["start"], ood["force_z"]["stop"], n_axis, fz_tr),
+                              fz_below, fz_above, n_axis, fz_tr),
 
             _test_axis_values(t["lengths"]["start"], t["lengths"]["stop"],
-                              ood["lengths"]["start"], ood["lengths"]["stop"], n_axis, L_tr),
+                              L_below, L_above, n_axis, L_tr),
 
             _test_axis_values(t["widths"]["start"], t["widths"]["stop"],
-                              ood["widths"]["start"], ood["widths"]["stop"], n_axis, W_tr),
+                              W_below, W_above, n_axis, W_tr),
         ]
 
         # Build the five exact-OOD buckets.
@@ -813,6 +854,89 @@ def build_test(cfg):
 
 
 # ---------------------------------------------------------------------------
+#  Zero-force guard
+# ---------------------------------------------------------------------------
+
+def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
+    """
+    Build and save trajectory_params.json mapping each .pt filename to its
+    simulation parameters and OOD feature list.
+
+    Args:
+        combos: list of tuple
+            split combos in the form ((fx, fy, fz), L, W)
+        defaults: dict
+            default simulation parameters from the config
+        split_dir: pathlib.Path
+            directory of the split (e.g. output_root / "train")
+        train_ranges: dict
+            dict mapping feature name to (min, max) from the train config
+        return: None
+            writes trajectory_params.json to split_dir
+    """
+    graphs_dir = split_dir / "graphs"
+    params_dict = {}
+    for idx, ((fx, fy, fz), L, W) in enumerate(combos):
+        p = dict(defaults)
+        p["L"] = L
+        p["W"] = W
+        p["fx"] = fx
+        p["fy"] = fy
+        p["fz"] = fz
+        filename = _graph_filepath(p, graphs_dir).name
+        ood_features = _list_ood_feature_names(((fx, fy, fz), L, W), train_ranges)
+        params_dict[filename] = {
+            "traj_idx": idx, "fx": fx, "fy": fy, "fz": fz,
+            "L": L, "W": W, "ood_features": ood_features,
+        }
+    split_dir.mkdir(parents=True, exist_ok=True)
+    json_path = split_dir / "trajectory_params.json"
+    with open(json_path, "w") as f:
+        json.dump(params_dict, f, indent=2)
+    print(f"Saved trajectory_params.json ({len(params_dict)} entries) => {json_path}")
+
+
+def _validate_no_zero_force(combos, split_name):
+    """
+    Raise ValueError if any combo has (fx, fy, fz) == (0, 0, 0).
+    The zero-force trajectory is injected separately into test,
+    so it must not appear in the algorithmically generated splits.
+
+    Args:
+        combos: list of tuple
+            combos in the form ((fx, fy, fz), L, W)
+        split_name: str
+            name of the split, used in the error message
+        return: None
+            raises ValueError if a zero-force combo is found
+    """
+    for combo in combos:
+        (fx, fy, fz) = combo[0]
+        if abs(float(fx)) < TOL and abs(float(fy)) < TOL and abs(float(fz)) < TOL:
+            raise ValueError(
+                f"Zero-force combo found in '{split_name}' split: {combo}. "
+                f"Adjust the YAML config so that (0, 0, 0) is not generated "
+                f"in the train grid (e.g. change n so that 0 is not in the linspace).")
+
+
+def _build_zero_force_test_combo(cfg):
+    """
+    Build one deterministic zero-force test combo using midpoints of the train
+    length and width ranges.
+
+    Args:
+        cfg: dict
+            yaml config
+        return: tuple
+            ((0.0, 0.0, 0.0), L_mid, W_mid)
+    """
+    t = cfg["train"]
+    L_mid = (float(t["lengths"]["start"]) + float(t["lengths"]["stop"])) / 2.0
+    W_mid = (float(t["widths"]["start"]) + float(t["widths"]["stop"])) / 2.0
+    return ((0.0, 0.0, 0.0), L_mid, W_mid)
+
+
+# ---------------------------------------------------------------------------
 #  Main loop
 # ---------------------------------------------------------------------------
 
@@ -857,12 +981,21 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         n_train, n_val, n_test = _split_target_counts(cfg)
         if n_test == 0:
             raise ValueError("only_json requires a non-zero test split (check test_fraction / train size).")
+        # Validate train has no zero-force combos (even in only_json mode).
+        train_combos = build_train(cfg)
+        _validate_no_zero_force(train_combos, "train")
         test_combos = build_test(cfg)
         if len(test_combos) != n_test:
             raise RuntimeError(f"Test split has length {len(test_combos)}, expected {n_test}.")
+        _validate_no_zero_force(test_combos, "test")
+        # Inject one deterministic zero-force combo into test.
+        zero_force_combo = _build_zero_force_test_combo(cfg)
+        test_combos.append(zero_force_combo)
         test_dir = Path(output_root) / "test"
         test_dir.mkdir(parents=True, exist_ok=True)
         train_ranges = _train_ranges(cfg)
+        # Save trajectory_params.json (replaces old test_ood_features.json).
+        _build_trajectory_params_json(test_combos, defaults, test_dir, train_ranges)
         ood_by_traj = {
             str(idx): _list_ood_feature_names(combo, train_ranges)
             for idx, combo in enumerate(test_combos)
@@ -887,10 +1020,24 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             raise RuntimeError(f"Split '{mode}' has length {len(splits[mode])}, "
                                f"but the expected target is {expected_counts[mode]}.")
 
+    # Validate no zero-force combos in train or test algorithmic builds.
+    if "train" in requested_modes:
+        _validate_no_zero_force(splits["train"], "train")
+    if "test" in requested_modes:
+        _validate_no_zero_force(splits["test"], "test")
+        # Inject one deterministic zero-force combo into test.
+        zero_force_combo = _build_zero_force_test_combo(cfg)
+        splits["test"].append(zero_force_combo)
+
+    # Save trajectory_params.json for every requested split.
+    train_ranges = _train_ranges(cfg)
+    for mode in requested_modes:
+        split_dir = Path(output_root) / mode
+        _build_trajectory_params_json(splits[mode], defaults, split_dir, train_ranges)
+
     if "test" in requested_modes and len(splits["test"]) > 0:
         test_dir = Path(output_root) / "test"
         test_dir.mkdir(parents=True, exist_ok=True)
-        train_ranges = _train_ranges(cfg)
         ood_by_traj = {
             str(idx): _list_ood_feature_names(combo, train_ranges)
             for idx, combo in enumerate(splits["test"])

@@ -254,6 +254,7 @@ class EdaPreprocessor(TrainPreprocessor):
     gif_sample_percentage: float
     eda_split: str
     train_artifact_dir: Path
+    traj_params: dict
 
     def __init__(self, cfg, artifact_dir, run_name, gif_generation_mode, gif_sample_percentage,
                  eda_split, train_artifact_dir):
@@ -283,6 +284,7 @@ class EdaPreprocessor(TrainPreprocessor):
         self.gif_sample_percentage = gif_sample_percentage
         self.eda_split = eda_split
         self.train_artifact_dir = Path(train_artifact_dir)
+        self.traj_params = {}
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         pass
@@ -339,6 +341,13 @@ class EdaPreprocessor(TrainPreprocessor):
                 True iff uniformly sampled ground-truth GIFs should be generated.
         """
         torch.manual_seed(cfg.seed)
+        # Load trajectory_params.json (written by main_run_simulation) if available.
+        params_json_path = Path(graphs_dir).parent / "trajectory_params.json"
+        if params_json_path.exists():
+            with open(params_json_path, "r") as f:
+                self.traj_params = json.load(f)
+        else:
+            self.traj_params = {}
         filenames = sorted(Path(graphs_dir).glob("*.pt"))
         if cfg.normalizer_method.lower() == "none":
             self._collect_raw_eda(cfg, filenames, generate_gifs)
@@ -380,7 +389,8 @@ class EdaPreprocessor(TrainPreprocessor):
             payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs)
             self._collect_payload(payload, normalize=False)
             if trajectory_graphs is not None:
-                self._generate_ground_truth_gif(trajectory_graphs, traj_idx)
+                traj_metadata = self.traj_params.get(filename.name, None)
+                self._generate_ground_truth_gif(trajectory_graphs, traj_idx, traj_metadata)
             del payload
             del trajectory_graphs
             gc.collect()
@@ -562,13 +572,15 @@ class EdaPreprocessor(TrainPreprocessor):
 
         return payload, trajectory_graphs
 
-    def _generate_ground_truth_gif(self, trajectory_graphs, traj_idx):
+    def _generate_ground_truth_gif(self, trajectory_graphs, traj_idx, traj_metadata):
         """
         Args:
             trajectory_graphs: list[Data]
                 Raw trajectory graphs for one trajectory.
             traj_idx: int
                 Current trajectory index.
+            traj_metadata: dict or None
+                Trajectory parameters from trajectory_params.json, or None if unavailable.
             return: None
                 Writes one GIF to disk.
         """
@@ -578,7 +590,7 @@ class EdaPreprocessor(TrainPreprocessor):
             graph.von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
         gif_path = gif_dir / f"trajectory_{traj_idx:02d}.gif"
         make_ground_truth_gif(trajectory_graphs, L=1.0, W=0.1, D=0.04, gif_path=gif_path, fps=4, verbose=False,
-                              split_name="eda", traj_idx=traj_idx)
+                              split_name="eda", traj_idx=traj_idx, traj_metadata=traj_metadata)
 
 
 class EdaObj:

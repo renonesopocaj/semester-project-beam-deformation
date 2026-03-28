@@ -309,7 +309,29 @@ def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps
     print(f"\tGIF saved => {gif_path}")
 
 
-def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name, traj_idx):
+def _format_traj_metadata_text(traj_metadata):
+    """
+    Build a human-readable one-line subtitle from trajectory metadata.
+
+    Args:
+        traj_metadata: dict
+            Trajectory parameters from trajectory_params.json.
+        return: str
+            Formatted text for the GIF subtitle.
+    """
+    fx = traj_metadata.get("fx", "?")
+    fy = traj_metadata.get("fy", "?")
+    fz = traj_metadata.get("fz", "?")
+    beam_L = traj_metadata.get("L", "?")
+    beam_W = traj_metadata.get("W", "?")
+    ood = traj_metadata.get("ood_features", [])
+    ood_str = ", ".join(ood) if ood else "none"
+    return (f"fx={fx}  fy={fy}  fz={fz}  |  L={beam_L}  W={beam_W}"
+            f"  |  OOD: {ood_str}")
+
+
+def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name, traj_idx,
+                          traj_metadata=None):
     """
     Create a single-panel GIF showing ground truth mesh colored by von Mises stress.
 
@@ -331,6 +353,8 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
             name of split
         traj_idx: idx
             index of trajectory in the split
+        traj_metadata: dict or None
+            trajectory parameters from trajectory_params.json, shown as subtitle
     """
     frames = []
     faces = extract_surface_faces(trajectory_graphs[0].x_element_connectivity)
@@ -364,6 +388,12 @@ def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, sp
     ax.set_zlabel("Z")
     ax.set_box_aspect((L * 0.1, 0.8 * W, 2.5 * D))
     ax.view_init(elev=30, azim=45)
+
+    # Add static metadata subtitle below the 3D plot.
+    if traj_metadata is not None:
+        subtitle = _format_traj_metadata_text(traj_metadata)
+        fig.text(0.5, 0.01, subtitle, ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
 
     poly_collection = None
     for i, graph in enumerate(trajectory_graphs):
