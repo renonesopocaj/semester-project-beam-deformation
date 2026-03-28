@@ -15,5 +15,5 @@ dependencies:
   - wandb
   - hydra-core
   - optuna
-  - lightning=2.5
+  - lightning=2.5 # did not work
   - pip
