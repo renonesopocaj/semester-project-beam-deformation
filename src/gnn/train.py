@@ -86,8 +86,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             Hydra/OmegaConf training config.
         preprocess_dict: dict
             Preprocess config.
-        return: tuple
-            Lightning module, Lightning trainer, stats, dt, validation dataset, and validation dataloader.
+    return: tuple
+        Lightning module, Lightning trainer, stats, dt, validation dataset, and validation dataloader.
     """
     model_root = Path(os.getcwd()) / "saved_models"
     model_root.mkdir(parents=True, exist_ok=True)
@@ -111,12 +111,12 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print("Train dataset:")
     # device = "cpu" hardcoded for performance reason
     if train_cfg.noise_scale > 0:
+        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
         train_dataset = InMemoryNoisedDataset(
             sample_dir=train_cfg.train_dir, device="cpu",
             noise_scale=train_cfg.noise_scale, gamma=train_cfg.noise_gamma,
             dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
             base_seed=train_cfg.noise_seed)
-        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
     else:
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
@@ -237,13 +237,6 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
 def main(cfg):
-    """
-    Args:
-        cfg: omegaconf.DictConfig
-            Hydra-composed configuration.
-        return: None
-            Runs train and final evaluation.
-    """
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     train_cfg = TrainYaml(cfg)

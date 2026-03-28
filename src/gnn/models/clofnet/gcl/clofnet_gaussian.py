@@ -17,8 +17,7 @@ class ClofNetVelocityGaussian(nn.Module):
         radial basis expansion for the edge-type/distance pathway.
     """
 
-    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device="cpu",
-                 act_fn=nn.SiLU(), n_layers=4, coords_weight=1.0,
+    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device="cpu", act_fn=nn.SiLU(), n_layers=4, coords_weight=1.0,
                  recurrent=True, norm_diff=True, tanh=False):
         """
         Args:
@@ -210,9 +209,8 @@ class ClofNetVelocityGaussian(nn.Module):
         edge_feat = edge_feat + edge_embed
 
         for i in range(0, self.n_layers):
-            h, x_center, _ = self._modules["gcl_%d" % i](
-                h, edges, x_center, vel, edge_attr=edge_feat, node_attr=node_attr
-            )
+            h, x_center, _ = self._modules["gcl_%d" % i](h, edges, x_center, vel, edge_attr=edge_feat,
+                                                         node_attr=node_attr)
 
         x = x_center.reshape(-1, n_nodes, 3) + centroid
         x = x.reshape(-1, 3)

@@ -7,18 +7,14 @@ __pycache__
 *.iml
 .idea/
 jitfailure*/
-.csv
-config.yaml
-.png
-.jpg
-*.yaml
 # Python cache directories
 __pycache__/
-dataset
-saved_models
+# Files artifacts
 *.json
 *.pt
-eda_artifacts
+.csv
+.png
+.jpg
 
 # Compiled Python files
 *.pyc
@@ -26,7 +22,13 @@ eda_artifacts
 *.pyd
 .hydra
 .log
+
+# Folders of artifacts
+dataset
+eda_artifacts
+saved_models
 multirun
 outputs
 fem_dataset_generation
 old_venv
+hydra

@@ -1,0 +1,6 @@
+num_workers: 0
+batch_size: 256
+torch_compile: False
+profiling: False # disabled because it worsens computational efficiency
+pin_memory: True
+fused_adam: True
