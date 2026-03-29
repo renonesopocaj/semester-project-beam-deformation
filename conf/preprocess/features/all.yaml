@@ -2,3 +2,4 @@ displacement: true
 absolute_pos: true
 enable_edge_velocity: true
 enable_node_norms: true
+mises_log: true

@@ -534,7 +534,6 @@ class EdaPreprocessor(TrainPreprocessor):
         x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)
         v, a = calculate_kinematics(x, cfg.dt)
         rest_pos_x = x[0].clone()
-        x, v = self.noiser.add_noise_train(x, v, cfg.dt)
         all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)
         boundary_condition = graphs_list_batch[0].x_bc
 

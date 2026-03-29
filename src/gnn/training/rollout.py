@@ -80,14 +80,18 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             v = input_graph.x_vel_t
             # Semi-implicit Euler integration: obtain v_predict_tp1, x_predict_tp1 --> enforce bcs on fixed nodes
             boundary_condition = graph_ground_truth.x[:, 0]  # 1 = fixed, 0 = free
+            # TODO: integrator via strategy
             v_predict_tp1 = v + a * dt
             x_predict_tp1 = x + v_predict_tp1 * dt
+            # TODO: ended integration
             x_predict_tp1[boundary_condition == 1] = x[boundary_condition == 1]
             v_predict_tp1[boundary_condition == 1] = 0.0
             # Prepare input for next timestep
             input_graph = _build_next_graph(ground_truth_graph=graph_ground_truth, x_predict_tp1=x_predict_tp1,
                                             v_predict_tp1=v_predict_tp1, rest_pos=rest_pos, node_stats=node_stats,
-                                            edge_stats=edge_stats, normalizer=normalizer)
+                                            edge_stats=edge_stats, normalizer=normalizer,
+                                            enable_edge_velocity=enable_edge_velocity,
+                                            enable_node_norms=enable_node_norms)
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
