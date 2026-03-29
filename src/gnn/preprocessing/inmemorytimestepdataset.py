@@ -69,8 +69,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     target_stats_std_acc: torch.Tensor
     base_seed: int
 
-    def __init__(self, sample_dir, device, noise_scale, gamma, dt,
-                 node_stats, edge_stats, target_stats, base_seed):
+    def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
+                 enable_velocity_edge):
         """
         Args:
             sample_dir: str
@@ -102,6 +102,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
+        self.enable_velocity_edge = enable_velocity_edge
 
     def __getitem__(self, idx):
         """
@@ -130,12 +131,16 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         v_noised = data.x_vel_t + eps / self.dt
 
         # Node features: full recomputation from raw attributes
-        node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force)
-        node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
+        # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+        #                                            self.enable_velocity_edge)
+        # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
+        node_attr_norm = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+                                                    self.enable_velocity_edge)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index)
+        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
+                                            self.enable_velocity_edge)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)

@@ -59,7 +59,7 @@ class LitModule(L.LightningModule):
     selected_test_trajectories: list[int]
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
+                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml, preprocess_cfg):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -130,6 +130,10 @@ class LitModule(L.LightningModule):
         # performance stuff
         self.rollout_num_workers = train_cfg.num_workers
         self.pin_memory = train_cfg.pin_memory
+
+        # Features
+        self.enable_edge_velocity = preprocess_cfg.enable_edge_velocity
+        self.enable_node_norms = preprocess_cfg.enable_node_norms
 
 
     def forward(self, batch):
@@ -472,7 +476,9 @@ class LitModule(L.LightningModule):
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats,
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
-                                                normalizer=self.used_dataset_normalizer)
+                                                normalizer=self.used_dataset_normalizer,
+                                                enable_edge_velocity=self.enable_edge_velocity,
+                                                enable_node_norms=self.enable_node_norms)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos

@@ -548,9 +548,9 @@ class EdaPreprocessor(TrainPreprocessor):
             x_t = x[t]
             v_t = v[t]
             a_t = a[t]
-            valued_node_attr = build_valued_node_features(x_t, v_t, rest_pos_x, node_force)
+            valued_node_attr = build_valued_node_features(x_t, v_t, rest_pos_x, node_force, )
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
-            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index)
+            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, cfg.velocity_edge)
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             if cfg.mises_log:
                 von_mises = von_mises_log

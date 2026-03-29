@@ -144,10 +144,10 @@ class Preprocessor(ABC):
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force)
+                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force, cfg.enable_node_norms)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index)
+                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, cfg.velocity_edge)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
