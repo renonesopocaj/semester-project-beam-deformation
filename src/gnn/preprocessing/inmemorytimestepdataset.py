@@ -4,7 +4,7 @@ In-memory dataset for graph data.
 """
 
 from torch_geometric.data import Dataset, Data
-from src.gnn.preprocessing.build_features import build_edge_features, build_valued_node_features
+from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
 import os
 import torch
 
@@ -31,8 +31,8 @@ class InMemoryTimeStepDataset(Dataset):
             start = len(self.data)
             self.data.extend(sample_data)  # Flatten all time steps into one list
             self.trajectory_boundaries.append((start, len(self.data)))
-        print(f"\tLoaded the dataset with {len(self.data)} samples "
-              f"({self.num_trajectories} trajectories)")
+
+        print(f"\tLoaded the dataset with {len(self.data)} samples ({self.num_trajectories} trajectories)")
 
     @property
     def num_trajectories(self):
@@ -53,7 +53,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     Noise affects:
       - Node features: fully recomputed from noised position/velocity via build_valued_node_features
       - Edge features: recomputed from noised positions via build_edge_features
-      - Target acceleration: corrected via  a_tilde = a_star - (1 + gamma) * eps / dt^2
+      - Target acceleration: corrected via a_tilde = a_star - (1 + gamma) * eps / dt^2
       - x_pos_t and x_vel_t: propagated as noised (for curvature loss coherence)
 
     Unchanged:
@@ -114,9 +114,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         Args:
             idx: int
                 Sample index.
-            return: Data
-                PyG Data with noised input features, recomputed edge features,
-                and corrected acceleration target.
+        return: Data
+            PyG Data with noised input features, recomputed edge features, and corrected acceleration target.
         """
         data = self.data[idx]
 
@@ -134,8 +133,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
         #                                            self.enable_velocity_edge)
         # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
-        node_attr_norm = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-                                                    self.enable_velocity_edge)
+        node_attr_norm = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+                                             self.enable_velocity_edge)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms

@@ -33,9 +33,9 @@ def calculate_kinematics(x, dt):
     return v, a
 
 
-def build_valued_node_features(x, v, rest_pos, node_force, enable_node_norms):
+def build_node_features(x, v, rest_pos, node_force, enable_node_norms):
     """
-    Build valued node features: [position, velocity, rest_position, node_force, displacement]
+    Build node features: [position, velocity, rest_position, node_force, displacement]
 
     Args:
         x: torch.Tensor

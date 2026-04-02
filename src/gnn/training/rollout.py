@@ -6,10 +6,10 @@ Only thing from ground truth graph, i.e. is not predicted, is the node force, th
 
 import torch
 from torch_geometric.data import Data
-from src.gnn.preprocessing.build_features import build_edge_features, build_valued_node_features
+from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first,
-               rollout_steps, normalizer, enable_edge_velocity, enable_node_norms):
+               rollout_steps, normalizer, enable_edge_velocity, enable_node_norms, time_discretizer):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -40,6 +40,10 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             boolean that controls edge feature reconstruction
         enable_node_norms: bool
             boolean that controls norm feature reconstruction
+        time_discretizer: TimeDiscretizer
+            time discretizer strategy to integrate
+        normalizer: Normalizer
+            Normalizer
 
     Returns:
         true_rollout: list[Data]
@@ -78,12 +82,10 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             # Input features (previous time step t) to obtain next step t+1
             x = input_graph.x_pos_t
             v = input_graph.x_vel_t
-            # Semi-implicit Euler integration: obtain v_predict_tp1, x_predict_tp1 --> enforce bcs on fixed nodes
+            # Semi-implicit Euler integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
             boundary_condition = graph_ground_truth.x[:, 0]  # 1 = fixed, 0 = free
-            # TODO: integrator via strategy
-            v_predict_tp1 = v + a * dt
-            x_predict_tp1 = x + v_predict_tp1 * dt
-            # TODO: ended integration
+            x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(x, v, a, dt)
+            # enforce bcs
             x_predict_tp1[boundary_condition == 1] = x[boundary_condition == 1]
             v_predict_tp1[boundary_condition == 1] = 0.0
             # Prepare input for next timestep
@@ -141,8 +143,8 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted
     ground_truth_force_tp1 = ground_truth_graph.node_force_next
-    valued_node_features = build_valued_node_features(x_predict_tp1, v_predict_tp1, rest_pos, ground_truth_force_tp1,
-                                                      enable_node_norms)
+    valued_node_features = build_node_features(x_predict_tp1, v_predict_tp1, rest_pos, ground_truth_force_tp1,
+                                               enable_node_norms)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
     # Keep force node features unchanged: deleted

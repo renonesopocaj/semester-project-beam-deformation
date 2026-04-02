@@ -13,6 +13,8 @@ import wandb
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
 from typing import Any
+
+from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.preprocessing.stats import StatsModule
@@ -59,7 +61,7 @@ class LitModule(L.LightningModule):
     selected_test_trajectories: list[int]
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
-                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml, preprocess_cfg):
+                 len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
         """
         Initializes the LitModule with model, optimizer, scheduler, loss function, and directory layout.
 
@@ -134,6 +136,9 @@ class LitModule(L.LightningModule):
         # Features
         self.enable_edge_velocity = preprocess_cfg.enable_edge_velocity
         self.enable_node_norms = preprocess_cfg.enable_node_norms
+
+        # Time discretizer from preprocess
+        self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
 
 
     def forward(self, batch):
@@ -478,7 +483,8 @@ class LitModule(L.LightningModule):
                                                 dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
                                                 enable_edge_velocity=self.enable_edge_velocity,
-                                                enable_node_norms=self.enable_node_norms)
+                                                enable_node_norms=self.enable_node_norms,
+                                                time_discretizer=self.time_discretizer)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos
