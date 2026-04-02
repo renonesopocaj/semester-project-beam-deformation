@@ -31,10 +31,19 @@ train:
   widths: { start: 0.06, stop: 0.14, n: 10 }
 
 # Out-of-distribution ranges used for test set generation.
-# force_x/z get nonzero OOD values (any nonzero is OOD for original).
+# Each axis can have a "below" and/or "above" OOD sub-range.
+# force_x has no OOD (constant at 0 in both train and test for single direction).
 test_ood_ranges:
-  force_x: { start: 0.0, stop: 0.0 }
-  force_y: { start: 1.6,  stop: 2.0 }
-  force_z: { start: 0.25, stop: 1.5 }
-  lengths: { start: 1.1,  stop: 1.5 }
-  widths: { start: 0.15, stop: 0.2 }
+  force_x: {}
+  force_y:
+    below: { start: -1.5, stop: 0.0 }
+    above: { start: 1.6, stop: 2.0 }
+  force_z:
+    below: { start: -1.5, stop: -0.25 }
+    above: { start: 0.25, stop: 1.5 }
+  lengths:
+    below: { start: 0.1, stop: 0.4 }
+    above: { start: 1.1, stop: 1.5 }
+  widths:
+    below: { start: 0.01, stop: 0.05 }
+    above: { start: 0.15, stop: 0.2 }
