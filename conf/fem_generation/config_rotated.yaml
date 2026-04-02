@@ -16,6 +16,8 @@ defaults:
   total_time: 4.0
   cutoff_time_factor: 0.2
   num_steps: 50
+  # Linear system: "mumps" (direct LU) or "krylov" (CG + AMG).
+  linear_solver: krylov
 
 val_fraction: 0.1
 test_fraction: 0.1
