@@ -33,9 +33,7 @@ train:
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
 test_ood_ranges:
-  force_x:
-    below: { start: -2.0, stop: -1.6 }
-    above: { start: 1.6, stop: 2.0 }
+  force_x: {}
   force_y:
     below: { start: -2.0, stop: -1.6 }
     above: { start: 1.6, stop: 2.0 }
@@ -47,7 +45,10 @@ test_ood_ranges:
     above: { start: 1.1, stop: 1.5 }
   widths:
     below: { start: 0.01, stop: 0.05 }
-    above: { start: 0.15, stop: 0.2 }
+    above: { start: 0.15, stop: 1 }
 
-selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
-selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+selected_trajs:
+  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
+  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_total_time: 32
+  num_steps: 400

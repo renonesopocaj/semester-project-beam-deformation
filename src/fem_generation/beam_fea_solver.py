@@ -22,7 +22,7 @@ from src.fem_generation.visualization_fea import plot_check, make_beam_gif
 
 # Use a non-interactive backend so plots can be generated in headless environments.
 matplotlib.use("agg")
-
+CONSTANT_FOR_CUTOFF_TIME = 4.0
 
 def extract_node_masses(u_, du, rho):
     """
@@ -483,7 +483,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     # External traction parameters.
     p0_x, p0_y, p0_z = initial_force_x, initial_force_y, initial_force_z
-    cutoff_Tc = T * cutoff_time_factor
+    cutoff_Tc = CONSTANT_FOR_CUTOFF_TIME * cutoff_time_factor
 
     # Define a time-dependent traction that ramps linearly up to tc and then vanishes.
     p = df.Expression(("t <= tc ? p0x * t / tc : 0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),

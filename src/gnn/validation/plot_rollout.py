@@ -316,8 +316,8 @@ def _format_traj_metadata_text(traj_metadata):
     Args:
         traj_metadata: dict
             Trajectory parameters from trajectory_params.json.
-        return: str
-            Formatted text for the GIF subtitle.
+    return: str
+        Formatted text for the GIF subtitle.
     """
     fx = traj_metadata.get("fx", "?")
     fy = traj_metadata.get("fy", "?")
