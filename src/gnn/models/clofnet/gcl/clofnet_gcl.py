@@ -73,18 +73,9 @@ class ClofGCL(EgnnGCL):
                 Whether to tanh-squash the three basis coefficients predicted by
                 `coord_mlp`.
         """
-        super().__init__(input_nf,
-                        output_nf,
-                        hidden_nf,
-                        edges_in_d=edges_in_d,
-                        nodes_att_dim=nodes_att_dim,
-                        act_fn=act_fn,
-                        recurrent=recurrent,
-                        coords_weight=coords_weight,
-                        attention=attention,
-                        norm_diff=norm_diff,
-                        tanh=tanh,
-                        out_basis_dim=3)
+        super().__init__(input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_att_dim,
+                         act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention,
+                         norm_diff=norm_diff, tanh=tanh, out_basis_dim=3)
         self.norm_diff = norm_diff
 
         self.coord_mlp_vel = nn.Sequential(nn.Linear(input_nf, hidden_nf),

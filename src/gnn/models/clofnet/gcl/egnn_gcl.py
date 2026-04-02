@@ -51,15 +51,16 @@ class EgnnGCL(nn.Module):
         r_ij = ||x_i - x_j||^2
     """
 
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
+    def __init__(self, input_nf, output_node_feat, hidden_node_feat, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(),
+                 recurrent=True,
                  coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False, out_basis_dim=1):
         """
         Args:
             input_nf: int
                 Input node feature dimension.
-            output_nf: int
+            output_node_feat: int
                 Output node feature dimension.
-            hidden_nf: int
+            hidden_node_feat: int
                 Hidden dimension.
             edges_in_d: int
                 Extra edge feature dimension.
@@ -88,25 +89,21 @@ class EgnnGCL(nn.Module):
         input_edge = input_nf * 2
         edge_coords_nf = 1
 
-        self.coords_weight = coords_weight
-        self.skip_connection = recurrent
-        self.attention = attention
-        self.norm_diff = norm_diff
-        self.tanh = tanh
-        self.clamp = clamp
+        self.coords_weight, self.skip_connection, self.attention, self.norm_diff, self.tanh, self.clamp = \
+            (coords_weight, recurrent, attention, norm_diff, tanh, clamp)
 
-        self.edge_mlp = nn.Sequential(nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_nf),
+        self.edge_mlp = nn.Sequential(nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_node_feat),
                                       act_fn,
-                                      nn.Linear(hidden_nf, hidden_nf),
-                                      act_fn,)
+                                      nn.Linear(hidden_node_feat, hidden_node_feat),
+                                      act_fn, )
 
-        self.node_mlp = nn.Sequential(nn.Linear(hidden_nf + input_nf + nodes_att_dim, hidden_nf),
+        self.node_mlp = nn.Sequential(nn.Linear(hidden_node_feat + input_nf + nodes_att_dim, hidden_node_feat),
                                       act_fn,
-                                      nn.Linear(hidden_nf, output_nf))
+                                      nn.Linear(hidden_node_feat, output_node_feat))
 
-        layer = nn.Linear(hidden_nf, out_basis_dim, bias=False)
+        layer = nn.Linear(hidden_node_feat, out_basis_dim, bias=False)
         torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
-        coord_mlp = [nn.Linear(hidden_nf, hidden_nf), act_fn, layer]
+        coord_mlp = [nn.Linear(hidden_node_feat, hidden_node_feat), act_fn, layer]
 
         if self.tanh:
             coord_mlp.append(nn.Tanh())
@@ -115,7 +112,7 @@ class EgnnGCL(nn.Module):
         self.coord_mlp = nn.Sequential(*coord_mlp)
 
         if self.attention:
-            self.att_mlp = nn.Sequential(nn.Linear(hidden_nf, 1),
+            self.att_mlp = nn.Sequential(nn.Linear(hidden_node_feat, 1),
                                          nn.Sigmoid())
 
     def edge_model_forward(self, source, target, radial, edge_attr):
@@ -318,17 +315,9 @@ class EgnnGCLVelocity(EgnnGCL):
                 Whether to apply tanh on the scalar coefficient used in the radial
                 coordinate update.
         """
-        super().__init__(input_nf,
-                         output_nf,
-                         hidden_nf,
-                         edges_in_d=edges_in_d,
-                         nodes_att_dim=nodes_att_dim,
-                         act_fn=act_fn,
-                         recurrent=recurrent,
-                         coords_weight=coords_weight,
-                         attention=attention,
-                         norm_diff=norm_diff,
-                         tanh=tanh)
+        super().__init__(input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_att_dim,
+                         act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention,
+                         norm_diff=norm_diff, tanh=tanh)
         self.norm_diff = norm_diff
 
         self.coord_mlp_vel = nn.Sequential(nn.Linear(input_nf, hidden_nf),

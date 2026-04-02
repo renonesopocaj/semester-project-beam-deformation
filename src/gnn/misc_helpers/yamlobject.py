@@ -95,6 +95,7 @@ class PreprocessYaml:
         self.normalizer_method = flattened_cfg["normalizer_method"]
         self.displacement = flattened_cfg["displacement"]
         self.dataset_type = flattened_cfg["dataset_type"]
+        self.time_discretization_method = flattened_cfg["time_discretization_method"]
         if "edge_channels" in flattened_cfg:
             self.edge_channels = flattened_cfg["edge_channels"]
         if "node_channels" in flattened_cfg:

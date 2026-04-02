@@ -58,6 +58,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
         edge_stats.to(device)
         target_stats.to(device)
 
+        # Reset discretizer internal state (needed for Newmark which tracks previous acceleration)
+        time_discretizer.reset()
+
         for t, graph_ground_truth in enumerate(test_loader):
             graph_ground_truth = graph_ground_truth.to(device, non_blocking=True)
             if rest_pos is None:
@@ -82,9 +85,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             # Input features (previous time step t) to obtain next step t+1
             x = input_graph.x_pos_t
             v = input_graph.x_vel_t
-            # Semi-implicit Euler integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
+            # Newmark / time integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
             boundary_condition = graph_ground_truth.x[:, 0]  # 1 = fixed, 0 = free
-            x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(x, v, a, dt)
+            x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(a, v, dt, x)
             # enforce bcs
             x_predict_tp1[boundary_condition == 1] = x[boundary_condition == 1]
             v_predict_tp1[boundary_condition == 1] = 0.0
@@ -163,4 +166,3 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     # only thing from ground truth graph, i.e. is not predicted
     input_graph.node_force = ground_truth_force_tp1
     return input_graph
-

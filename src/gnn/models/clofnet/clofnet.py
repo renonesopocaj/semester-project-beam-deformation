@@ -124,9 +124,8 @@ class ClofNet(nn.Module):
 
     def __str__(self):
         """
-        Args:
-            return: str
-                Trainable-parameter count as a string.
+        return: str
+            Trainable-parameter count as a string.
         """
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
         params = sum([np.prod(p.size()) for p in model_parameters])
@@ -155,13 +154,13 @@ class ClofNet(nn.Module):
                 Edge list as (row, col), with one entry per directed edge.
             coord: torch.Tensor
                 Coordinates of shape [N, 3].
-            return: (coord_diff, coord_cross, coord_vertical)
-                coord_diff: torch.Tensor
-                    First basis direction, shape [E, 1, 3].
-                coord_cross: torch.Tensor
-                    Second basis direction, shape [E, 1, 3].
-                coord_vertical: torch.Tensor
-                    Third basis direction, shape [E, 1, 3].
+        return: (coord_diff, coord_cross, coord_vertical)
+            coord_diff: torch.Tensor
+                First basis direction, shape [E, 1, 3].
+            coord_cross: torch.Tensor
+                Second basis direction, shape [E, 1, 3].
+            coord_vertical: torch.Tensor
+                Third basis direction, shape [E, 1, 3].
         """
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
@@ -207,8 +206,8 @@ class ClofNet(nn.Module):
             x: torch.Tensor
                 Coordinates of shape [N, 3]. In forward(), these are the
                 centered coordinates.
-            return: torch.Tensor
-                Invariant edge features of shape [E, 8].
+        return: torch.Tensor
+            Invariant edge features of shape [E, 8].
         """
         coord_diff, coord_cross, coord_vertical = self.coord2localframe(edges, x)
 
@@ -268,8 +267,8 @@ class ClofNet(nn.Module):
             n_nodes: int
                 Number of particles per graph in the batch. Needed to recover
                 graphwise centroids after flattening.
-            return: torch.Tensor
-                Updated coordinates of shape [N, 3].
+        return: torch.Tensor
+            Updated coordinates of shape [N, 3].
         """
         h = self.embedding_node(h)
 
@@ -338,8 +337,6 @@ class ClofNetVel(nn.Module):
                 Whether local-frame directions are normalized.
             tanh: bool
                 Whether coordinate coefficients are bounded by tanh.
-            return: None
-                Initializes the module.
         """
         super(ClofNetVel, self).__init__()
         self.hidden_nf = hidden_nf
