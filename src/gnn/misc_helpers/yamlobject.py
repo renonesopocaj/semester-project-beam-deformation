@@ -165,6 +165,9 @@ class TrainYaml:
         self.noise_scale = flattened_cfg["noise_scale"]
         self.noise_gamma = flattened_cfg["noise_gamma"]
         self.noise_seed = flattened_cfg["noise_seed"]
+        self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
+        self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
+        self.enable_node_norms = flattened_cfg["enable_node_norms"]
 
 def _to_dict_flatten(data):
     """

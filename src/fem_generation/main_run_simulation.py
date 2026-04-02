@@ -9,6 +9,8 @@ The idea is that
 2) test has out-of-distribution values (outside the range of train), and I generate it in a way such that there
 are test samples that have only one feature (between force_x, force_y, force_z, lengths, width) out of distribution,
 and then some that have 2, some 3, and so on. Every test sample has at least one feature out of distribution.
+
+A test sample with beam always still for example (0,0,0) is explicitly added in test
 """
 
 import json
@@ -27,7 +29,6 @@ TOL = 1e-9
 # Threshold used to decide whether a range is effectively constant.
 ARE_EQUAL_THRESHOLD = 1e-12
 
-
 def _train_count(cfg):
     """
     Count how many unique train combinations exist, without materializing the full list.
@@ -35,8 +36,8 @@ def _train_count(cfg):
     Args:
         cfg: dict
             yaml config
-        return: int
-            number of unique train combinations
+    return: int
+        number of unique train combinations
     """
     fx, fy, fz, lengths, widths = _train_axis_values(cfg)
     return len(fx) * len(fy) * len(fz) * len(lengths) * len(widths)
@@ -51,8 +52,8 @@ def _graph_filepath(params, dir_path):
             simulation parameter dict
         dir_path: pathlib.Path
             destination directory
-        return: pathlib.Path
-            graph filepath
+    return: pathlib.Path
+        graph filepath
     """
     # Keep the same filename convention used before.
     p = params
@@ -82,8 +83,8 @@ def load_config(path):
     Args:
         path: str
             config filepath
-        return: dict
-            parsed yaml config
+    return: dict
+        parsed yaml config
     """
     with open(path) as f:
         return yaml.safe_load(f)
@@ -100,8 +101,8 @@ def linspace_list(start, stop, n):
             stop of the range
         n: int
             number of elements
-        return: list of float
-            list created from np.linspace
+    return: list of float
+        list created from np.linspace
     """
     return list(np.linspace(start, stop, n))
 
@@ -115,8 +116,8 @@ def _is_constant_range(start, stop):
             range start
         stop: float
             range stop
-        return: bool
-            True if the range is effectively constant
+    return: bool
+        True if the range is effectively constant
     """
     return abs(float(start) - float(stop)) < ARE_EQUAL_THRESHOLD
 
@@ -130,8 +131,8 @@ def _unique_float_list(values, decimals):
             values to deduplicate
         decimals: int
             number of decimals used to compare values
-        return: list of float
-            unique values preserving first occurrence order
+    return: list of float
+        unique values preserving first occurrence order
     """
     unique_values = []
     # Track already seen rounded values.in a set
@@ -165,8 +166,8 @@ def _build_unique_axis_values(start, stop, n, axis_name):
             requested number of values in config
         axis_name: str
             axis name used only for better error messages
-        return: list of float
-            unique axis values
+    return: list of float
+        unique axis values
     """
     # Guard against invalid configs.
     if int(n) < 1:
@@ -201,8 +202,8 @@ def _select_evenly_spread(values, n):
             ordered candidate values or ordered candidate combos
         n: int
             number of elements to select
-        return: list
-            deterministically spread subset
+    return: list
+        deterministically spread subset
     """
     # Guard against invalid requests.
     if int(n) < 0:
@@ -240,8 +241,8 @@ def vals_excluding(start, stop, n, train_values):
             number of values to generate
         train_values: list of float
             exact training-axis values to exclude
-        return: list of float
-            deterministic, spread, in-range values not matching the train grid
+    return: list[float]
+        deterministic, spread, in-range values not matching the train grid
     """
     # Constant axes cannot generate alternative in-range values. Keep one value only so the axis stays unique.
     if _is_constant_range(start, stop):
@@ -290,8 +291,8 @@ def _in_range(val, lo, hi, tol):
             upper bound
         tol: float
             tolerance for numeric robustness
-        return: bool
-            True if val is inside the interval up to tolerance
+    return: bool
+        True if val is inside the interval up to tolerance
     """
     return (float(lo) - float(tol)) <= float(val) <= (float(hi) + float(tol))
 
@@ -307,8 +308,8 @@ def _list_ood_feature_names(combo, train_ranges):
             combo in the form ((fx, fy, fz), L, W)
         train_ranges: dict
             dict with keys fx, fy, fz, L, W mapping to (min, max)
-        return: list of str
-            OOD feature names in axis order
+    return: list of str
+        OOD feature names in axis order
     """
     (fx, fy, fz), L, W = combo
     names = []
@@ -334,8 +335,8 @@ def _count_ood_features(combo, train_ranges):
             combo in the form ((fx, fy, fz), L, W)
         train_ranges: dict
             dict mapping feature name to (min, max)
-        return: int
-            number of OOD features in the combo
+    return: int
+        number of OOD features in the combo
     """
     return len(_list_ood_feature_names(combo, train_ranges))
 
@@ -347,8 +348,8 @@ def _split_target_counts(cfg):
     Args:
         cfg: dict
             yaml config
-        return: tuple
-            (n_train, n_val, n_test)
+    return: tuple
+        (n_train, n_val, n_test)
     """
     val_fraction = float(cfg["val_fraction"])
     test_fraction = float(cfg["test_fraction"])
@@ -388,8 +389,8 @@ def _guess_count_values_per_axis(target_count, varying_axes):
             target number of final samples
         varying_axes: int
             number of effective varying axes
-        return: int
-            initial per-axis guess
+    return: int
+        initial per-axis guess
     """
     return max(1, int(ceil(int(target_count) ** (1.0 / int(varying_axes)))))
 
@@ -405,8 +406,8 @@ def _train_axis_values(cfg):
     Args:
         cfg: dict
             yaml config
-        return: tuple
-            (fx, fy, fz, lengths, widths)
+    return: tuple
+        (fx, fy, fz, lengths, widths)
     """
     # Read the train section once.
     t = cfg["train"]
@@ -429,8 +430,8 @@ def _train_ranges(cfg):
     Args:
         cfg: dict
             yaml config
-        return: dict
-            dict mapping feature name to (min, max)
+    return: dict
+        dict mapping feature name to (min, max)
     """
     # Read the train section.
     t = cfg["train"]
@@ -501,8 +502,8 @@ def build_train(cfg):
     Args:
         cfg: dict
             yaml config
-        return: list of tuple
-            cartesian product as list of tuples: ((fx, fy, fz), L, W)
+    return: list of tuple
+        cartesian product as list of tuples: ((fx, fy, fz), L, W)
     """
     fx, fy, fz, lengths, widths = _train_axis_values(cfg)
     forces = list(product(fx, fy, fz))
@@ -523,8 +524,8 @@ def build_val(cfg):
     Args:
         cfg: dict
             yaml config
-        return: list of tuple
-            validation combos in the form ((fx, fy, fz), L, W)
+    return: list of tuple
+        validation combos in the form ((fx, fy, fz), L, W)
     """
     # Read the train section once.
     t = cfg["train"]
@@ -578,8 +579,8 @@ def _test_axis_values(id_start, id_stop, ood_below, ood_above, n_axis, train_val
             target number of values for both the ID and the OOD part
         train_vals: list of float
             exact train-grid values for this axis
-        return: dict
-            {"id": list of float, "ood": list of float}
+    return: dict
+        {"id": list of float, "ood": list of float}
     """
     # Build the in-distribution off-grid values.
     id_values = vals_excluding(id_start, id_stop, n_axis, train_vals)
@@ -611,8 +612,8 @@ def _build_test_bucket_candidates(axis_value_groups, n_ood):
             one dict per axis with keys "id" and "ood"
         n_ood: int
             exact number of OOD features required
-        return: list of tuple
-            combos with exactly n_ood OOD features
+    return: list of tuple
+        combos with exactly n_ood OOD features
     """
     # Prepare the output list for this bucket.
     bucket_combos = []
@@ -658,8 +659,8 @@ def _allocate_bucket_counts(total_count, bucket_capacities):
             requested test split size
         bucket_capacities: list of int
             number of available candidates in each exact-k bucket
-        return: list of int
-            number of samples to take from each bucket
+    return: list of int
+        number of samples to take from each bucket
     """
     # Start with zero allocations.
     counts = [0] * len(bucket_capacities)
@@ -720,8 +721,7 @@ def _extract_ood_below_above(axis_ood):
     Args:
         axis_ood: dict
             the per-axis OOD config, e.g. {"below": {...}, "above": {...}} or {}
-        return: tuple
-            (below_dict_or_None, above_dict_or_None)
+    return: (below_dict_or_None, above_dict_or_None)
     """
     if not axis_ood:
         return None, None
@@ -745,8 +745,8 @@ def build_test(cfg):
     Args:
         cfg: dict
             yaml config
-        return: list of tuple
-            test combos in the form ((fx, fy, fz), L, W)
+    return: list[tuple]
+        test combos in the form ((fx, fy, fz), L, W)
     """
     # Make sure the configured OOD intervals are really outside the train intervals.
     _validate_test_ood_ranges(cfg)
@@ -871,8 +871,6 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
             directory of the split (e.g. output_root / "train")
         train_ranges: dict
             dict mapping feature name to (min, max) from the train config
-        return: None
-            writes trajectory_params.json to split_dir
     """
     graphs_dir = split_dir / "graphs"
     params_dict = {}
@@ -927,8 +925,8 @@ def _build_zero_force_test_combo(cfg):
     Args:
         cfg: dict
             yaml config
-        return: tuple
-            ((0.0, 0.0, 0.0), L_mid, W_mid)
+    return: tuple
+        ((0.0, 0.0, 0.0), L_mid, W_mid)
     """
     t = cfg["train"]
     L_mid = (float(t["lengths"]["start"]) + float(t["lengths"]["stop"])) / 2.0
@@ -962,8 +960,6 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         only_json: bool
             if True, only build the test split, write and print test_ood_features.json;
             no FEA runs. Requires "test" in modes and a non-empty test split.
-        return: None
-            runs the simulations or writes JSON only
     """
     cfg = load_config(config_path)
     defaults = cfg["defaults"]

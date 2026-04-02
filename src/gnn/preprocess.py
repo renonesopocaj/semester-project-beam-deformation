@@ -5,11 +5,11 @@ Preprocess simulation data into graph format. Note one file = one trajectory.
 One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
 Saves redundant features as pyg attributes to perform rollout more easily without having to use tensor slices.
 Validation/test:
-        1. load files and stats
-        2. for each file:
-            2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
-            2.b. normalize with stats loaded in 1
-        3. for each file: save
+    1. load files and stats
+    2. for each file:
+        2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
+        2.b. normalize with stats loaded in 1
+    3. for each file: save
 
 Train:
     1. load files
@@ -25,13 +25,12 @@ import torch
 import json
 import hydra
 from omegaconf import OmegaConf, open_dict
+from src.gnn.mesh_numerical_helpers.time_discretizer import TimeDiscretizer, create_time_discretizer
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
-from src.gnn.preprocessing.build_features import (calculate_kinematics, compute_von_mises_3d,
-                                                  build_edge_features, build_valued_node_features)
+from src.gnn.preprocessing.build_features import (compute_von_mises_3d, build_edge_features, build_node_features)
 from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
-from src.gnn.preprocessing.noiser import Noiser, GaussianNoiser, NoNoiser
 from torch_geometric.data import Data, Batch
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -42,7 +41,6 @@ from src.gnn.mesh_numerical_helpers.compute_angle import (extract_surface_triang
 EPS = 1e-6
 
 class Preprocessor(ABC):
-    noiser: Noiser
     node_stats: Stats
     edge_stats: Stats
     target_stats: Stats
@@ -53,11 +51,14 @@ class Preprocessor(ABC):
     edge_features: list[torch.Tensor]
     traj_idx_list: list[int]
     targets: list[torch.Tensor]
+    time_discretizer: TimeDiscretizer
 
-    def __init__(self):
+    def __init__(self, cfg):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
         self.theta_max = 0.0
+        self.time_discretizer = create_time_discretizer(cfg.time_discretization_method)
+        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
@@ -116,11 +117,10 @@ class Preprocessor(ABC):
             whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
             # Extract positions over time, NOTE: #graphs = len(graphs) = #timesteps .x attribute encodes positions
             x_raw = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)  # (#graphs, #points, 3) where 3 is (x,y,z)
-            # **NOTE** do not add it during preprocess, add it during train
-            # x = self.noiser.add_noise_train(x_raw.clone())
             x = x_raw.clone()
-            v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
-            rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3), before noise
+            v, a = self.time_discretizer.differentiate_position(x, cfg.dt)
+            # v, a = calculate_kinematics(x, cfg.dt)  # v = (T, N, 3), a = (T-1, N, 3)
+            rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3)
             # Compute angle
             surface_left_triangles, surface_right_triangles = self._maybe_update_maxangle_train(x, graphs_list_batch,
                                                                                                 rest_pos_x, cfg)
@@ -144,10 +144,10 @@ class Preprocessor(ABC):
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr = build_valued_node_features(_x, _v, rest_pos_x, _node_force)
+                _node_attr = build_node_features(_x, _v, rest_pos_x, _node_force, cfg.enable_node_norms)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index)
+                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, cfg.velocity_edge)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
@@ -210,9 +210,7 @@ class Preprocessor(ABC):
 class TrainPreprocessor(Preprocessor):
 
     def __init__(self, cfg):
-        super().__init__()
-        self.noiser = GaussianNoiser(cfg.noise_scale_train)
-        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        super().__init__(cfg)
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         stats = {"node": node_stats.to_dict(), "edge": edge_stats.to_dict(), "target": target_stats.to_dict()}
@@ -302,9 +300,7 @@ class ValPreprocessor(Preprocessor):
     save_dir_train: Path
 
     def __init__(self, cfg, save_dir_train):
-        super().__init__()
-        self.noiser = NoNoiser()
-        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        super().__init__(cfg)
         self.save_dir_train = save_dir_train
 
     def _compute_stats_train(self, cfg, split_idx_edge):
@@ -411,6 +407,7 @@ def main(cfg):
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     # OmegaConf.save(cfg, save_dir / "config.yaml")
+    # =============== NAME ================
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else '_anisotr'
     miseslog_str = '_log' if cfg_obj.mises_log else '_nolog'
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
@@ -418,7 +415,9 @@ def main(cfg):
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
+    # =============== NAME ================
 
+    # =============== SPLITS ================
     # Where to save results
     save_dir_train = processed_dataset_dir / "train"
     save_dir_test = processed_dataset_dir / "test"
@@ -427,6 +426,7 @@ def main(cfg):
     graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
+    # =============== SPLITS ================
 
     with open_dict(cfg):
         cfg.node_channels = 16

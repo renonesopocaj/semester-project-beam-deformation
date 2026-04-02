@@ -33,26 +33,43 @@ def calculate_kinematics(x, dt):
     return v, a
 
 
-def build_valued_node_features(x, v, rest_pos, node_force):
+def build_node_features(x, v, rest_pos, node_force, enable_node_norms):
     """
-    Build valued node features: [position, velocity, rest_position, node_force, displacement]
+    Build node features: [position, velocity, rest_position, node_force, displacement]
 
     Args:
-        x: Tensor
-        v: Tensor
-        rest_pos: Tensor
-        node_force: Tensor
+        x: torch.Tensor
+        v: torch.Tensor
+        rest_pos: torch.Tensor
+        node_force: torch.Tensor
+        enable_node_norms: torch.Tensor
     return: Tensor
         Concatenated features with shape (N, 15).
     """
     device = x.device
+    feat_list = []
+    feat_list.append(x)
+    # rest position
     rest_pos = rest_pos.to(device)
+    feat_list.append(rest_pos)
+    # velocty
     v = v.to(device)
-    x_minus_u = x - rest_pos
-    return torch.concat([x, v, rest_pos, node_force, x_minus_u], dim=1)
+    feat_list.append(v)
+    # displacement field
+    u = x - rest_pos
+    feat_list.append(u)
+    # node force
+    feat_list.append(node_force)
+    if enable_node_norms:
+        feat_list.append(torch.norm(x, dim=1).unsqueeze(1))
+        feat_list.append(torch.norm(u, dim=1).unsqueeze(1))
+        feat_list.append(torch.norm(node_force, dim=1).unsqueeze(1))
+        feat_list.append(torch.norm(v, dim=1).unsqueeze(1))
+        feat_list.append(torch.norm(rest_pos, dim=1).unsqueeze(1))
+    return torch.concat(feat_list, dim=1)
 
 
-def build_edge_features(x, u, edge_index):
+def build_edge_features(x, u, edge_index, v, enable_velocity_edge):
     """
     Build edge features from node positions and rest positions.
     Features: [xij, uij, xij-uij, ||xij||, ||uij||, ||xij-uij||]
@@ -64,16 +81,35 @@ def build_edge_features(x, u, edge_index):
             rest absolute position
         edge_index: torch.Tensor (2, #edges)
             Pairwise graph edges `(i,j)` for message passing
+        v: torch.Tensor
+            velocity
+        enable_velocity_edge: bool
+            controls if add v_ij = v_i - v_j to the edge features
     return: torch.Tensor (E, 12)
     """
     src, dst = edge_index
+    feat_list = []
+    # abs position
     xij = x[dst] - x[src] # (E, 3) relative position
-    uij = u[dst] - u[src] # (E, 3) rest relative position
+    feat_list.append(xij)
+    # rest pos
+    rest_pos_ij = u[dst] - u[src] # (E, 3) rest relative position
+    feat_list.append(rest_pos_ij)
+    # abs position norm
     xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (E, 1)
-    uij_norm = torch.norm(uij, dim=1).unsqueeze(1) # (E, 1)
-    xij_minus_uij = xij - uij
-    xij_minus_uij_norm = torch.norm(xij_minus_uij, dim=1).unsqueeze(1)
-    return torch.concat([xij, uij, xij_minus_uij, xij_norm, uij_norm, xij_minus_uij_norm], dim=1)
+    feat_list.append(xij_norm)
+    # rest pos norm
+    rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1) # (E, 1)
+    feat_list.append(rest_pos_ij_norm)
+    # displacement
+    uij = xij - rest_pos_ij
+    feat_list.append(uij)
+    uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
+    feat_list.append(uij_norm)
+    if enable_velocity_edge:
+        vij = v[dst] - v[src]
+        feat_list.append(torch.norm(vij, dim=1).unsqueeze(1))
+    return torch.concat(feat_list, dim=1)
 
 
 def compute_von_mises_3d(stress_9):

@@ -1,1 +1,5 @@
 displacement: true
+enable_absolute_pos: true
+enable_edge_velocity: false
+enable_node_norms: false
+mises_log: true

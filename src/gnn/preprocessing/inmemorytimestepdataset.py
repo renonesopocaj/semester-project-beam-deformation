@@ -4,7 +4,7 @@ In-memory dataset for graph data.
 """
 
 from torch_geometric.data import Dataset, Data
-from src.gnn.preprocessing.build_features import build_edge_features, build_valued_node_features
+from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
 import os
 import torch
 
@@ -31,8 +31,8 @@ class InMemoryTimeStepDataset(Dataset):
             start = len(self.data)
             self.data.extend(sample_data)  # Flatten all time steps into one list
             self.trajectory_boundaries.append((start, len(self.data)))
-        print(f"\tLoaded the dataset with {len(self.data)} samples "
-              f"({self.num_trajectories} trajectories)")
+
+        print(f"\tLoaded the dataset with {len(self.data)} samples ({self.num_trajectories} trajectories)")
 
     @property
     def num_trajectories(self):
@@ -53,7 +53,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     Noise affects:
       - Node features: fully recomputed from noised position/velocity via build_valued_node_features
       - Edge features: recomputed from noised positions via build_edge_features
-      - Target acceleration: corrected via  a_tilde = a_star - (1 + gamma) * eps / dt^2
+      - Target acceleration: corrected via a_tilde = a_star - (1 + gamma) * eps / dt^2
       - x_pos_t and x_vel_t: propagated as noised (for curvature loss coherence)
 
     Unchanged:
@@ -69,8 +69,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     target_stats_std_acc: torch.Tensor
     base_seed: int
 
-    def __init__(self, sample_dir, device, noise_scale, gamma, dt,
-                 node_stats, edge_stats, target_stats, base_seed):
+    def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
+                 enable_velocity_edge):
         """
         Args:
             sample_dir: str
@@ -102,6 +102,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
+        self.enable_velocity_edge = enable_velocity_edge
 
     def __getitem__(self, idx):
         """
@@ -113,9 +114,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         Args:
             idx: int
                 Sample index.
-            return: Data
-                PyG Data with noised input features, recomputed edge features,
-                and corrected acceleration target.
+        return: Data
+            PyG Data with noised input features, recomputed edge features, and corrected acceleration target.
         """
         data = self.data[idx]
 
@@ -130,12 +130,16 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         v_noised = data.x_vel_t + eps / self.dt
 
         # Node features: full recomputation from raw attributes
-        node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force)
-        node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
+        # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+        #                                            self.enable_velocity_edge)
+        # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
+        node_attr_norm = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+                                             self.enable_velocity_edge)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index)
+        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
+                                            self.enable_velocity_edge)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)

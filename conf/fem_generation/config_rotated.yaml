@@ -48,3 +48,6 @@ test_ood_ranges:
   widths:
     below: { start: 0.01, stop: 0.05 }
     above: { start: 0.15, stop: 0.2 }
+
+selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
+selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
