@@ -7,6 +7,64 @@ import numpy as np
 import torch
 import dolfin as df
 
+
+def evaluate_vector_at_vertices_fast(v_fun):
+    """
+    Evaluate a vector Function at mesh vertices using compute_vertex_values,
+    returning (nverts, 3) array. Much faster than per-vertex evaluation.
+
+    Args:
+        v_fun: dolfin.Function
+            Vector-valued function defined on a CG-1 vector space.
+        return: np.ndarray
+            Array of shape (num_vertices, 3).
+    """
+    mesh = v_fun.function_space().mesh()
+    nverts = mesh.num_vertices()
+    vals = v_fun.compute_vertex_values(mesh)
+    out = np.zeros((nverts, 3), dtype=float)
+    out[:, 0] = vals[0 * nverts : 1 * nverts]
+    out[:, 1] = vals[1 * nverts : 2 * nverts]
+    out[:, 2] = vals[2 * nverts : 3 * nverts]
+    return out
+
+
+def dof_vector_to_vertex_array(vec, V):
+    """
+    Convert a raw DOF-ordered vector (e.g. from assemble()) to a vertex-ordered
+    (nverts, 3) array by wrapping it in a Function and using compute_vertex_values.
+    This avoids any assumptions about DOF ordering.
+
+    Args:
+        vec: dolfin.Vector or GenericVector
+            DOF-ordered vector (e.g. result of assemble()).
+        V: dolfin.FunctionSpace
+            The vector function space the DOFs belong to.
+        return: np.ndarray
+            Array of shape (num_vertices, 3) in vertex order.
+    """
+    f = df.Function(V)
+    f.vector()[:] = vec
+    return evaluate_vector_at_vertices_fast(f)
+
+
+def evaluate_stress_at_vertices_fast(stress_fun):
+    """
+    Evaluate a tensor-valued stress field at mesh vertices using
+    compute_vertex_values (fast, vectorized).
+
+    Args:
+        stress_fun: dolfin.Function
+            Tensor-valued stress field projected onto a CG-1 tensor space.
+        return: np.ndarray
+            Array of shape (num_vertices, 9).
+    """
+    mesh = stress_fun.function_space().mesh()
+    nverts = mesh.num_vertices()
+    vals = stress_fun.compute_vertex_values(mesh)
+    return vals.reshape((9, nverts)).T
+
+
 def evaluate_u_at_vertices(u, mesh):
     """
     Evaluate the displacement field at each mesh vertex.

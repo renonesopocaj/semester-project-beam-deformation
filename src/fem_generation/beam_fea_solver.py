@@ -15,78 +15,41 @@ from fenics import project
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from ufl import lhs, rhs
-from src.fem_generation.fem2torch_helpers import (extract_edges, evaluate_u_at_vertices, evaluate_force_at_vertices,
-                                                  evaluate_stress_at_vertices, evaluate_velocity_at_vertices,
-                                                  evaluate_acceleration_at_vertices, extract_mesh_bc_nodemask)
+from src.fem_generation.fem2torch_helpers import (extract_edges, evaluate_u_at_vertices,
+                                                  evaluate_velocity_at_vertices,
+                                                  evaluate_acceleration_at_vertices,
+                                                  evaluate_stress_at_vertices_fast,
+                                                  dof_vector_to_vertex_array, extract_mesh_bc_nodemask)
 from src.fem_generation.visualization_fea import plot_check, make_beam_gif
 
 # Use a non-interactive backend so plots can be generated in headless environments.
 matplotlib.use("agg")
 CONSTANT_FOR_CUTOFF_TIME = 4.0
 
-def extract_node_masses(u_, du, rho):
+def extract_node_masses(V, rho, dx_lump):
     """
-    Compute node-wise lumped masses in 3D and reorder them so they match the
-    vertex ordering given by mesh.coordinates().
+    Extract lumped node masses.  Because the mass matrix is assembled with
+    vertex quadrature (dx_lump), it is already diagonal -- get_diagonal
+    returns the true row-sum lumped masses.
 
     Args:
-        u_: dolfin.TestFunction
-            Test function defined on a vector-valued function space.
-        du: dolfin.TrialFunction
-            Trial function defined on the same vector-valued function space.
+        V: dolfin.FunctionSpace
+            Vector function space for displacement.
         rho: dolfin.Constant
-            Material density used in the mass matrix.
+            Material density.
+        dx_lump: dolfin.Measure
+            Vertex-quadrature measure that produces a diagonal mass matrix.
         return: np.ndarray
             Array of shape (num_vertices, 3) containing lumped mass values
             for x, y, z displacement components at each mesh vertex.
     """
-
-    # Recover the vector function space from the test function.
-    V = u_.function_space()
-
-    # Build and assemble the consistent mass matrix:
-    # M = integral(rho * u . du dx)
-    m_form = rho * df.inner(u_, du) * df.dx
-    M = df.assemble(m_form)
-
-    # Extract the diagonal entries of the mass matrix.
-    # These diagonal terms are used as lumped masses per DOF.
+    du = df.TrialFunction(V)
+    u_ = df.TestFunction(V)
+    M = df.assemble(rho * df.inner(du, u_) * dx_lump)
     diag = df.Vector()
     M.init_vector(diag, 0)
     M.get_diagonal(diag)
-    lumps_per_dof = diag.get_local()
-
-    mesh = V.mesh()
-    nverts = mesh.num_vertices()
-
-    # Allocate output array storing one lumped mass per component per vertex.
-    lumps_vertex = np.zeros((nverts, 3), dtype=float)
-
-    # Reorder each displacement component independently.
-    # In FEniCS, the global DOF ordering is not always the same as the
-    # vertex ordering from mesh.coordinates().
-    for comp_i in range(3):
-        # Collapse the selected subspace into a scalar space.
-        V_sub = V.sub(comp_i).collapse()
-
-        # Map scalar-space DOFs to mesh vertex indices.
-        d2v = df.dof_to_vertex_map(V_sub)
-
-        sub_dim = V_sub.dim()
-        lumps_sub = np.zeros(sub_dim, dtype=float)
-
-        # Gather the diagonal entries corresponding to the current component.
-        # Since the vector space has 3 components, global indexing is assumed
-        # to be interleaved as [x0, y0, z0, x1, y1, z1, ...].
-        for sub_dof in range(sub_dim):
-            global_dof = sub_dof * 3 + comp_i
-            lumps_sub[sub_dof] = lumps_per_dof[global_dof]
-
-        # Reorder the component masses into vertex order.
-        lumps_sub_vertex = lumps_sub[d2v]
-        lumps_vertex[:, comp_i] = lumps_sub_vertex
-
-    return lumps_vertex
+    return dof_vector_to_vertex_array(diag, V)
 
 def save_graphs(lst_graph_tstep, save_path, verbose):
     """
@@ -124,9 +87,9 @@ def sigma(r, mu, lmbda):
     return 2.0 * mu * df.sym(df.grad(r)) + lmbda * df.tr(df.sym(df.grad(r))) * df.Identity(len(r))
 
 
-def m(uA, uB, rho):
+def m(uA, uB, rho, dx_lump):
     """
-    Mass bilinear form.
+    Mass bilinear form using lumped (vertex-quadrature) integration.
 
     Args:
         uA: ufl expression
@@ -135,10 +98,12 @@ def m(uA, uB, rho):
             Second vector field.
         rho: dolfin.Constant
             Material density.
+        dx_lump: dolfin.Measure
+            Vertex-quadrature measure that makes the mass matrix diagonal.
         return: ufl form
-            Mass form rho * <uA, uB>.
+            Lumped mass form rho * <uA, uB>.
     """
-    return rho * df.inner(uA, uB) * df.dx
+    return rho * df.inner(uA, uB) * dx_lump
 
 
 def k(uA, uB, mu, lmbda):
@@ -160,9 +125,11 @@ def k(uA, uB, mu, lmbda):
     return df.inner(sigma(uA, mu, lmbda), df.sym(df.grad(uB))) * df.dx
 
 
-def c(uA, uB, eta_m, eta_k, rho, mu, lmbda):
+def c(uA, uB, eta_m, eta_k, rho, mu, lmbda, dx_lump):
     """
-    Rayleigh damping bilinear form.
+    Rayleigh damping bilinear form.  The mass-proportional part uses
+    the lumped mass measure so that damping is consistent with the
+    diagonal mass matrix.
 
     Args:
         uA: ufl expression
@@ -179,10 +146,12 @@ def c(uA, uB, eta_m, eta_k, rho, mu, lmbda):
             First Lamé parameter in shear form.
         lmbda: dolfin.Constant
             Second Lamé parameter.
+        dx_lump: dolfin.Measure
+            Vertex-quadrature measure for the lumped mass part.
         return: ufl form
-            Damping form eta_m * M + eta_k * K.
+            Damping form eta_m * M_lump + eta_k * K.
     """
-    return eta_m * m(uA, uB, rho) + eta_k * k(uA, uB, mu, lmbda)
+    return eta_m * m(uA, uB, rho, dx_lump) + eta_k * k(uA, uB, mu, lmbda)
 
 
 def Wext(uA, p, dss):
@@ -355,7 +324,7 @@ def local_project(v, V_, uOut):
 
 def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params, newmark_params, initial_force_x,
                    initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode, output_root,
-                   verbose):
+                   verbose, first_trajectory_debug, linear_solver):
     """
     Run a transient 3D beam finite element simulation and convert each time step
     into a graph object suitable for graph learning workflows.
@@ -411,6 +380,10 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
             enable verbose printing
         output_root: str
             output root
+        first_trajectory_debug: bool
+            when True, print average force / acc / vel at t=0, t=1, t=2
+        linear_solver: str
+            "mumps" for direct LU (MUMPS), "krylov" for CG + AMG.
     """
     # Enable FEniCS form compiler optimizations.
     df.parameters["form_compiler"]["cpp_optimize"] = True
@@ -448,6 +421,12 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Displacement space and stress space.
     V = df.VectorFunctionSpace(mesh, "CG", 1)
     Vsig = df.TensorFunctionSpace(mesh, "DG", 0)
+
+    # Lumped-mass quadrature rule (vertex scheme for CG-1).
+    # This makes the mass matrix diagonal so that the per-node equation
+    #   M_i * a_i  =  f_ext_i  -  f_int_i  -  f_damp_i
+    # holds exactly for every node i.
+    dx_lump = df.dx(scheme="vertex", metadata={"degree": 1, "representation": "quadrature"})
 
     # Convert mesh topology into graph connectivity.
     bidir_edge_index, mesh_connectivity = extract_edges(mesh)
@@ -493,9 +472,9 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     a_new = update_a(du, u_old, v_old, a_old, dt, beta, use_ufl=True)
     v_new = update_v(a_new, u_old, v_old, a_old, dt, gamma, use_ufl=True)
 
-    # Residual of the semi-discrete dynamic system.
-    res = (m(avg(a_old, a_new, alpha_m), u_, rho)
-           + c(avg(v_old, v_new, alpha_f), u_, eta_m, eta_k, rho, mu, lmbda)
+    # Residual of the semi-discrete dynamic system (mass and damping use lumped dx_lump).
+    res = (m(avg(a_old, a_new, alpha_m), u_, rho, dx_lump)
+           + c(avg(v_old, v_new, alpha_f), u_, eta_m, eta_k, rho, mu, lmbda, dx_lump)
            + k(avg(u_old, du, alpha_f), u_, mu, lmbda)
            - Wext(u_, p, dss))
 
@@ -506,9 +485,17 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Assemble system matrix once.
     K, res_assembled = df.assemble_system(a_form, L_form, bc)
 
-    # Use a direct LU solver with MUMPS backend.
-    solver = df.LUSolver(K, "mumps")
-    solver.parameters["symmetric"] = True
+    if linear_solver == "mumps":
+        solver = df.LUSolver(K, "mumps")
+        solver.parameters["symmetric"] = True
+    elif linear_solver == "krylov":
+        solver = df.KrylovSolver("cg", "amg")
+        solver.parameters["absolute_tolerance"] = 1e-7
+        solver.parameters["relative_tolerance"] = 1e-5
+        solver.parameters["maximum_iterations"] = 1000
+        solver.set_operator(K)
+    else:
+        raise ValueError("linear_solver must be 'mumps' or 'krylov', got %r" % (linear_solver,))
 
     # Allocate time and diagnostic arrays.
     time = np.linspace(0, T, Nsteps + 1)
@@ -518,7 +505,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     sig = df.Function(Vsig, name="sigma")
 
     # Compute lumped masses once because they do not change in time.
-    lumped_masses_nodes = extract_node_masses(u_, du, rho)
+    lumped_masses_nodes = extract_node_masses(V, rho, dx_lump)
 
     # Corner points used for optional displacement tracking.
     corners = [(0.0, 0.0, 0.0), (0.0, W, 0.0), (0.0, 0.0, D), (0.0, W, D)]
@@ -527,12 +514,32 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Store one graph snapshot per time step.
     lst_graph_tstep = []
 
-    # Additional spaces for external force and node-wise stress projection.
-    V_p = df.VectorFunctionSpace(mesh, "CG", 1)
+    # Node-wise stress projection space.
     V_stress_nodes = df.TensorFunctionSpace(mesh, "CG", 1)
-    p_function = df.Function(V_p)
     # Save undeformed coordinates once.
     initial_coordinates = mesh.coordinates()
+
+    # Record t = 0 state (all zeros: beam is at rest).
+    nverts = mesh.num_vertices()
+    graph_t0 = Data(
+        x=torch.tensor(initial_coordinates, dtype=torch.float),
+        edge_index=bidir_edge_index,
+        x_vel_t=torch.zeros((nverts, 3), dtype=torch.float),
+        y_acc_t=torch.zeros((nverts, 3), dtype=torch.float),
+        y_sig_t=torch.zeros((nverts, 9), dtype=torch.float),
+        x_node_force=torch.zeros((nverts, 3), dtype=torch.float),
+        x_bc=node_scalar_bc_mask,
+        y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
+        x_element_connectivity=mesh_connectivity,
+        time=torch.tensor([0.0], dtype=torch.float),
+    )
+    lst_graph_tstep.append(graph_t0)
+
+    if first_trajectory_debug:
+        print("=== DEBUG t=0 ===")
+        print(f"  avg force: {np.zeros(3)}")
+        print(f"  avg acc:   {np.zeros(3)}")
+        print(f"  avg vel:   {np.zeros(3)}")
 
     for i in range(Nsteps):
         dt_i = time[i + 1] - time[i]
@@ -546,21 +553,24 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         # Assemble and solve the linear system for displacement.
         res_assembled = df.assemble(L_form)
         bc.apply(res_assembled)
-        solver.solve(K, u.vector(), res_assembled)
+        solver.solve(u.vector(), res_assembled)
 
         # Update state variables after the displacement solve.
         update_fields(u, u_old, v_old, a_old, dt, beta, gamma)
 
         # Project stress to a discontinuous space and then to node-compatible space.
         local_project(sigma(u, mu, lmbda), Vsig, sig)
-        stress_nodewise = project(sig, V_stress_nodes)
+        stress_nodewise = project(sig, V_stress_nodes,
+                                  solver_type="cg", preconditioner_type="jacobi")
 
-        # Build a boundary-restricted force field for logging / graph storage.
-        bcs_force = df.DirichletBC(V_p, p, boundary_subdomains, 3)
-        bcs_force.apply(p_function.vector())
-        # Evaluate force at vertices in mesh vertex order.
-        force_vertex_array = evaluate_force_at_vertices(p_function, mesh)
-        node_force_t = torch.tensor(force_vertex_array, dtype=torch.float)
+        # Correct nodal force extraction:
+        # Set p.t to t_{n+1}, then assemble the external-work linear form to get the
+        # true FE-consistent nodal force vector  f_ext = int N^T p dS.
+        p.t = t_now
+        f_ext_vec = df.assemble(Wext(u_, p, dss))
+        f_ext_nodal = dof_vector_to_vertex_array(f_ext_vec, V)
+        node_force_t = torch.tensor(f_ext_nodal, dtype=torch.float)
+
         # Evaluate displacement and build deformed coordinates.
         disp_evaluated = evaluate_u_at_vertices(u, mesh)
         deformed_coordinates = initial_coordinates + disp_evaluated
@@ -571,8 +581,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         acc_values = evaluate_acceleration_at_vertices(a_old, mesh)
         acc_t = torch.tensor(acc_values, dtype=torch.float)
 
-        # Evaluate stress tensor at vertices and flatten it.
-        stress_array = evaluate_stress_at_vertices(stress_nodewise, mesh)
+        # Evaluate stress tensor at vertices (fast vectorized path).
+        stress_array = evaluate_stress_at_vertices_fast(stress_nodewise)
         sig_t = torch.tensor(stress_array, dtype=torch.float)
 
         # Build one PyG graph snapshot for this time step.
@@ -590,19 +600,22 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         )
         lst_graph_tstep.append(graph)
 
-        # Reset to actual current time for any later use.
-        p.t = t_now
+        if first_trajectory_debug and i < 2:
+            print(f"=== DEBUG t={i + 1} (time={t_now:.4f}) ===")
+            print(f"  avg force: {np.mean(f_ext_nodal, axis=0)}")
+            print(f"  avg acc:   {np.mean(acc_values, axis=0)}")
+            print(f"  avg vel:   {np.mean(vel_values, axis=0)}")
 
-        # Track tip displacement only in serial.
+        # Track tip displacement only in serial (z-component at the tip).
         if df.MPI.comm_world.size == 1:
-            u_tip[i + 1] = u(L, W, 0.0)[1]
+            u_tip[i + 1] = u(L, W, 0.0)[2]
             for j, cpt in enumerate(corners):
-                u_corners[i + 1, j] = u(*cpt)[1]
+                u_corners[i + 1, j] = u(*cpt)[2]
 
         # Compute and accumulate energies.
         E_elas = df.assemble(0.5 * k(u_old, u_old, mu, lmbda))
-        E_kin = df.assemble(0.5 * m(v_old, v_old, rho))
-        E_damp += dt_i * df.assemble(c(v_old, v_old, eta_m, eta_k, rho, mu, lmbda))
+        E_kin = df.assemble(0.5 * m(v_old, v_old, rho, dx_lump))
+        E_damp += dt_i * df.assemble(c(v_old, v_old, eta_m, eta_k, rho, mu, lmbda, dx_lump))
         E_tot = E_elas + E_kin + E_damp
         energies[i + 1, :] = np.array([E_elas, E_kin, E_damp, E_tot])
 
@@ -632,74 +645,3 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     save_graphs(lst_graph_tstep, graph_file_path, verbose=False)
 
     return lst_graph_tstep, save_path_graph, simulation_name
-
-
-# if __name__ == "__main__":
-#     # Create an argument parser describing the available command-line options.
-#     parser = argparse.ArgumentParser(description="FEA Simulation Parameters")
-#     # Geometrical and discretization parameters.
-#     parser.add_argument("--L", type=float, default=1.0, help="Length of the beam (default: 1.0)")
-#     parser.add_argument("--W", type=float, default=0.1, help="Width of the beam (default: 0.1)")
-#     parser.add_argument("--D", type=float, default=0.04, help="Depth of the beam (default: 0.04)")
-#     parser.add_argument("--NL", type=int, default=8, help="Number of elements along length (default: 8)")
-#     parser.add_argument("--NW", type=int, default=2, help="Number of elements along width (default: 2)")
-#     parser.add_argument("--ND", type=int, default=2, help="Number of elements along depth (default: 2)")
-#     # Material properties.
-#     parser.add_argument("--E", type=float, default=1000.0, help="Young's modulus (default: 1000.0)")
-#     parser.add_argument("--nu", type=float, default=0.3, help="Poisson's ratio (default: 0.3)")
-#     parser.add_argument("--rho", type=float, default=1.0, help="Density (default: 1.0)")
-#     # Rayleigh damping parameters.
-#     parser.add_argument("--eta_m", type=float, default=0.01, help="Mass proportional damping (default: 0.01)")
-#     parser.add_argument("--eta_k", type=float, default=0.01, help="Stiffness proportional damping (default: 0.01)")
-#     # Generalized-alpha / Newmark parameters.
-#     parser.add_argument("--alpha_m", type=float, default=0.0, help="Alpha mass (default: 0.0)")
-#     parser.add_argument("--alpha_f", type=float, default=0.0, help="Alpha force (default: 0.0)")
-#     # Simulation force and time parameters.
-#     parser.add_argument("--initial_force_y", type=float, default=1.0, help="Initial force (default: 1.0)")
-#     parser.add_argument("--initial_force_x", type=float, default=0.0, help="Initial force in x direction (default: 0.0)")
-#     parser.add_argument("--initial_force_z", type=float, default=0.0, help="Initial force in z direction (default: 0.0)")
-#     parser.add_argument("--cutoff_time_factor", type=float, default=1 / 5, help="Cutoff time factor (default: 0.2)")
-#     parser.add_argument("--total_time", type=float, default=4.0, help="Total simulation time (default: 4.0)")
-#     parser.add_argument("--num_steps", type=int, default=50, help="Number of time steps (default: 50)")
-#     # Output mode used as subfolder name.
-#     parser.add_argument("--mode", type=str, default="train", help="subfolder name e.g. test,train")
-#     # Parse arguments from the command line.
-#     args = parser.parse_args()
-#
-#     # Extract individual parameters from the parsed namespace.
-#     L = args.L
-#     W = args.W
-#     D = args.D
-#     NL = args.NL
-#     NW = args.NW
-#     ND = args.ND
-#     E = args.E
-#     nu = args.nu
-#     rho = args.rho
-#     eta_m = args.eta_m
-#     eta_k = args.eta_k
-#     alpha_m = args.alpha_m
-#     alpha_f = args.alpha_f
-#     initial_force_x = args.initial_force_x
-#     initial_force_y = args.initial_force_y
-#     initial_force_z = args.initial_force_z
-#     cutoff_time_factor = args.cutoff_time_factor
-#     total_time = args.total_time
-#     num_steps = args.num_steps
-#     mode = args.mode
-#
-#     # Pack related parameters into tuples expected by fea_simulation().
-#     elastic_params = (E, nu)
-#     density = rho
-#     damping_params = (eta_m, eta_k)
-#     newmark_params = (alpha_m, alpha_f)
-#
-#     # Run the transient simulation and collect graph snapshots.
-#     lst_graphs, graph_save_path, simulation_name = fea_simulation(L, W, D, NL, NW, ND, elastic_params, density,
-#                                                                   damping_params, newmark_params, initial_force_x,
-#                                                                   initial_force_y, initial_force_z, cutoff_time_factor,
-#                                                                   total_time, num_steps, mode)
-#     # Build GIF output path.
-#     out_gif = os.path.join(graph_save_path, "BEAM_" + simulation_name + ".gif")
-#     # Render the animated visualization.
-#     make_beam_gif(lst_graphs, L, W, D, out_gif, fps=4, verbose=False)

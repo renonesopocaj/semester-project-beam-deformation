@@ -1157,7 +1157,9 @@ def run_simulations(config_path, verbose, skip_existing, modes):
                            num_steps=sim_num_steps,
                            mode=mode,
                            output_root=output_root,
-                           verbose=verbose)
+                           verbose=verbose,
+                           first_trajectory_debug=(idx == 0),
+                           linear_solver=defaults.get("linear_solver", "krylov"))
 
 
 if __name__ == "__main__":
