@@ -246,6 +246,11 @@ def main(cfg):
         preprocess_dict = yaml.safe_load(file)
 
     preprocess_cfg = PreprocessYaml(preprocess_dict)
+    # Resolve extra_info_dir: prefer train config, fall back to preprocess config
+    if train_cfg.extra_info_dir is None and preprocess_cfg.extra_info_dir is not None:
+        train_cfg.extra_info_dir = preprocess_cfg.extra_info_dir
+    if train_cfg.extra_info_dir is not None:
+        print(f"Extra info dir: {train_cfg.extra_info_dir}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not torch.cuda.is_available() and train_cfg.training_type == "slurm":
         raise RuntimeError("CUDA is not available.")

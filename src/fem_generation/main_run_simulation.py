@@ -935,6 +935,67 @@ def _build_zero_force_test_combo(cfg):
 
 
 # ---------------------------------------------------------------------------
+#  Selected trajectory helpers
+# ---------------------------------------------------------------------------
+
+def _read_selected_trajs(cfg):
+    """
+    Read the selected_trajs section from the config.
+
+    Args:
+        cfg: dict
+            yaml config
+    return: dict
+        selected_trajs dict, or empty dict if absent
+    """
+    return cfg.get("selected_trajs", {})
+
+
+def _selected_indices_for_mode(selected_trajs, mode):
+    """
+    Return the set of trajectory indices that should get longer rollouts
+    for the given split mode.
+
+    Args:
+        selected_trajs: dict
+            selected_trajs section from config
+        mode: str
+            split mode: "train", "val", or "test"
+    return: set of int
+        trajectory indices to run with longer rollout
+    """
+    if mode == "val":
+        return set(selected_trajs.get("selected_validation_trajectories", []))
+    elif mode == "test":
+        return set(selected_trajs.get("selected_test_trajectories", []))
+    return set()
+
+
+def _save_extra_info(output_root, selected_trajs, ood_by_traj):
+    """
+    Save selected_trajectories.json and test_ood_features.json into the
+    extra_info/ directory alongside the split folders.
+
+    Args:
+        output_root: str or pathlib.Path
+            root output directory (sibling of train/val/test)
+        selected_trajs: dict
+            selected_trajs section from config
+        ood_by_traj: dict or None
+            OOD feature mapping per trajectory index (None if test not built)
+    """
+    extra_info_dir = Path(output_root) / "extra_info"
+    extra_info_dir.mkdir(parents=True, exist_ok=True)
+    with open(extra_info_dir / "selected_trajectories.json", "w") as f:
+        json.dump(selected_trajs, f, indent=2)
+    print(f"Saved selected_trajectories.json => {extra_info_dir / 'selected_trajectories.json'}")
+    if ood_by_traj is not None:
+        with open(extra_info_dir / "test_ood_features.json", "w") as f:
+            json.dump(ood_by_traj, f, indent=2)
+        print(f"Saved test_ood_features.json => {extra_info_dir / 'test_ood_features.json'}")
+
+
+# ---------------------------------------------------------------------------
 #  Main loop
 # ---------------------------------------------------------------------------
 
@@ -964,6 +1025,7 @@ def run_simulations(config_path, verbose, skip_existing, modes):
     cfg = load_config(config_path)
     defaults = cfg["defaults"]
     output_root = cfg["output_root"]
+    selected_trajs = _read_selected_trajs(cfg)
 
     requested_modes = tuple(str(mode).lower() for mode in modes)
     valid_modes = {"train", "val", "test"}
@@ -1000,6 +1062,8 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         with open(ood_path, "w") as f:
             json.dump(ood_by_traj, f, indent=2)
         print(json.dumps(ood_by_traj, indent=2))
+        # Save extra_info (selected trajectories + test_ood_features)
+        _save_extra_info(output_root, selected_trajs, ood_by_traj)
         return
 
     # Deferred import so MPI/Dolfin is never initialized for only_json runs.
@@ -1031,6 +1095,7 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         split_dir = Path(output_root) / mode
         _build_trajectory_params_json(splits[mode], defaults, split_dir, train_ranges)
 
+    ood_by_traj = None
     if "test" in requested_modes and len(splits["test"]) > 0:
         test_dir = Path(output_root) / "test"
         test_dir.mkdir(parents=True, exist_ok=True)
@@ -1042,26 +1107,42 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         with open(ood_path, "w") as f:
             json.dump(ood_by_traj, f, indent=2)
 
+    # Save extra_info (selected trajectories + test_ood_features)
+    _save_extra_info(output_root, selected_trajs, ood_by_traj)
+
+    # Read selected trajectory overrides
+    selected_total_time = selected_trajs.get("selected_total_time", defaults["total_time"])
+    selected_num_steps = selected_trajs.get("num_steps", defaults["num_steps"])
+
     for mode in requested_modes:
         combos = splits[mode]
         dir_path = Path(output_root) / mode / "graphs"
         dir_path.mkdir(parents=True, exist_ok=True)
+        mode_selected_indices = _selected_indices_for_mode(selected_trajs, mode)
 
         print("\n" + "=" * 60 + f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})" + "=" * 60)
 
         for idx, ((fx, fy, fz), L, W) in tqdm(enumerate(combos), total=len(combos)):
+            is_selected = idx in mode_selected_indices
+            sim_total_time = selected_total_time if is_selected else defaults["total_time"]
+            sim_num_steps = selected_num_steps if is_selected else defaults["num_steps"]
+
             p = dict(defaults)
             p["L"] = L
             p["W"] = W
             p["fx"] = fx
             p["fy"] = fy
             p["fz"] = fz
+            p["total_time"] = sim_total_time
+            p["num_steps"] = sim_num_steps
 
             if _graph_filepath(p, dir_path).exists() and skip_existing:
                 continue
 
             if verbose:
-                print(f"\nSim {idx + 1}/{len(combos)}:  fx={fx:.4f}  fy={fy:.4f}  fz={fz:.4f}  L={L:.4f}  W={W:.4f}")
+                tag = " [SELECTED]" if is_selected else ""
+                print(f"\nSim {idx + 1}/{len(combos)}:  fx={fx:.4f}  fy={fy:.4f}  fz={fz:.4f}"
+                      f"  L={L:.4f}  W={W:.4f}  T={sim_total_time}  Nsteps={sim_num_steps}{tag}")
 
             fea_simulation(L=L, W=W,
                            D=defaults["D"],
@@ -1072,8 +1153,8 @@ def run_simulations(config_path, verbose, skip_existing, modes):
                            newmark_params=(defaults["alpha_m"], defaults["alpha_f"]),
                            initial_force_x=fx, initial_force_y=fy, initial_force_z=fz,
                            cutoff_time_factor=defaults["cutoff_time_factor"],
-                           total_time=defaults["total_time"],
-                           num_steps=defaults["num_steps"],
+                           total_time=sim_total_time,
+                           num_steps=sim_num_steps,
                            mode=mode,
                            output_root=output_root,
                            verbose=verbose)

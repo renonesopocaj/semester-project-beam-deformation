@@ -40,6 +40,84 @@ from src.gnn.mesh_numerical_helpers.compute_angle import (extract_surface_triang
 
 EPS = 1e-6
 
+
+def load_selected_trajectories(extra_info_dir):
+    """
+    Load selected_trajectories.json from the extra_info directory.
+
+    Args:
+        extra_info_dir: str or Path or None
+            path to the extra_info directory
+    return: dict
+        parsed selected_trajectories.json content, or empty dict if not found
+    """
+    if extra_info_dir is None:
+        return {}
+    path = Path(extra_info_dir) / "selected_trajectories.json"
+    if not path.exists():
+        print(f"Warning: {path} not found, no selected trajectories will be used.")
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _selected_indices_for_split(selected_trajs, split):
+    """
+    Return the set of trajectory indices that have longer rollouts for the given split.
+
+    Args:
+        selected_trajs: dict
+            content of selected_trajectories.json
+        split: str
+            one of "train", "val", "test"
+    return: set of int
+        trajectory indices with longer rollout
+    """
+    if split == "val":
+        return set(selected_trajs.get("selected_validation_trajectories", []))
+    elif split == "test":
+        return set(selected_trajs.get("selected_test_trajectories", []))
+    return set()
+
+
+def _selected_limit_from_json(selected_trajs, default_limit):
+    """
+    Return the selected timestep limit from the JSON, or the default if absent.
+
+    Args:
+        selected_trajs: dict
+            content of selected_trajectories.json
+        default_limit: int
+            fallback limit_timesteps
+    return: int
+        timestep limit for selected trajectories
+    """
+    return int(selected_trajs.get("selected_num_steps", selected_trajs.get("num_steps", default_limit)))
+
+
+def _sort_filenames_by_traj_params(filenames, graphs_dir):
+    """
+    Sort raw simulation filenames by traj_idx from trajectory_params.json so that
+    the preprocessing file order matches the FEM generation combo order,
+    regardless of filename differences (e.g. different T/Nsteps for selected trajectories).
+
+    Args:
+        filenames: list of Path
+            unsorted list of .pt file paths
+        graphs_dir: Path or str
+            directory containing the graph .pt files (trajectory_params.json is one level up)
+    return: list of Path
+        sorted filenames
+    """
+    traj_params_path = Path(graphs_dir).parent / "trajectory_params.json"
+    if not traj_params_path.exists():
+        return sorted(filenames)
+    with open(traj_params_path) as f:
+        traj_params = json.load(f)
+    name_to_idx = {name: info["traj_idx"] for name, info in traj_params.items()}
+    return sorted(filenames, key=lambda fn: name_to_idx.get(fn.name, 0))
+
+
 class Preprocessor(ABC):
     node_stats: Stats
     edge_stats: Stats
@@ -52,13 +130,17 @@ class Preprocessor(ABC):
     traj_idx_list: list[int]
     targets: list[torch.Tensor]
     time_discretizer: TimeDiscretizer
+    selected_indices: set
+    selected_limit: int
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, selected_indices, selected_limit):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
         self.theta_max = 0.0
         self.time_discretizer = create_time_discretizer(cfg.time_discretization_method)
         self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        self.selected_indices = set(selected_indices)
+        self.selected_limit = int(selected_limit)
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
@@ -94,7 +176,7 @@ class Preprocessor(ABC):
                 Path to save the preprocessed data
         """
         torch.manual_seed(cfg.seed)
-        filenames = list(Path(graphs_dir).glob("*.pt"))
+        filenames = _sort_filenames_by_traj_params(list(Path(graphs_dir).glob("*.pt")), graphs_dir)
         split_idx_edge = 9
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
@@ -123,7 +205,8 @@ class Preprocessor(ABC):
             rest_pos_x = x[0].clone()  # Rest (first) mesh position (N, 3)
             # Compute angle
             surface_left_triangles, surface_right_triangles = self._maybe_update_maxangle_train(x, graphs_list_batch,
-                                                                                                rest_pos_x, cfg)
+                                                                                                rest_pos_x, cfg,
+                                                                                                idx_file)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
             # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3) FIXME: does it make any difference?
@@ -133,9 +216,10 @@ class Preprocessor(ABC):
             boundary_condition = graphs_list_batch[0].x_bc
 
             # Inside loop: for each graph build its features
+            effective_limit = self.selected_limit if idx_file in self.selected_indices else cfg.limit_timesteps
             for t, graph in enumerate(graphs_list_batch):
                 # limit trajectory length to compute acceleration
-                if t > cfg.limit_timesteps - 2:
+                if t > effective_limit - 2:
                     break
                 self.traj_idx_list.append(idx_file)  # idx_file of the traj (of the file process)
                 # create local (inside for) variables
@@ -199,7 +283,7 @@ class Preprocessor(ABC):
         raise NotImplementedError("_normalize_append_outgraphs")
 
     @abstractmethod
-    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg, idx_file):
         raise NotImplementedError("_maybe_update_train_curvature_threshold")
 
     @abstractmethod
@@ -209,8 +293,8 @@ class Preprocessor(ABC):
 
 class TrainPreprocessor(Preprocessor):
 
-    def __init__(self, cfg):
-        super().__init__(cfg)
+    def __init__(self, cfg, selected_indices, selected_limit):
+        super().__init__(cfg, selected_indices, selected_limit)
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         stats = {"node": node_stats.to_dict(), "edge": edge_stats.to_dict(), "target": target_stats.to_dict()}
@@ -241,7 +325,7 @@ class TrainPreprocessor(Preprocessor):
     def _load_stats(self, cfg):
         pass
 
-    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg, idx_file):
         boundary_condition = graphs_list_batch[0].x_bc
         # Obtain triangles for angle computation
         fixed_mask = boundary_condition.squeeze(1) > 0.5
@@ -250,7 +334,8 @@ class TrainPreprocessor(Preprocessor):
         surface_left_triangles, surface_right_triangles, _ = filter_fixed_surface_triangles(surface_left_triangles,
                                                                                             surface_right_triangles,
                                                                                             fixed_mask)
-        max_timesteps = min(x_raw.shape[0], cfg.limit_timesteps)
+        effective_limit = self.selected_limit if idx_file in self.selected_indices else cfg.limit_timesteps
+        max_timesteps = min(x_raw.shape[0], effective_limit)
         for timestep_idx in range(max_timesteps):
             current_theta_max = max_surface_angle(x_raw[timestep_idx], surface_left_triangles,
                                                   surface_right_triangles)
@@ -299,8 +384,8 @@ class TrainPreprocessor(Preprocessor):
 class ValPreprocessor(Preprocessor):
     save_dir_train: Path
 
-    def __init__(self, cfg, save_dir_train):
-        super().__init__(cfg)
+    def __init__(self, cfg, save_dir_train, selected_indices, selected_limit):
+        super().__init__(cfg, selected_indices, selected_limit)
         self.save_dir_train = save_dir_train
 
     def _compute_stats_train(self, cfg, split_idx_edge):
@@ -318,7 +403,7 @@ class ValPreprocessor(Preprocessor):
               f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
-    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg):
+    def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg, idx_file):
         boundary_condition = graphs_list_batch[0].x_bc
         # Obtain triangles for angle computation
         fixed_mask = boundary_condition.squeeze(1) > 0.5
@@ -383,13 +468,28 @@ class ValPreprocessor(Preprocessor):
                 boundary_right_tri_index=boundary_right_triangles)
         )
 
-def create_preprocessor(split, cfg, save_dir_train):
+def create_preprocessor(split, cfg, save_dir_train, selected_indices, selected_limit):
+    """
+    Args:
+        split: str
+            one of "train", "val", "test"
+        cfg: PreprocessYaml
+            preprocessing config
+        save_dir_train: Path or None
+            path to the train preprocessed dir (for loading stats in val/test)
+        selected_indices: set of int
+            trajectory indices that have longer rollouts for this split
+        selected_limit: int
+            timestep limit for selected trajectories
+    return: Preprocessor
+        preprocessor instance for the given split
+    """
     if split == "train":
-        return TrainPreprocessor(cfg)
+        return TrainPreprocessor(cfg, selected_indices, selected_limit)
     elif split == "val":
-        return ValPreprocessor(cfg, save_dir_train)
+        return ValPreprocessor(cfg, save_dir_train, selected_indices, selected_limit)
     elif split == "test":
-        return ValPreprocessor(cfg, save_dir_train)
+        return ValPreprocessor(cfg, save_dir_train, selected_indices, selected_limit)
     else:
         raise NotImplementedError(f"{split} not implemented")
 
@@ -436,10 +536,21 @@ def main(cfg):
         cfg.val_dir = save_dir_val.as_posix()
     OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
 
+    # Load selected trajectory info for longer rollouts
+    selected_trajs = load_selected_trajectories(cfg_obj.extra_info_dir)
+    selected_limit = _selected_limit_from_json(selected_trajs, cfg_obj.limit_timesteps)
+    selected_val = _selected_indices_for_split(selected_trajs, "val")
+    selected_test = _selected_indices_for_split(selected_trajs, "test")
+    selected_train = set()
+    if selected_trajs:
+        print(f"\tSelected validation trajectories ({len(selected_val)}): {sorted(selected_val)}")
+        print(f"\tSelected test trajectories ({len(selected_test)}): {sorted(selected_test)}")
+        print(f"\tSelected trajectory limit_timesteps: {selected_limit}")
+
     # Create preprocessors object
-    preprocessor_train = create_preprocessor("train", cfg_obj, None)
-    preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train)
-    preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train)
+    preprocessor_train = create_preprocessor("train", cfg_obj, None, selected_train, selected_limit)
+    preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train, selected_val, selected_limit)
+    preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train, selected_test, selected_limit)
     print("\n" + "=" * 60 + "\nTrain preprocesing")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)

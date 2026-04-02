@@ -105,6 +105,7 @@ class PreprocessYaml:
             self.test_dir = flattened_cfg["test_dir"]
         if "save_dir_val" in flattened_cfg:
             self.save_dir_val = flattened_cfg["save_dir_val"]
+        self.extra_info_dir = flattened_cfg.get("extra_info_dir")
 
 
 class TrainYaml:
@@ -168,6 +169,7 @@ class TrainYaml:
         self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
         self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
+        self.extra_info_dir = flattened_cfg.get("extra_info_dir")
 
 def _to_dict_flatten(data):
     """
