@@ -21,6 +21,13 @@ from pathlib import Path
 import numpy as np
 import yaml
 from tqdm import tqdm
+import dolfin as df
+
+import warnings
+from ffc.quadrature.deprecation import QuadratureRepresentationDeprecationWarning
+import dolfin as df
+warnings.filterwarnings("ignore", category=QuadratureRepresentationDeprecationWarning)
+# df.set_log_level(df.LogLevel.ERROR)  # optional; does not control this warning
 
 # Round-based equality used when deciding whether two float values should be treated as the same grid value.
 DECIMALS = 10
@@ -1163,6 +1170,5 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
 
 if __name__ == "__main__":
-    config = "conf/fem_generation/config_original.yaml"
-
+    config = "conf/fem_generation/config_rotated.yaml"
     run_simulations(config, verbose=False, skip_existing=False, modes=("val", "test"))

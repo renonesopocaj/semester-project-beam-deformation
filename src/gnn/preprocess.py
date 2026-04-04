@@ -515,7 +515,7 @@ def main(cfg):
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
-    # =============== NAME ================
+    # ===============================
 
     # =============== SPLITS ================
     # Where to save results
@@ -526,7 +526,7 @@ def main(cfg):
     graphs_dir_train = Path(cfg_obj.raw_data_dir) / "train" / "graphs"
     graphs_dir_test = Path(cfg_obj.raw_data_dir) / "test" / "graphs"
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
-    # =============== SPLITS ================
+    # ===============================
 
     with open_dict(cfg):
         cfg.node_channels = 16

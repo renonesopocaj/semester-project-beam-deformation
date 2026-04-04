@@ -4,10 +4,10 @@ clofnet_gcl.py
 ClofNet graph block with complete local frames.
 """
 
-from src.gnn.models.clofnet.gcl.egnn_gcl import EgnnGCL
+from src.gnn.models.clofnet.gcl.gcl_egnn import EgnnGCL
 from torch import nn
 import torch
-from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean
+from src.gnn.models.clofnet.gcl.aggregators import unsorted_segment_mean
 
 class ClofGCL(EgnnGCL):
     """
@@ -44,15 +44,23 @@ class ClofGCL(EgnnGCL):
     is not a paper equation. It is a repository-level dynamics addition.
     """
 
-    def __init__(self, input_nf, output_nf, hidden_nf, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(), recurrent=True,
-                 coords_weight=1.0, attention=False, norm_diff=False, tanh=False):
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_edge_mlp_dim,
+                 act_fn=nn.ReLU(),
+                 recurrent=True,
+                 coords_weight=1.0, attention=False, norm_diff=False, tanh=False, out_coord_mlp_dim=1):
         """
+        self, in_node_mlp_dim, output_node_dim, hidden_dim,
+                 in_edge_mlp_dim,
+                 act_fn=nn.ReLU(),
+                 recurrent=True,
+                 coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False, out_basis_dim=1
+
         Args:
-            input_nf: int
+            input_dim_node: int
                 Input node feature dimension.
-            output_nf: int
+            output_node_dim: int
                 Output node feature dimension.
-            hidden_nf: int
+            hidden_dim: int
                 Hidden feature dimension.
             edges_in_d: int
                 Extra edge feature dimension.
@@ -73,23 +81,23 @@ class ClofGCL(EgnnGCL):
                 Whether to tanh-squash the three basis coefficients predicted by
                 `coord_mlp`.
         """
-        super().__init__(input_nf, output_nf, hidden_nf, edges_in_d=edges_in_d, nodes_att_dim=nodes_att_dim,
-                         act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight, attention=attention,
-                         norm_diff=norm_diff, tanh=tanh, out_basis_dim=3)
+        # in_edge_mlp_dim = input_dim_node * 2 + 1 + edges_in_d
+        super().__init__(in_node_mlp_dim, output_node_dim, hidden_dim, in_edge_mlp_dim,
+                         act_fn,
+                         recurrent, coords_weight, attention, norm_diff, tanh,
+                         out_basis_dim=3)
         self.norm_diff = norm_diff
-
-        self.coord_mlp_vel = nn.Sequential(nn.Linear(input_nf, hidden_nf),
-                                            act_fn,
-                                            nn.Linear(hidden_nf, 1))
-
-        self.edge_mlp = nn.Sequential(nn.Linear(input_nf * 2 + 1 + edges_in_d, hidden_nf),
+        self.coord_mlp_vel = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim),
+                                           act_fn,
+                                           nn.Linear(hidden_dim, out_coord_mlp_dim))
+        # Note: edge_mlp is overrided from the EgnnGCL init with 3 layers instead of 2
+        self.edge_mlp = nn.Sequential(nn.Linear(in_edge_mlp_dim, hidden_dim),
                                       act_fn,
-                                      nn.Linear(hidden_nf, hidden_nf),
+                                      nn.Linear(hidden_dim, hidden_dim),
                                       act_fn,
-                                      nn.Linear(hidden_nf, hidden_nf),
+                                      nn.Linear(hidden_dim, hidden_dim),
                                       act_fn)
-
-        self.layer_norm = nn.LayerNorm(hidden_nf)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
 
     def coord2localframe(self, edge_index, coord):
         """
@@ -101,11 +109,10 @@ class ClofGCL(EgnnGCL):
             c_ij = a_ij x b_ij
 
         Implementation details:
-        - The repository uses `+ 1` instead of a tiny epsilon in the
-          normalization denominator, mirroring the broader codebase style.
-        - The frame is "complete" because it spans three directions instead of
-          only the radial direction, which addresses the directional
-          degeneracy problem discussed in Section 3.
+        - The repository uses `+ 1` instead of a tiny epsilon in the normalization denominator, mirroring the broader
+         codebase style.
+        - The frame is "complete" because it spans three directions instead of only the radial direction, which
+          addresses the directional degeneracy problem discussed in Section 3.
 
         Args:
             edge_index: tuple[torch.Tensor, torch.Tensor]
@@ -124,19 +131,14 @@ class ClofGCL(EgnnGCL):
                 Third basis vector c_ij, shape [E, 3].
         """
         row, col = edge_index
-
         coord_diff = coord[row] - coord[col]
         radial = torch.sum(coord_diff ** 2, dim=1).unsqueeze(1)
-
         coord_cross = torch.cross(coord[row], coord[col])
-
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
             coord_diff = coord_diff / norm
-
             cross_norm = torch.sqrt(torch.sum(coord_cross ** 2, dim=1).unsqueeze(1)) + 1
             coord_cross = coord_cross / cross_norm
-
         coord_vertical = torch.cross(coord_diff, coord_cross)
 
         return radial, coord_diff, coord_cross, coord_vertical
@@ -144,20 +146,14 @@ class ClofGCL(EgnnGCL):
     def coord_model_forward(self, coord, edge_index, coord_diff, coord_cross, coord_vertical, edge_feat):
         """
         Vectorize learned scalar coefficients back into a 3D coordinate update.
-
-        This is the main implementation of the paper's vectorization idea in
-        Eq. (8). The learned edge embedding `edge_feat` is mapped to three
-        scalar coefficients:
+        This is the main implementation of the paper's vectorization idea in Eq. (8). The learned edge embedding
+         `edge_feat` is mapped to three scalar coefficients:
             coff_ij = [alpha_ij, beta_ij, gamma_ij]
 
         Then the update is reconstructed in the local frame:
-            trans_ij =
-                alpha_ij * a_ij
-              + beta_ij  * b_ij
-              + gamma_ij * c_ij
+            trans_ij = alpha_ij * a_ij + beta_ij  * b_ij + gamma_ij * c_ij
 
-        Finally, edgewise transforms are averaged per destination node and
-        added to the coordinates.
+        Finally, edgewise transforms are averaged per destination node and added to the coordinates.
 
         Args:
             coord: torch.Tensor
@@ -220,13 +216,13 @@ class ClofGCL(EgnnGCL):
             node_attr: torch.Tensor or None
                 Optional node features, shape [N, nodes_att_dim].
 
-            return: (h, coord, edge_attr)
-                h: torch.Tensor
-                    Updated node features.
-                coord: torch.Tensor
-                    Updated coordinates.
-                edge_attr: torch.Tensor or None
-                    Returned unchanged for interface compatibility.
+        return: (h, coord, edge_attr)
+            h: torch.Tensor
+                Updated node features.
+            coord: torch.Tensor
+                Updated coordinates.
+            edge_attr: torch.Tensor or None
+                Returned unchanged for interface compatibility.
         """
         row, col = edge_index
         residue = h

@@ -3,8 +3,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl.clofnet_gcl import ClofGCL
-from src.gnn.models.clofnet.gaussian import GaussianLayer
+from src.gnn.models.clofnet.gcl.gcl_clofnet import ClofGCL
+from src.gnn.models.clofnet.gaussian_layer import GaussianLayer
 
 
 class ClofNetVelocityGaussian(nn.Module):
@@ -41,8 +41,6 @@ class ClofNetVelocityGaussian(nn.Module):
                 Whether frame directions are normalized.
             tanh: bool
                 Whether coordinate coefficients are tanh-bounded.
-            return: None
-                Initializes the module.
         """
         super(ClofNetVelocityGaussian, self).__init__()
         self.hidden_nf = hidden_nf
@@ -54,24 +52,18 @@ class ClofNetVelocityGaussian(nn.Module):
 
         # coff_feat is 14-dim here.
         edge_embed_dim = 14
-        self.fuse_edge = nn.Sequential(
-            nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
-            nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn
-        )
+        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_nf // 2),
+                                       act_fn,
+                                       nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2),
+                                       act_fn)
 
         # Preserves the original behavior.
         self.norm_diff = True
 
         for i in range(0, self.n_layers):
-            clof_gcl = ClofGCL(input_nf=self.hidden_nf,
-                                output_nf=self.hidden_nf,
-                                hidden_nf=self.hidden_nf,
-                                edges_in_d=self.hidden_nf // 2,
-                                                    act_fn=act_fn,
-                                recurrent=recurrent,
-                                                    coords_weight=coords_weight,
-                                                    norm_diff=norm_diff,
-                                                    tanh=tanh)
+            clof_gcl = ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
+                               edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent,
+                               coords_weight=coords_weight, norm_diff=norm_diff, tanh=tanh)
             self.add_module("gcl_%d" % i, clof_gcl,)
 
         self.to(self.device)

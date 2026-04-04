@@ -46,7 +46,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl.clofnet_gcl import ClofGCL
+from src.gnn.models.clofnet.gcl.gcl_clofnet import ClofGCL
 
 
 class ClofNet(nn.Module):
@@ -65,17 +65,21 @@ class ClofNet(nn.Module):
     from Eq. (9), but the actual vectorization happens inside Clof_GCL.coord_model rather than in this file.
     """
 
-    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device, act_fn,
-                 n_layers, coords_weight, recurrent, norm_diff, tanh):
+    def __init__(self, in_dim_node, in_dim_edge, hidden_dim,
+                 device,
+                 act_fn,
+                 n_layers,
+                 coords_weight, recurrent, norm_diff, tanh,
+                 out_dim_edge_emb=8):
         """
         Initializes the model
 
         Args:
-            in_node_nf: int
+            in_dim_node: int
                 Input dimensionality of node features h.
-            in_edge_nf: int
+            in_dim_edge: int
                 Input dimensionality of edge attributes e_ij.
-            hidden_nf: int
+            hidden_dim: int
                 Hidden dimensionality used across embeddings and Clof_GCL.
             device: torch.device or str
                 Device where the module is moved.
@@ -94,31 +98,28 @@ class ClofNet(nn.Module):
                 Whether Clof_GCL should bound coordinate coefficients with tanh.
         """
         super(ClofNet, self).__init__()
-        self.hidden_nf = hidden_nf
+        self.hidden_dim = hidden_dim
         self.device = device
         self.n_layers = n_layers
-        self.embedding_node = nn.Linear(in_node_nf, self.hidden_nf)
-        self.embedding_edge = nn.Sequential(nn.Linear(in_edge_nf, 8), act_fn)
-
+        # Embedding layers
+        self.embedding_node = nn.Linear(in_dim_node, self.hidden_dim)
+        self.embedding_edge = nn.Sequential(nn.Linear(in_dim_edge, out_dim_edge_emb),
+                                            act_fn)
         # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j = 8.
         # Concatenated with the 2-dim edge_attr used in the original code path.
         edge_embed_dim = 10
-        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
-                                       nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn)
-
+        # FIXME: what is fuse_edge?
+        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_dim // 2),
+                                       act_fn,
+                                       nn.Linear(self.hidden_dim // 2, self.hidden_dim // 2),
+                                       act_fn)
         self.norm_diff = norm_diff
-
+        # Initialize the ClofGCL layers (message passing layers)
         for i in range(0, self.n_layers):
-            self.add_module("gcl_%d" % i, ClofGCL(input_nf=self.hidden_nf,
-                                                  output_nf=self.hidden_nf,
-                                                  hidden_nf=self.hidden_nf,
-                                                  edges_in_d=self.hidden_nf // 2,
-                                                  act_fn=act_fn,
-                                                  recurrent=recurrent,
-                                                  coords_weight=coords_weight,
-                                                  norm_diff=norm_diff,
-                                                  tanh=tanh),)
-
+            self.add_module("gcl_%d" % i,
+                            ClofGCL(input_dim_node=self.hidden_dim, output_node_dim=self.hidden_dim,
+                                    hidden_dim=self.hidden_dim, edges_in_d=self.hidden_dim // 2, act_fn=act_fn,
+                                    recurrent=recurrent, coords_weight=coords_weight, norm_diff=norm_diff, tanh=tanh), )
         self.to(self.device)
         self.params = self.__str__()
 
@@ -165,20 +166,15 @@ class ClofNet(nn.Module):
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum(coord_diff ** 2, 1).unsqueeze(1)
-
         # Cross product of the endpoint position vectors.
         # This matches the spirit of b_ij in Eq. (2).
         coord_cross = torch.cross(coord[row], coord[col], dim=1)
-
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
             coord_diff = coord_diff / norm
-
             cross_norm = torch.sqrt(torch.sum(coord_cross ** 2, 1).unsqueeze(1)) + 1
             coord_cross = coord_cross / cross_norm
-
         coord_vertical = torch.cross(coord_diff, coord_cross, dim=1)
-
         return coord_diff.unsqueeze(1), coord_cross.unsqueeze(1), coord_vertical.unsqueeze(1)
 
     def scalarization(self, edges, x):
@@ -210,17 +206,13 @@ class ClofNet(nn.Module):
             Invariant edge features of shape [E, 8].
         """
         coord_diff, coord_cross, coord_vertical = self.coord2localframe(edges, x)
-
         row, col = edges
         edge_basis = torch.cat([coord_diff, coord_cross, coord_vertical], dim=1)
-
         r_i = x[row]
         r_j = x[col]
-
         # Frame coefficients from Eq. (3), applied to both endpoints.
         coff_i = torch.matmul(edge_basis, r_i.unsqueeze(-1)).squeeze(-1)
         coff_j = torch.matmul(edge_basis, r_j.unsqueeze(-1)).squeeze(-1)
-
         # Additional invariant angle-like descriptor built from the projected
         # coefficient triplets. This is an implementation detail, not a paper
         # equation.
@@ -230,7 +222,6 @@ class ClofNet(nn.Module):
         pseudo_cos = coff_mul.sum(dim=-1, keepdim=True) / coff_i_norm / coff_j_norm
         pseudo_sin = torch.sqrt(torch.clamp(1 - pseudo_cos ** 2, min=0.0))
         pseudo_angle = torch.cat([pseudo_sin, pseudo_cos], dim=-1)
-
         coff_feat = torch.cat([pseudo_angle, coff_i, coff_j], dim=-1)
         return coff_feat
 
@@ -270,28 +261,23 @@ class ClofNet(nn.Module):
         return: torch.Tensor
             Updated coordinates of shape [N, 3].
         """
+        # Embed node
         h = self.embedding_node(h)
-
-        # Translation handling from Fig. 2 / Sec. 5:
-        # move every graph to its centroid-centered frame before constructing
+        # Translation handling: move every graph to its centroid-centered frame before constructing
         # complete local frames.
         x = x.reshape(-1, n_nodes, 3)
         centroid = torch.mean(x, dim=1, keepdim=True)
         x_center = (x - centroid).reshape(-1, 3)
-
         # Invariant scalarization of centered geometry.
-        coff_feat = self.scalarization(edges, x_center)
-
-        # In the original implementation the edge attributes are concatenated to
-        # the scalarized frame coefficients and fused by a small MLP.
+        coff_feat = self.scalarization(edges, x_center) # FIXME: what is this
+        # In the original implementation the edge attributes are concatenated to the scalarized frame coefficients
+        # and fused by a small MLP. FIXME: waht is fuse doing
         edge_feat = torch.cat([edge_attr, coff_feat], dim=-1)
         edge_feat = self.fuse_edge(edge_feat)
-
+        # Pass through message passing layers
         for i in range(0, self.n_layers):
-            h, x_center, _ = self._modules["gcl_%d" % i](
-                h, edges, x_center, vel, edge_attr=edge_feat, node_attr=node_attr
-            )
-
+            h, x_center, _ = self._modules["gcl_%d" % i](h, edges, x_center, vel, edge_attr=edge_feat,
+                                                         node_attr=node_attr)
         # Restore the global translation.
         x = x_center.reshape(-1, n_nodes, 3) + centroid
         x = x.reshape(-1, 3)
@@ -360,17 +346,9 @@ class ClofNetVel(nn.Module):
         for i in range(0, self.n_layers):
             self.add_module(
                 "gcl_%d" % i,
-                ClofGCL(
-                    input_nf=self.hidden_nf,
-                    output_nf=self.hidden_nf,
-                    hidden_nf=self.hidden_nf,
-                    edges_in_d=self.hidden_nf // 2,
-                    act_fn=act_fn,
-                    recurrent=recurrent,
-                    coords_weight=coords_weight,
-                    norm_diff=norm_diff,
-                    tanh=tanh,
-                ),
+                ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
+                        edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight,
+                        norm_diff=norm_diff, tanh=tanh),
             )
 
         self.to(self.device)

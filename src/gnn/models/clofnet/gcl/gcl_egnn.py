@@ -28,7 +28,7 @@ TODO: EgnnGCL is INHERITED AND THUS USED, EgnnGCLVelocity is not
 
 import torch
 from torch import nn
-from src.gnn.models.clofnet.gcl.helpers_gcl import unsorted_segment_mean, unsorted_segment_sum
+from src.gnn.models.clofnet.gcl.aggregators import unsorted_segment_mean, unsorted_segment_sum
 
 class EgnnGCL(nn.Module):
     """
@@ -51,21 +51,20 @@ class EgnnGCL(nn.Module):
         r_ij = ||x_i - x_j||^2
     """
 
-    def __init__(self, input_nf, output_node_feat, hidden_node_feat, edges_in_d=0, nodes_att_dim=0, act_fn=nn.ReLU(),
-                 recurrent=True,
-                 coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False, out_basis_dim=1):
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_edge_mlp_dim,
+                 act_fn=nn.ReLU(),
+                 recurrent=True, coords_weight=1.0, attention=False, clamp=False, norm_diff=False, tanh=False,
+                 out_basis_dim=1):
         """
         Args:
-            input_nf: int
+            in_node_mlp_dim: int
                 Input node feature dimension.
-            output_node_feat: int
+            output_node_dim: int
                 Output node feature dimension.
-            hidden_node_feat: int
+            hidden_dim: int
                 Hidden dimension.
-            edges_in_d: int
-                Extra edge feature dimension.
-            nodes_att_dim: int
-                Extra node attribute dimension concatenated before node update.
+            in_edge_mlp_dim: int
+                dimension of edge
             act_fn: nn.Module
                 Activation function used by the MLPs.
             recurrent: bool
@@ -86,45 +85,52 @@ class EgnnGCL(nn.Module):
                 for ClofNet frame-based vectorization this becomes 3.
         """
         super().__init__()
-        input_edge = input_nf * 2
-        edge_coords_nf = 1
+        # input_edge = input_node_dim * 2
+        # edge_coords_nf = 1
+        # in_edge_mlp_dim = input_edge + edges_in_d + edge_coords_nf
+        # in_node_mlp_dim = hidden_dim + input_node_dim + nodes_att_dim
 
         self.coords_weight, self.skip_connection, self.attention, self.norm_diff, self.tanh, self.clamp = \
             (coords_weight, recurrent, attention, norm_diff, tanh, clamp)
 
-        self.edge_mlp = nn.Sequential(nn.Linear(input_edge + edge_coords_nf + edges_in_d, hidden_node_feat),
+        self.edge_mlp = nn.Sequential(nn.Linear(in_edge_mlp_dim, hidden_dim),
                                       act_fn,
-                                      nn.Linear(hidden_node_feat, hidden_node_feat),
-                                      act_fn, )
+                                      nn.Linear(hidden_dim, hidden_dim),
+                                      act_fn) # FIXME: why final activation here?
 
-        self.node_mlp = nn.Sequential(nn.Linear(hidden_node_feat + input_nf + nodes_att_dim, hidden_node_feat),
+        self.node_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim),
                                       act_fn,
-                                      nn.Linear(hidden_node_feat, output_node_feat))
+                                      nn.Linear(hidden_dim, output_node_dim))
 
-        layer = nn.Linear(hidden_node_feat, out_basis_dim, bias=False)
-        torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
-        coord_mlp = [nn.Linear(hidden_node_feat, hidden_node_feat), act_fn, layer]
-
+        # Initialize layer
+        layer = nn.Linear(hidden_dim, out_basis_dim, bias=False) # FIXME: why no bias?
+        torch.nn.init.xavier_uniform_(layer.weight, gain=0.001) # FIXME: why this specific initialization?
+        coord_mlp = [nn.Linear(hidden_dim, hidden_dim),
+                     act_fn,
+                     layer]
         if self.tanh:
             coord_mlp.append(nn.Tanh())
+            # FIXME: what is this doing?
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
-
         self.coord_mlp = nn.Sequential(*coord_mlp)
-
+        # Soft Attention MLP
         if self.attention:
-            self.att_mlp = nn.Sequential(nn.Linear(hidden_node_feat, 1),
+            self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1),
                                          nn.Sigmoid())
 
     def edge_model_forward(self, source, target, radial, edge_attr):
         """
         Compute edge features/messages from node states and radial geometry.
+        Realizes
+                    m_ij = phi_m(h_i, h_j, r_ij, e_ij)
+        + optionallly attention i.e. \hat m_ij = m_ij * attention_weight(M) if M is all the m_ij forall i,j
 
         Args:
-            source: torch.Tensor
-                Source-node features, shape [E, input_nf].
-            target: torch.Tensor
-                Target-node features, shape [E, input_nf].
-            radial: torch.Tensor
+            source: torch.Tensor FIXME
+                Source-node features, shape [E, input_node].
+            target: torch.Tensor FIXME
+                Target-node features, shape [E, input_node].
+            radial: torch.Tensor FIXME
                 Squared pairwise distances, shape [E, 1].
             edge_attr: torch.Tensor or None
                 Optional extra edge attributes, shape [E, edges_in_d].
@@ -132,21 +138,21 @@ class EgnnGCL(nn.Module):
         return: torch.Tensor
             Edge features/messages, shape [E, hidden_nf].
         """
-        if edge_attr is None:
-            in_feat = torch.cat([source, target, radial], dim=1)
-        else:
-            in_feat = torch.cat([source, target, radial, edge_attr], dim=1)
-        out_pred = self.edge_mlp(in_feat)
+        # if edge_attr is None:
+        #     in_feat = torch.cat([source, target, radial], dim=1)
+        # else:
+        in_feat = torch.cat([source, target, radial, edge_attr], dim=1)
+        out_pred_edge_mlp = self.edge_mlp(in_feat)
 
         # out_pred: [E, hidden_nf] att_val = self.att_mlp(out_pred): [E, 1]
         # I do a term by term mul: this is basically a "soft importance" weight on each edge message, for which given
         # an edge e_ij i have a weight and if the weight is near to 0 the edge is ignored. Since the gate is
         # a scalar computed from invariant edge features, it does not break the equivariance argument.
         if self.attention:
-            att_val = self.att_mlp(out_pred)
-            out_pred = out_pred * att_val
+            attention_forward = self.att_mlp(out_pred_edge_mlp)
+            out_pred_edge_mlp = out_pred_edge_mlp * attention_forward
 
-        return out_pred
+        return out_pred_edge_mlp
 
     def node_model_forward(self, x, edge_index, edge_attr, node_attr):
         """
@@ -172,12 +178,11 @@ class EgnnGCL(nn.Module):
                 The concatenated tensor fed to the node MLP.
         """
         row = edge_index[0]
-
         aggregation = unsorted_segment_sum(edge_attr, row, num_segments=x.size(0))
-        if node_attr is not None:
-            in_feat = torch.cat([x, aggregation, node_attr], dim=1)
-        else:
-            in_feat = torch.cat([x, aggregation], dim=1)
+        # if node_attr is not None:
+        in_feat = torch.cat([x, aggregation, node_attr], dim=1)
+        # else:
+        #     in_feat = torch.cat([x, aggregation], dim=1)
         out_pred = self.node_mlp(in_feat)
         if self.skip_connection:
             out_pred = x + out_pred
@@ -235,16 +240,17 @@ class EgnnGCL(nn.Module):
         row, col = edge_index
         coord_diff = coord[row] - coord[col]
         radial = torch.sum(coord_diff ** 2, dim=1).unsqueeze(1)
-
         if self.norm_diff:
             norm = torch.sqrt(radial) + 1
             coord_diff = coord_diff / norm
-
         return radial, coord_diff
 
     def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
         """
         Run one equivariant message-passing layer.
+                    m_ij = phi_m(h_i, h_j, r_ij, e_ij)
+                    x_i' = x_i + sum_j (x_i - x_j) * phi_x(m_ij)
+                    h_i' = phi_h(h_i, sum_j m_ij)
 
         Args:
             h: torch.Tensor
@@ -277,6 +283,7 @@ class EgnnGCL(nn.Module):
 
 class EgnnGCLVelocity(EgnnGCL):
     """
+    FIXME: unused
     EGNN-style equivariant block with an additional learned velocity term.
 
     Relation to the paper:
