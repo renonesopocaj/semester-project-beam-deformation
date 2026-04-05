@@ -93,7 +93,6 @@ class PreprocessYaml:
         self.mises_log = flattened_cfg["mises_log"]
         self.isotropic_normalizer = flattened_cfg["isotropic_normalizer"]
         self.normalizer_method = flattened_cfg["normalizer_method"]
-        self.displacement = flattened_cfg["displacement"]
         self.dataset_type = flattened_cfg["dataset_type"]
         self.time_discretization_method = flattened_cfg["time_discretization_method"]
         if "edge_channels" in flattened_cfg:
@@ -106,7 +105,12 @@ class PreprocessYaml:
             self.test_dir = flattened_cfg["test_dir"]
         if "save_dir_val" in flattened_cfg:
             self.save_dir_val = flattened_cfg["save_dir_val"]
-        self.extra_info_dir = flattened_cfg.get("extra_info_dir")
+        self.extra_info_dir = flattened_cfg["extra_info_dir"]
+        self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
+        self.enable_node_norms = flattened_cfg["enable_node_norms"]
+        self.enable_stretch_node = flattened_cfg["enable_stretch_node"]
+        self.enable_stretch_edge = flattened_cfg["enable_stretch_edge"]
+        self.enable_force_edge = flattened_cfg["enable_force_edge"]
 
 
 class TrainYaml:

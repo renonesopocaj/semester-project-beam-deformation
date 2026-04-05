@@ -5,16 +5,16 @@ Builds features for the GNN and physical quantities.
 
 import torch
 
-def build_node_features(x, v, rest_pos, node_force, enable_node_norms):
+def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_stretch_node):
     """
     Build node features: [position, velocity, rest_position, node_force, displacement]
 
     Args:
-        x: torch.Tensor
-        v: torch.Tensor
-        rest_pos: torch.Tensor
-        node_force: torch.Tensor
-        enable_node_norms: torch.Tensor
+        x: torch.Tensor (N, 3)
+        v: torch.Tensor (N, 3)
+        rest_pos: torch.Tensor (N, 3)
+        node_force: torch.Tensor (N, 3)
+        enable_node_norms: torch.Tensor (N, 3)
     return: Tensor
         Concatenated features with shape (N, 15).
     """
@@ -32,6 +32,13 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms):
     feat_list.append(u)
     # node force
     feat_list.append(node_force)
+    # stretch
+    if enable_stretch_node:
+        stretch_node = u / rest_pos
+        feat_list.append(u / rest_pos)
+        if enable_node_norms:
+            feat_list.append(torch.norm(stretch_node, dim=1).unsqueeze(1))
+    # node norms
     if enable_node_norms:
         feat_list.append(torch.norm(x, dim=1).unsqueeze(1))
         feat_list.append(torch.norm(u, dim=1).unsqueeze(1))
@@ -41,7 +48,7 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms):
     return torch.concat(feat_list, dim=1)
 
 
-def build_edge_features(x, u, edge_index, v, enable_velocity_edge):
+def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, enable_force_edge, enable_stretch_edge):
     """
     Build edge features from node positions and rest positions.
     Features: [xij, uij, xij-uij, ||xij||, ||uij||, ||xij-uij||]
@@ -81,6 +88,16 @@ def build_edge_features(x, u, edge_index, v, enable_velocity_edge):
     if enable_velocity_edge:
         vij = v[dst] - v[src]
         feat_list.append(torch.norm(vij, dim=1).unsqueeze(1))
+    if enable_stretch_edge:
+        stretch_ij = uij / rest_pos_ij
+        feat_list.append(stretch_ij)
+        stretch_ij_norm = torch.norm(stretch_ij, dim=1).unsqueeze(1)
+        feat_list.append(stretch_ij_norm)
+    if enable_force_edge:
+        force_ij = node_force[dst] - node_force[src]
+        force_ij_norm = torch.norm(force_ij, dim=1).unsqueeze(1)
+        feat_list.append(force_ij_norm)
+        feat_list.append(force_ij)
     return torch.concat(feat_list, dim=1)
 
 

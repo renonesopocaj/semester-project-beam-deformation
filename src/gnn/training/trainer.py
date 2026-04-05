@@ -135,6 +135,9 @@ class LitModule(L.LightningModule):
         # Features
         self.enable_edge_velocity = preprocess_cfg.enable_edge_velocity
         self.enable_node_norms = preprocess_cfg.enable_node_norms
+        self.enable_stretch_node = preprocess_cfg.enable_stretch_node
+        self.enable_stretch_edge = preprocess_cfg.enable_stretch_edge
+        self.enable_force_edge = preprocess_cfg.enable_force_edge
 
         # Time discretizer from preprocess
         self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
@@ -483,7 +486,10 @@ class LitModule(L.LightningModule):
                                                 normalizer=self.used_dataset_normalizer,
                                                 enable_edge_velocity=self.enable_edge_velocity,
                                                 enable_node_norms=self.enable_node_norms,
-                                                time_discretizer=self.time_discretizer)
+                                                time_discretizer=self.time_discretizer,
+                                                enable_stretch_node=self.enable_stretch_node,
+                                                enable_force_edge=self.enable_force_edge,
+                                                enable_stretch_edge=self.enable_stretch_edge)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos

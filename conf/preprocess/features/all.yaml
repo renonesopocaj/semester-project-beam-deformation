@@ -1,5 +1,11 @@
-displacement: true
-absolute_pos: true
-enable_edge_velocity: true
-enable_node_norms: true
+# Processing target
 mises_log: true
+# Absolute position
+absolute_pos: true
+# Node
+enable_node_norms: true
+enable_stretch_node: true
+# Edge
+enable_edge_velocity: true
+enable_force_edge: true
+enable_stretch_edge: true

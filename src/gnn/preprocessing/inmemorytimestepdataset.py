@@ -70,7 +70,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     base_seed: int
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 enable_velocity_edge):
+                 enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_node_norms, enable_stretch_node):
         """
         Args:
             sample_dir: str
@@ -102,7 +102,12 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
+        # Featuress
         self.enable_velocity_edge = enable_velocity_edge
+        self.enable_force_edge = enable_force_edge
+        self.enable_stretch_edge = enable_stretch_edge
+        self.enable_node_norms = enable_node_norms
+        self.enable_stretch_node = enable_stretch_node
 
     def __getitem__(self, idx):
         """
@@ -134,12 +139,13 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         #                                            self.enable_velocity_edge)
         # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         node_attr_norm = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-                                             self.enable_velocity_edge)
+                                             self.enable_node_norms, self.enable_stretch_node)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
         edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
-                                            self.enable_velocity_edge)
+                                            self.enable_velocity_edge, self.enable_force_edge,
+                                            self.enable_stretch_edge)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)
