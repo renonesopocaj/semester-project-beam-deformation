@@ -617,16 +617,17 @@ class LitModule(L.LightningModule):
         # 4. Compute final volumes from rollout
         final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
 
+        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
+                    else self.selected_validation_trajectories)
+
         # 5. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
         overall_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                                      final_volumes_true, final_volumes_pred, overall_output_dir,
-                                     self.eval_split_name)
+                                     self.eval_split_name, selected)
 
         # 6. Generate in-depth plots for selected trajectories only
-        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
-                    else self.selected_validation_trajectories)
         per_traj_paths = {}
         # FIXME: add pbar
         for traj_idx in selected:
