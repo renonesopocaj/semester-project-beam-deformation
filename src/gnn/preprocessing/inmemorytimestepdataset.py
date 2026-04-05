@@ -138,12 +138,13 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
         #                                            self.enable_velocity_edge)
         # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
-        node_attr_norm = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-                                             self.enable_node_norms, self.enable_stretch_node)
+        node_attr_raw = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+                                            self.enable_node_norms, self.enable_stretch_node)
+        node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
+        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised, data.node_force,
                                             self.enable_velocity_edge, self.enable_force_edge,
                                             self.enable_stretch_edge)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)

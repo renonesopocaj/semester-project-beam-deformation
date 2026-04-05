@@ -5,6 +5,8 @@ Builds features for the GNN and physical quantities.
 
 import torch
 
+EPS = 1e-8
+
 def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_stretch_node):
     """
     Build node features: [position, velocity, rest_position, node_force, displacement]
@@ -14,7 +16,7 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_st
         v: torch.Tensor (N, 3)
         rest_pos: torch.Tensor (N, 3)
         node_force: torch.Tensor (N, 3)
-        enable_node_norms: torch.Tensor (N, 3)
+        enable_node_norms: bool
     return: Tensor
         Concatenated features with shape (N, 15).
     """
@@ -34,8 +36,9 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_st
     feat_list.append(node_force)
     # stretch
     if enable_stretch_node:
-        stretch_node = u / rest_pos
-        feat_list.append(u / rest_pos)
+        safe_rest_pos = torch.where(torch.abs(rest_pos) < EPS, torch.full_like(rest_pos, EPS), rest_pos)
+        stretch_node = u / safe_rest_pos
+        feat_list.append(stretch_node)
         if enable_node_norms:
             feat_list.append(torch.norm(stretch_node, dim=1).unsqueeze(1))
     # node norms
@@ -74,22 +77,22 @@ def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, e
     # rest pos
     rest_pos_ij = u[dst] - u[src] # (E, 3) rest relative position
     feat_list.append(rest_pos_ij)
-    # abs position norm
-    xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (E, 1)
-    feat_list.append(xij_norm)
-    # rest pos norm
-    rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1) # (E, 1)
-    feat_list.append(rest_pos_ij_norm)
     # displacement
     uij = xij - rest_pos_ij
     feat_list.append(uij)
+    # scalar norms after vector triplets to keep xyz groups contiguous
+    xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (E, 1)
+    feat_list.append(xij_norm)
+    rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1) # (E, 1)
+    feat_list.append(rest_pos_ij_norm)
     uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
     feat_list.append(uij_norm)
     if enable_velocity_edge:
         vij = v[dst] - v[src]
         feat_list.append(torch.norm(vij, dim=1).unsqueeze(1))
     if enable_stretch_edge:
-        stretch_ij = uij / rest_pos_ij
+        safe_rest_pos_ij = torch.where(torch.abs(rest_pos_ij) < EPS, torch.full_like(rest_pos_ij, EPS), rest_pos_ij)
+        stretch_ij = uij / safe_rest_pos_ij
         feat_list.append(stretch_ij)
         stretch_ij_norm = torch.norm(stretch_ij, dim=1).unsqueeze(1)
         feat_list.append(stretch_ij_norm)
