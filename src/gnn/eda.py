@@ -26,7 +26,9 @@ from torch_geometric.data import Batch, Data
 from tqdm import tqdm
 
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
-from src.gnn.preprocess import TrainPreprocessor
+from src.gnn.preprocess import (TrainPreprocessor, load_selected_trajectories,
+                                _selected_indices_for_split, _selected_limit_from_json,
+                                _sort_filenames_by_traj_params)
 from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
@@ -255,7 +257,7 @@ class EdaPreprocessor(TrainPreprocessor):
     traj_params: dict
 
     def __init__(self, cfg, artifact_dir, run_name, gif_generation_mode, gif_sample_percentage,
-                 eda_split, train_artifact_dir):
+                 eda_split, train_artifact_dir, selected_indices, selected_limit):
         """
         Args:
             cfg: object
@@ -272,8 +274,12 @@ class EdaPreprocessor(TrainPreprocessor):
                 Current EDA split (train, val, or test).
             train_artifact_dir: str or Path
                 Root directory for train EDA artifacts (used to load/save stats).
+            selected_indices: set[int]
+                Trajectory indices that should use selected_limit.
+            selected_limit: int
+                Timestep limit for selected trajectories.
         """
-        super().__init__(cfg)
+        super().__init__(cfg, selected_indices, selected_limit)
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
         self.eda_obj = EdaObj()
@@ -345,7 +351,7 @@ class EdaPreprocessor(TrainPreprocessor):
                 self.traj_params = json.load(f)
         else:
             self.traj_params = {}
-        filenames = sorted(Path(graphs_dir).glob("*.pt"))
+        filenames = _sort_filenames_by_traj_params(list(Path(graphs_dir).glob("*.pt")), graphs_dir)
         if cfg.normalizer_method.lower() == "none":
             self._collect_raw_eda(cfg, filenames, generate_gifs)
             return
@@ -383,7 +389,7 @@ class EdaPreprocessor(TrainPreprocessor):
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"EDA {self.run_name}")
         for traj_idx, filename in pbar:
             keep_gif_graphs = traj_idx in gif_indices
-            payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs)
+            payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs, traj_idx)
             self._collect_payload(payload, normalize=False)
             if trajectory_graphs is not None:
                 traj_metadata = self.traj_params.get(filename.name, None)
@@ -407,7 +413,7 @@ class EdaPreprocessor(TrainPreprocessor):
         cache_files = []
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"Caching {self.run_name}")
         for traj_idx, filename in pbar:
-            payload, _ = self._build_trajectory_payload(cfg, filename, False)
+            payload, _ = self._build_trajectory_payload(cfg, filename, False, traj_idx)
             cache_path = cache_dir / f"traj_{traj_idx:05d}.pt"
             torch.save(payload, cache_path)
             cache_files.append(cache_path)
@@ -509,7 +515,7 @@ class EdaPreprocessor(TrainPreprocessor):
                 target = self.normalizer.normalize(target, self.target_stats)
             self.eda_obj.append_timestep(node_input, edge_features, target)
 
-    def _build_trajectory_payload(self, cfg, filename, keep_gif_graphs):
+    def _build_trajectory_payload(self, cfg, filename, keep_gif_graphs, traj_idx):
         """
         Args:
             cfg: object
@@ -518,6 +524,8 @@ class EdaPreprocessor(TrainPreprocessor):
                 Raw trajectory file.
             keep_gif_graphs: bool
                 True iff the returned payload should include minimal GIF graph objects.
+            traj_idx: int
+                Index of the trajectory in processing order.
             return: (dict, list or None)
                 Compact payload and optional GIF graph list for the current trajectory.
         """
@@ -529,6 +537,7 @@ class EdaPreprocessor(TrainPreprocessor):
 
         whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
         x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)
+        v, a = self.time_discretizer.differentiate_position(x, cfg.dt)
         rest_pos_x = x[0].clone()
         all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)
         boundary_condition = graphs_list_batch[0].x_bc
@@ -536,8 +545,9 @@ class EdaPreprocessor(TrainPreprocessor):
         payload = {"node_inputs": [], "edge_features": [], "targets": []}
         trajectory_graphs = [] if keep_gif_graphs else None
 
+        effective_limit = self.selected_limit if traj_idx in self.selected_indices else cfg.limit_timesteps
         for t, graph in enumerate(graphs_list_batch):
-            if t > cfg.limit_timesteps - 2:
+            if t > effective_limit - 2:
                 break
             node_force = all_node_force[t]
             x_t = x[t]
@@ -546,7 +556,8 @@ class EdaPreprocessor(TrainPreprocessor):
             valued_node_attr = build_node_features(x_t, v_t, rest_pos_x, node_force, cfg.enable_node_norms,
                                                    cfg.enable_stretch_node)
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
-            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force, cfg.velocity_edge,
+            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force,
+                                            cfg.enable_edge_velocity,
                                             cfg.enable_force_edge, cfg.enable_stretch_edge, cfg.enable_rotation_angle)
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             if cfg.mises_log:
@@ -709,12 +720,22 @@ def main(cfg):
 
     graphs_dir = Path(base_cfg.raw_data_dir) / eda_split / "graphs"
     eda_obj_dict = {}
+    selected_trajs = load_selected_trajectories(base_cfg.extra_info_dir)
+    selected_limit = _selected_limit_from_json(selected_trajs, base_cfg.limit_timesteps)
+    selected_indices = _selected_indices_for_split(selected_trajs, eda_split)
+    if eda_split == "train":
+        selected_indices = set()
+
+    if selected_trajs:
+        print(f"\tSelected trajectories for {eda_split} ({len(selected_indices)}): {sorted(selected_indices)}")
+        print(f"\tSelected trajectory limit_timesteps: {selected_limit}")
 
     for run in eda_cfg.normalization_runs:
         variant_cfg = _create_variant_cfg(base_cfg, run["normalizer_method"], run["isotropic_normalizer"])
         print("\n" + "=" * 60 + f"\n{eda_split}, {run['label'].lower()}\n" + "=" * 60)
         preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"], eda_cfg.gif_generation_mode,
-                                       eda_cfg.gif_sample_percentage, eda_split, train_artifact_dir)
+                                       eda_cfg.gif_sample_percentage, eda_split, train_artifact_dir,
+                                       selected_indices, selected_limit)
         preprocessor.preprocess_data(variant_cfg, graphs_dir, run["generate_gifs"])
         eda_obj_dict[run["name"]] = preprocessor.eda_obj
         del preprocessor
