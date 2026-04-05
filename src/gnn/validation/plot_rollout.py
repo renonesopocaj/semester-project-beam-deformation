@@ -208,6 +208,7 @@ def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, p
 def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
+    Each frame shows the timestep index as t = i / last (0-based).
 
     Args:
         pred_rollout: list
@@ -265,6 +266,11 @@ def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps
     cbar.set_label("von Mises Stress")
     fig.suptitle(f"Beam Comparison\n[{split_name}, 1 sample, {len(pred_rollout)} timesteps]", fontsize=13)
 
+    num_steps = len(pred_rollout)
+    last_timestep = num_steps - 1
+    timestep_label = fig.text(
+        0.5, 0.03, "", ha="center", va="bottom", fontsize=12, fontweight="bold")
+
     polycoll_true = None
     polycoll_pred = None
 
@@ -293,6 +299,8 @@ def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps
         # Update both subplots
         polycoll_true = update_surface_collection(axarr[0], faces, coords_true, vm_true, cmap, norm, polycoll_true)
         polycoll_pred = update_surface_collection(axarr[1], faces, coords_pred, vm_pred, cmap, norm, polycoll_pred)
+
+        timestep_label.set_text("t = %d / %d" % (i, last_timestep))
 
         # Render to numpy array
         fig.canvas.draw()
