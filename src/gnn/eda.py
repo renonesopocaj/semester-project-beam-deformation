@@ -27,9 +27,7 @@ from tqdm import tqdm
 
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import TrainPreprocessor
-from src.gnn.preprocessing.build_features import (calculate_kinematics, build_node_features,
-                                                  build_edge_features, compute_von_mises_3d)
-from src.gnn.preprocessing.noiser import NoNoiser
+from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
 
@@ -276,7 +274,6 @@ class EdaPreprocessor(TrainPreprocessor):
                 Root directory for train EDA artifacts (used to load/save stats).
         """
         super().__init__(cfg)
-        self.noiser = NoNoiser()
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
         self.eda_obj = EdaObj()
@@ -532,7 +529,6 @@ class EdaPreprocessor(TrainPreprocessor):
 
         whole_trajectory_batch = Batch.from_data_list(graphs_list_batch)
         x = whole_trajectory_batch.x.reshape(len(graphs_list_batch), -1, 3)
-        v, a = calculate_kinematics(x, cfg.dt)
         rest_pos_x = x[0].clone()
         all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)
         boundary_condition = graphs_list_batch[0].x_bc
@@ -551,7 +547,7 @@ class EdaPreprocessor(TrainPreprocessor):
                                                    cfg.enable_stretch_node)
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
             edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force, cfg.velocity_edge,
-                                            cfg.enable_force_edge, cfg.enable_stretch_edge)
+                                            cfg.enable_force_edge, cfg.enable_stretch_edge, cfg.enable_rotation_angle)
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             if cfg.mises_log:
                 von_mises = von_mises_log

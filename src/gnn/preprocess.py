@@ -55,8 +55,7 @@ def load_selected_trajectories(extra_info_dir):
         return {}
     path = Path(extra_info_dir) / "selected_trajectories.json"
     if not path.exists():
-        print(f"Warning: {path} not found, no selected trajectories will be used.")
-        return {}
+        raise FileNotFoundError(f"Selected trajectories file not found at {path}")
     with open(path) as f:
         return json.load(f)
 
@@ -233,7 +232,8 @@ class Preprocessor(ABC):
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
                 _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, _node_force, cfg.enable_edge_velocity,
-                                                 cfg.enable_force_edge, cfg.enable_stretch_edge)
+                                                 cfg.enable_force_edge, cfg.enable_stretch_edge,
+                                                 cfg.enable_rotation_angle)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]

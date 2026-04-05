@@ -33,6 +33,7 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_st
     u = x - rest_pos
     feat_list.append(u)
     # node force
+    node_force = node_force.to(device)
     feat_list.append(node_force)
     # stretch
     if enable_stretch_node:
@@ -51,7 +52,8 @@ def build_node_features(x, v, rest_pos, node_force, enable_node_norms, enable_st
     return torch.concat(feat_list, dim=1)
 
 
-def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, enable_force_edge, enable_stretch_edge):
+def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, enable_force_edge, enable_stretch_edge,
+                        enable_rotation_angle):
     """
     Build edge features from node positions and rest positions.
     Features: [xij, uij, xij-uij, ||xij||, ||uij||, ||xij-uij||]
@@ -80,7 +82,14 @@ def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, e
     # displacement
     uij = xij - rest_pos_ij
     feat_list.append(uij)
-    # scalar norms after vector triplets to keep xyz groups contiguous
+    # velocity
+    if enable_velocity_edge:
+        vij = v[dst] - v[src]
+        feat_list.append(vij)
+    if enable_force_edge:
+        force_ij = node_force[dst] - node_force[src]
+        feat_list.append(force_ij)
+    # --------------- NORMS ----------------
     xij_norm = torch.norm(xij, dim=1).unsqueeze(1) # (E, 1)
     feat_list.append(xij_norm)
     rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1) # (E, 1)
@@ -88,21 +97,22 @@ def build_edge_features(x, u, edge_index, v, node_force, enable_velocity_edge, e
     uij_norm = torch.norm(uij, dim=1).unsqueeze(1)
     feat_list.append(uij_norm)
     if enable_velocity_edge:
-        vij = v[dst] - v[src]
-        feat_list.append(torch.norm(vij, dim=1).unsqueeze(1))
-    if enable_stretch_edge:
-        safe_rest_pos_ij = torch.where(torch.abs(rest_pos_ij) < EPS, torch.full_like(rest_pos_ij, EPS), rest_pos_ij)
-        stretch_ij = uij / safe_rest_pos_ij
-        feat_list.append(stretch_ij)
-        stretch_ij_norm = torch.norm(stretch_ij, dim=1).unsqueeze(1)
+        # velocity norm
+        vij_norm = torch.norm(vij, dim=1).unsqueeze(1)
+        feat_list.append(vij_norm)
+    if enable_stretch_edge: # norm only
+        rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1)
+        stretch_ij_norm = xij_norm / (rest_pos_ij_norm + EPS)
         feat_list.append(stretch_ij_norm)
     if enable_force_edge:
-        force_ij = node_force[dst] - node_force[src]
         force_ij_norm = torch.norm(force_ij, dim=1).unsqueeze(1)
         feat_list.append(force_ij_norm)
-        feat_list.append(force_ij)
+    if enable_rotation_angle:
+        e0 = rest_pos_ij / (rest_pos_ij_norm + EPS)
+        et = xij / (xij_norm + EPS)
+        direction_cosine = torch.sum(e0 * et, dim=1, keepdim=True)
+        feat_list.append(direction_cosine)
     return torch.concat(feat_list, dim=1)
-
 
 def compute_von_mises_3d(stress_9):
     """

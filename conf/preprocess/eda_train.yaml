@@ -3,7 +3,7 @@ defaults:
   - numerical: default # apply log to von mises vs do not apply
   - paths: single_direction_beam # rotated | single_direction_beam
   - normalizer: z_anisotropic
-  - features: displacement # which feature augmentation use
+  - features: all # which feature augmentation use
   - _self_
 
 eda_split: train # Possible values: train | val | test

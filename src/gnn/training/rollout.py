@@ -10,7 +10,7 @@ from src.gnn.preprocessing.build_features import build_edge_features, build_node
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first,
                rollout_steps, normalizer, enable_edge_velocity, enable_node_norms, time_discretizer,
-               enable_stretch_node, enable_force_edge, enable_stretch_edge):
+               enable_stretch_node, enable_force_edge, enable_stretch_edge, enable_rotation_angle):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -100,7 +100,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                             enable_node_norms=enable_node_norms,
                                             enable_stretch_node=enable_stretch_node,
                                             enable_force_edge=enable_force_edge,
-                                            enable_stretch_edge=enable_stretch_edge)
+                                            enable_stretch_edge=enable_stretch_edge,
+                                            enable_rotation_angle=enable_rotation_angle)
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
@@ -119,7 +120,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     return true_rollout, pred_rollout
 
 def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos, node_stats, edge_stats, normalizer,
-                      enable_edge_velocity, enable_node_norms, enable_stretch_node, enable_force_edge, enable_stretch_edge):
+                      enable_edge_velocity, enable_node_norms, enable_stretch_node, enable_force_edge,
+                      enable_stretch_edge, enable_rotation_angle):
     """
     Builds a graph for building the graph of next timestep from predicted state. Helper for do_rollout.
 
@@ -160,7 +162,7 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     # --------------- Edges ----------------------
     edge_features = build_edge_features(x_predict_tp1, rest_pos, ground_truth_graph.edge_index, v_predict_tp1,
                                         ground_truth_force_tp1, enable_edge_velocity,
-                                        enable_force_edge, enable_stretch_edge)
+                                        enable_force_edge, enable_stretch_edge, enable_rotation_angle)
     _edge_attr_normalized = normalizer.normalize(edge_features, edge_stats)
 
     # -------------- Final: create next-time–step input graph -----------------

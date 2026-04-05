@@ -118,7 +118,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
             base_seed=train_cfg.noise_seed, enable_velocity_edge=preprocess_cfg.enable_edge_velocity,
             enable_force_edge=preprocess_cfg.enable_force_edge, enable_stretch_edge=preprocess_cfg.enable_stretch_edge,
-            enable_node_norms=preprocess_cfg.enable_node_norms, enable_stretch_node=preprocess_cfg.enable_stretch_node)
+            enable_node_norms=preprocess_cfg.enable_node_norms, enable_stretch_node=preprocess_cfg.enable_stretch_node,
+            enable_rotation_angle=preprocess_cfg.enable_rotation_angle)
     else:
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and

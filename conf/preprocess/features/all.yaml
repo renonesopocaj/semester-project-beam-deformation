@@ -9,3 +9,5 @@ enable_stretch_node: true
 enable_edge_velocity: true
 enable_force_edge: true
 enable_stretch_edge: true
+# Rotation
+enable_rotation_angle: true
