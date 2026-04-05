@@ -1,4 +1,4 @@
-# config_original.yaml
+# config_single.yaml
 output_root: "./fem_dataset_generation/single"
 only_json: False
 

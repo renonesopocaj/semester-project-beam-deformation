@@ -1170,5 +1170,6 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
 
 if __name__ == "__main__":
-    config = "conf/fem_generation/config_rotated.yaml"
-    run_simulations(config, verbose=False, skip_existing=False, modes=("val", "test"))
+    config = "conf/fem_generation/config_single.yaml"
+    MODES = ("train", "val", "test")
+    run_simulations(config, verbose=False, skip_existing=False, modes=MODES)

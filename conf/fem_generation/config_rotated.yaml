@@ -23,13 +23,13 @@ val_fraction: 0.1
 test_fraction: 0.1
 
 # Training ranges — all force axes vary independently.
-# Forces are combined via Cartesian product: 1 x 6 x 6 x 6 x 6 = 1296.
+# Forces are combined via Cartesian product: 1 x 6 x 6 x 6 x 5 = 1080
 train:
   force_x: { start: 0, stop: 0, n: 1 }
   force_y: { start: -1.5, stop: 1.5, n: 6 }
   force_z: { start: -1.5, stop: 1.5, n: 6 }
   lengths: { start: 0.5, stop: 1.0, n: 6 }
-  widths:  { start: 0.06, stop: 0.14, n: 6 }
+  widths:  { start: 0.06, stop: 0.14, n: 5 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.

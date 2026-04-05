@@ -1,5 +1,6 @@
 """
 inmemorytimestepdataset.py
+
 In-memory dataset for graph data.
 """
 
@@ -9,7 +10,6 @@ import os
 import torch
 
 EPS = 1e-8
-
 
 class InMemoryTimeStepDataset(Dataset):
     """
