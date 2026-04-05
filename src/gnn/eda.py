@@ -147,6 +147,74 @@ def _get_display_label(run_name, attr_name, RUN_METADATA, SCALAR_FEATURE_NAMES):
     return RUN_METADATA[run_name]["label"]
 
 
+def _xyz_names(prefix):
+    """
+    Args:
+        prefix: str
+            Feature name prefix.
+        return: list[str]
+            xyz-expanded feature names.
+    """
+    return [f"{prefix}_x", f"{prefix}_y", f"{prefix}_z"]
+
+
+def _build_node_feature_names(cfg):
+    """
+    Args:
+        cfg: object
+            EDA/preprocess config.
+        return: list[str]
+            Node valued feature names in the exact order returned by build_node_features().
+    """
+    names = []
+    names.extend(_xyz_names("position"))
+    names.extend(_xyz_names("rest_pos"))
+    names.extend(_xyz_names("velocity"))
+    names.extend(_xyz_names("displacement_pos"))
+    names.extend(_xyz_names("force"))
+    if cfg.enable_stretch_node:
+        names.extend(_xyz_names("stretch_node"))
+        if cfg.enable_node_norms:
+            names.append("stretch_node_norm")
+    if cfg.enable_node_norms:
+        names.append("position_norm")
+        names.append("displacement_norm")
+        names.append("force_norm")
+        names.append("velocity_norm")
+        names.append("rest_pos_norm")
+    return names
+
+
+def _build_edge_feature_names(cfg):
+    """
+    Args:
+        cfg: object
+            EDA/preprocess config.
+        return: list[str]
+            Edge feature names in the exact order returned by build_edge_features().
+    """
+    names = []
+    names.extend(_xyz_names("edge_relative_pos"))
+    names.extend(_xyz_names("edge_rest_relative_pos"))
+    names.extend(_xyz_names("edge_displacement_pos"))
+    if cfg.enable_edge_velocity:
+        names.extend(_xyz_names("edge_velocity_pos"))
+    if cfg.enable_force_edge:
+        names.extend(_xyz_names("edge_force_pos"))
+    names.append("edge_relative_pos_norm")
+    names.append("edge_rest_relative_pos_norm")
+    names.append("edge_displacement_norm")
+    if cfg.enable_edge_velocity:
+        names.append("edge_velocity_norm")
+    if cfg.enable_stretch_edge:
+        names.append("edge_stretch_norm")
+    if cfg.enable_force_edge:
+        names.append("edge_force_norm")
+    if cfg.enable_rotation_angle:
+        names.append("edge_direction_cosine")
+    return names
+
+
 def plot_all_distributions(eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
                            scalar_feature_names, run_colors):
     """
@@ -163,7 +231,7 @@ def plot_all_distributions(eda_obj_dict, save_dir, scalar_run_names, vector_run_
     """
     os.makedirs(save_dir, exist_ok=True)
     reference_eda_obj = eda_obj_dict["none"]
-    pbar = tqdm(reference_eda_obj.__dict__, desc="Plotting distribution")
+    pbar = tqdm(reference_eda_obj.feature_names, desc="Plotting distribution")
     for key in pbar:
         if len(getattr(reference_eda_obj, key)) == 0:
             continue
@@ -282,7 +350,7 @@ class EdaPreprocessor(TrainPreprocessor):
         super().__init__(cfg, selected_indices, selected_limit)
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
-        self.eda_obj = EdaObj()
+        self.eda_obj = EdaObj(_build_node_feature_names(cfg), _build_edge_feature_names(cfg))
         self.gif_generation_mode = gif_generation_mode
         self.gif_sample_percentage = gif_sample_percentage
         self.eda_split = eda_split
@@ -546,8 +614,9 @@ class EdaPreprocessor(TrainPreprocessor):
         trajectory_graphs = [] if keep_gif_graphs else None
 
         effective_limit = self.selected_limit if traj_idx in self.selected_indices else cfg.limit_timesteps
+        max_usable_timesteps = min(max(0, effective_limit - 1), a.shape[0])
         for t, graph in enumerate(graphs_list_batch):
-            if t > effective_limit - 2:
+            if t >= max_usable_timesteps:
                 break
             node_force = all_node_force[t]
             x_t = x[t]
@@ -602,52 +671,24 @@ class EdaPreprocessor(TrainPreprocessor):
 
 
 class EdaObj:
-    acceleration_x: list
-    acceleration_y: list
-    acceleration_z: list
-    von_mises: list
-    velocity_x: list
-    velocity_y: list
-    velocity_z: list
-    position_x: list
-    position_y: list
-    position_z: list
-    edge_relative_pos_x: list
-    edge_relative_pos_y: list
-    edge_relative_pos_z: list
-    edge_relative_pos_norm: list
-    edge_rest_relative_pos_x: list
-    edge_rest_relative_pos_y: list
-    edge_rest_relative_pos_z: list
-    edge_rest_relative_pos_norm: list
-    force_x: list
-    force_y: list
-    force_z: list
-    edge_displacement_pos_x: list
-    edge_displacement_pos_y: list
-    edge_displacement_pos_z: list
-    edge_displacement_norm: list
-    rest_pos_x: list
-    rest_pos_y: list
-    rest_pos_z: list
-    displacement_pos_x: list
-    displacement_pos_y: list
-    displacement_pos_z: list
+    feature_names: list
+    node_feature_names: list
+    edge_feature_names: list
 
-    def __init__(self):
-        (self.acceleration_x, self.acceleration_y, self.acceleration_z, self.von_mises,
-         self.velocity_x, self.velocity_y, self.velocity_z,
-         self.position_x, self.position_y, self.position_z,
-         self.displacement_pos_x, self.displacement_pos_y, self.displacement_pos_z,
-         self.force_x, self.force_y, self.force_z,
-         self.rest_pos_x, self.rest_pos_y, self.rest_pos_z,
-         self.edge_relative_pos_x, self.edge_relative_pos_y, self.edge_relative_pos_z, self.edge_relative_pos_norm,
-         self.edge_rest_relative_pos_x, self.edge_rest_relative_pos_y, self.edge_rest_relative_pos_z,
-         self.edge_rest_relative_pos_norm,
-         self.edge_displacement_pos_x, self.edge_displacement_pos_y, self.edge_displacement_pos_z,
-         self.edge_displacement_norm) = \
-            ([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
-             [], [], [], [])
+    def __init__(self, node_feature_names, edge_feature_names):
+        """
+        Args:
+            node_feature_names: list[str]
+                Node feature names in valued-node order (without bc).
+            edge_feature_names: list[str]
+                Edge feature names in edge feature order.
+        """
+        self.node_feature_names = list(node_feature_names)
+        self.edge_feature_names = list(edge_feature_names)
+        self.feature_names = ["acceleration_x", "acceleration_y", "acceleration_z", "von_mises",
+                              *self.node_feature_names, *self.edge_feature_names]
+        for name in self.feature_names:
+            setattr(self, name, [])
 
     def append_timestep(self, node_features, edge_features, target):
         """
@@ -666,36 +707,18 @@ class EdaObj:
         self.acceleration_z.append(target[:, 2])
         self.von_mises.append(target[:, 3])
 
-        self.position_x.append(node_features[:, 1])
-        self.position_y.append(node_features[:, 2])
-        self.position_z.append(node_features[:, 3])
-        self.velocity_x.append(node_features[:, 4])
-        self.velocity_y.append(node_features[:, 5])
-        self.velocity_z.append(node_features[:, 6])
-        self.rest_pos_x.append(node_features[:, 7])
-        self.rest_pos_y.append(node_features[:, 8])
-        self.rest_pos_z.append(node_features[:, 9])
-        self.force_x.append(node_features[:, 10])
-        self.force_y.append(node_features[:, 11])
-        self.force_z.append(node_features[:, 12])
+        valued_node_features = node_features[:, 1:]
+        if valued_node_features.shape[1] != len(self.node_feature_names):
+            raise ValueError(f"Node feature mismatch: tensor has {valued_node_features.shape[1]} columns but "
+                             f"{len(self.node_feature_names)} names were configured.")
+        if edge_features.shape[1] != len(self.edge_feature_names):
+            raise ValueError(f"Edge feature mismatch: tensor has {edge_features.shape[1]} columns but "
+                             f"{len(self.edge_feature_names)} names were configured.")
 
-        self.displacement_pos_x.append(node_features[:, 13])
-        self.displacement_pos_y.append(node_features[:, 14])
-        self.displacement_pos_z.append(node_features[:, 15])
-
-        self.edge_relative_pos_x.append(edge_features[:, 0])
-        self.edge_relative_pos_y.append(edge_features[:, 1])
-        self.edge_relative_pos_z.append(edge_features[:, 2])
-        self.edge_rest_relative_pos_x.append(edge_features[:, 3])
-        self.edge_rest_relative_pos_y.append(edge_features[:, 4])
-        self.edge_rest_relative_pos_z.append(edge_features[:, 5])
-
-        self.edge_displacement_pos_x.append(edge_features[:, 6])
-        self.edge_displacement_pos_y.append(edge_features[:, 7])
-        self.edge_displacement_pos_z.append(edge_features[:, 8])
-        self.edge_relative_pos_norm.append(edge_features[:, 9])
-        self.edge_rest_relative_pos_norm.append(edge_features[:, 10])
-        self.edge_displacement_norm.append(edge_features[:, 11])
+        for column_idx, feature_name in enumerate(self.node_feature_names):
+            getattr(self, feature_name).append(valued_node_features[:, column_idx])
+        for column_idx, feature_name in enumerate(self.edge_feature_names):
+            getattr(self, feature_name).append(edge_features[:, column_idx])
 
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_test")
