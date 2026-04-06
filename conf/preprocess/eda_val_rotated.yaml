@@ -1,6 +1,5 @@
 defaults:
   - dataset: large # size only: large | medium | small
-  - noise: default # apply log to von mises vs do not apply
   - paths: rotated_beam # rotated_beam | single_direction_beam
   - normalizer: z_anisotropic
   - features: all # which feature augmentation use

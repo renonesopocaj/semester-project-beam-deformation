@@ -1,9 +1,5 @@
 training_type: "slurm"
 total_epochs: 150
-loss_type: "mse"
 resume_from: null
 checkpoint_interval: 20
 residual_list: []
-noise_scale: 0.0003
-noise_gamma: 0.1
-noise_seed: 42

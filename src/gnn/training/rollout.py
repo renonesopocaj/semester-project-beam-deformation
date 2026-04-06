@@ -75,8 +75,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             pred = model(input_graph.to(device))
             pred_denorm = normalizer.denormalize(pred, target_stats)
             # FIXME: hardcoded prediction target
-            a_t = pred_denorm[:, 0:3]
-            von_mises_t = pred_denorm[:, 3]
+            a_t_pred = pred_denorm[:, 0:3]
+            von_mises_t_pred = pred_denorm[:, 3]
             # Get ground truth (graph_ground_truth) targets
             von_mises_true = graph_ground_truth.y_von_mises
             x_true = graph_ground_truth.x_next
@@ -86,7 +86,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             v_t = input_graph.x_vel_t
             # Time integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
             boundary_condition = graph_ground_truth.x[:, 0]  # 1 = fixed, 0 = free
-            x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(a_t, v_t, dt, x_t)
+            x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(a_t_pred, v_t, dt, x_t)
             # enforce bcs
             x_predict_tp1[boundary_condition == 1] = x_t[boundary_condition == 1]
             v_predict_tp1[boundary_condition == 1] = 0.0
@@ -99,17 +99,21 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
                                      acceleration=graph_ground_truth.y_acc_t,
-                                     von_mises=von_mises_true,
                                      edge_index=graph_ground_truth.edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
-                                     rest_pos=rest_pos))
+                                     rest_pos=rest_pos,
+                                     # note: saved but not previous step stress is not used for next step prediction
+                                     von_mises=von_mises_true,
+                                     ))
             pred_rollout.append(Data(x_pos_t=x_predict_tp1,
                                      x_vel_t=v_predict_tp1,
-                                     acceleration=a_t,
-                                     von_mises=von_mises_t,
+                                     acceleration=a_t_pred,
                                      edge_index=graph_ground_truth.edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
-                                     rest_pos=rest_pos))
+                                     rest_pos=rest_pos,
+                                     # note: saved but not previous step stress is not used for next step prediction
+                                     von_mises=von_mises_t_pred
+                                     ))
     return true_rollout, pred_rollout
 
 def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, rest_pos, node_stats, edge_stats,

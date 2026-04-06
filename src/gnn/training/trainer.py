@@ -81,22 +81,21 @@ class LitModule(L.LightningModule):
                 Root directory that contains saved training folders.
             wandb_train_cfg_yaml: str
                 Resolved train config as YAML (no hydra: block); empty when W&B is disabled.
-            return: None
-                Initializes the module.
         """
         super().__init__()
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_fn = loss_factory(loss_type)
+        self.exp_mises = train_cfg.exp_mises
         self.residual_list = set(train_cfg.residual_list)
         self.theta_max = theta_max
         self.curvature_loss_weight = train_cfg.curvature_loss_weight
         if "curvature" in self.residual_list and self.theta_max is None:
             raise ValueError("Curvature residual requested but theta_max was not provided.")
-
+        # training id
         self.training_id = training_id
-
+        # used normalizers
         self.normalizer_method = preprocess_cfg.normalizer_method
         self.isotropic_normalizer = preprocess_cfg.isotropic_normalizer
         self.used_dataset_normalizer = NormalizerFactory.create_normalizer(self.normalizer_method,
@@ -107,18 +106,19 @@ class LitModule(L.LightningModule):
         self.training_plots_dir.mkdir(parents=True, exist_ok=True)
         self.model_evaluation_dir = self.model_dir / "model_evaluation"
         self.model_evaluation_dir.mkdir(parents=True, exist_ok=True)
-
+        # Init stuff then allocated in set_rollout_context
         self.node_stats = None
         self.edge_stats = None
         self.target_stats = None
         self.dt = None
         self.validation_dataset = None
         self.test_dataset = None
+        # default
         self.eval_split_name = "test"
         self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
+        # Others
         self.enable_wandb_watch = enable_wandb_watch
-
         self.len_train_dataloader = len_train_dataloader
         self.enable_val = train_cfg.enable_val
         self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
@@ -127,14 +127,11 @@ class LitModule(L.LightningModule):
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
         self.wandb_train_cfg_yaml = wandb_train_cfg_yaml
-
         # performance stuff
         self.rollout_num_workers = train_cfg.num_workers
         self.pin_memory = train_cfg.pin_memory
-
         # Features
         self.preprocess_cfg = preprocess_cfg
-
         # Time discretizer from preprocess
         self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
 
@@ -306,8 +303,8 @@ class LitModule(L.LightningModule):
                 Ground-truth tensor with shape `(num_nodes, 4)`.
             prefix: str
                 Metric namespace prefix, for example `val`, `test`, or `validation`.
-            return: dict
-                Dictionary with evaluation metrics.
+        return: dict
+            Dictionary with evaluation metrics.
         """
         pred_acc = pred[:, 0:3].contiguous()
         target_acc = target[:, 0:3].contiguous()

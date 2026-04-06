@@ -82,9 +82,7 @@ class PreprocessYaml:
         flattened_cfg = _to_dict_flatten(cfg)
         self.dataset_size = flattened_cfg["dataset_size"]
         self.device = flattened_cfg["device"]
-        self.noise_scale_train = flattened_cfg["noise_scale_train"]
         self.dt = flattened_cfg["dt"]
-        self.noise_scale_test = flattened_cfg["noise_scale_test"]
         self.seed = flattened_cfg["seed"]
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
         self.base_dir = flattened_cfg["base_dir"]
@@ -112,7 +110,6 @@ class PreprocessYaml:
         self.enable_past_pos_displ = flattened_cfg["enable_past_pos_displ"]
         self.enable_force_edge = flattened_cfg["enable_force_edge"]
         self.enable_rotation_angle = flattened_cfg["enable_rotation_angle"]
-        self.noise_prev_scale_train = flattened_cfg["noise_prev_scale_train"]
 
 class TrainYaml:
     """
@@ -169,14 +166,18 @@ class TrainYaml:
         self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
         self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
         self.pin_memory = flattened_cfg["pin_memory"]
-        self.noise_scale = flattened_cfg["noise_scale"]
-        self.noise_gamma = flattened_cfg["noise_gamma"]
-        self.noise_seed = flattened_cfg["noise_seed"]
         self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
         self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
+        # Noise
+        self.noise_scale = flattened_cfg["noise_scale"]
+        self.noise_gamma = flattened_cfg["noise_gamma"]
+        self.noise_seed = flattened_cfg["noise_seed"]
         self.noise_also_prev = flattened_cfg["noise_also_prev"]
+        self.noise_prev_scale_train = flattened_cfg["noise_prev_scale_train"]
+        # Exponentiate
+        self.exp_mises = flattened_cfg["exponentiate_mises"]
 
 def _to_dict_flatten(data):
     """

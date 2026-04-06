@@ -1,6 +1,5 @@
 defaults:
   - dataset: large
-  - noise: default # contains noise, device, time discretization
   - paths: single_direction_beam
   - normalizer: z_isotropic
   - features: all # contains all features to be toggled on/off

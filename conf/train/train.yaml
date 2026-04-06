@@ -2,6 +2,8 @@ defaults:
   - computational: default
   - model: meshgraphnet
   - training: default
+  - noise: default
+  - loss: default
   - validation: validation
   - data: default
   - lr_scheduler: step
