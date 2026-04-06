@@ -133,11 +133,7 @@ class LitModule(L.LightningModule):
         self.pin_memory = train_cfg.pin_memory
 
         # Features
-        self.enable_edge_velocity = preprocess_cfg.enable_edge_velocity
-        self.enable_node_norms = preprocess_cfg.enable_node_norms
-        self.enable_stretch_edge = preprocess_cfg.enable_stretch_edge
-        self.enable_force_edge = preprocess_cfg.enable_force_edge
-        self.enable_rotation_angle = preprocess_cfg.enable_rotation_angle
+        self.preprocess_cfg = preprocess_cfg
 
         # Time discretizer from preprocess
         self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
@@ -481,15 +477,11 @@ class LitModule(L.LightningModule):
         """
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
-                                                edge_stats=self.edge_stats, target_stats=self.target_stats,
-                                                dt=self.dt, device=self.device, skip_first=0, rollout_steps=999999,
+                                                edge_stats=self.edge_stats, target_stats=self.target_stats, dt=self.dt,
+                                                device=self.device, skip_first_num=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
-                                                enable_edge_velocity=self.enable_edge_velocity,
-                                                enable_node_norms=self.enable_node_norms,
-                                                time_discretizer=self.time_discretizer,
-                                                enable_force_edge=self.enable_force_edge,
-                                                enable_stretch_edge=self.enable_stretch_edge,
-                                                enable_rotation_angle=self.enable_rotation_angle)
+                                                preprocess_cfg=self.preprocess_cfg,
+                                                time_discretizer=self.time_discretize)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos

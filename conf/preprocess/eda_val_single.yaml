@@ -1,10 +1,15 @@
 defaults:
   - dataset: large # size only: large | medium | small
-  - numerical: default # apply log to von mises vs do not apply
+  - noise: default # apply log to von mises vs do not apply
   - paths: single_direction_beam # rotated_beam | single_direction_beam
   - normalizer: z_anisotropic
   - features: all # which feature augmentation use
   - _self_
+
+device: cpu
+dt: 0.08
+seed: 42
+time_discretization_method: "second_order_central" # newmark vs second_order_central
 
 eda_split: val
 gif_generation_mode: ALL

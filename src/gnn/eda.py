@@ -177,7 +177,7 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
-                          boundary_right_triangles):
+                          boundary_right_triangles, x_pos_tm1_prev):
         pass
 
     def _save_eda_stats(self):
@@ -510,6 +510,7 @@ class EdaPreprocessor(TrainPreprocessor):
 
         effective_limit = self.selected_limit if traj_idx in self.selected_indices else cfg.limit_timesteps
         max_usable_timesteps = min(max(0, effective_limit - 1), a.shape[0])
+        _x_tm1_prev = x[0].clone()
         for t, graph in enumerate(graphs_list_batch):
             if t >= max_usable_timesteps:
                 break
@@ -517,14 +518,13 @@ class EdaPreprocessor(TrainPreprocessor):
             x_t = x[t]
             v_t = v[t]
             a_t = a[t]
-            valued_node_attr, split_idx_node = build_node_features(x_t, v_t, rest_pos_x, node_force,
-                                                                   cfg.enable_node_norms)
+            valued_node_attr, split_idx_node = build_node_features(x_t, v_t, _x_tm1_prev, rest_pos_x, node_force,
+                                                                   cfg)
             if trajectory_feature_bundle["split_idx_node"] is None:
                 trajectory_feature_bundle["split_idx_node"] = split_idx_node
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
-            edge_attr, split_idx_edge = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force,
-                                            cfg.enable_edge_velocity,
-                                            cfg.enable_force_edge, cfg.enable_stretch_edge, cfg.enable_rotation_angle)
+            edge_attr, split_idx_edge = build_edge_features(x_t, v_t, _x_tm1_prev, rest_pos_x, node_force,
+                                                            graph.edge_index, cfg)
             if trajectory_feature_bundle["split_idx_edge"] is None:
                 trajectory_feature_bundle["split_idx_edge"] = split_idx_edge
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
@@ -542,9 +542,11 @@ class EdaPreprocessor(TrainPreprocessor):
                 trajectory_graphs.append(Data(x_pos_t=_to_cpu_clone(x_t),
                                               y_sig_t=_to_cpu_clone(graph.y_sig_t),
                                               x_element_connectivity=_to_cpu_clone(graph.x_element_connectivity)))
+            # update for next iter
+            _x_tm1_prev = x_t.clone()
 
         del dataloader; del graphs_list_batch; del whole_trajectory_batch; del x; del v; del a; del rest_pos_x
-        del all_node_force; del boundary_condition
+        del all_node_force; del boundary_condition; del _x_tm1_prev
 
         return trajectory_feature_bundle, trajectory_graphs
 

@@ -23,12 +23,18 @@ def build_node_feature_names(cfg):
     names.extend(_xyz_names("velocity"))
     names.extend(_xyz_names("displacement_pos"))
     names.extend(_xyz_names("force"))
+    if cfg.enable_past_pos_displ:
+        names.extend(_xyz_names("position_past"))
+        names.extend(_xyz_names("displacement_pos_past"))
     if cfg.enable_node_norms:
         names.append("position_norm")
         names.append("displacement_norm")
         names.append("force_norm")
         names.append("velocity_norm")
         names.append("rest_pos_norm")
+        if cfg.enable_past_pos_displ:
+            names.extend(_xyz_names("position_past_norm"))
+            names.extend(_xyz_names("displacement_pos_past_norm"))
     return names
 
 
@@ -51,6 +57,9 @@ def build_edge_feature_names(cfg):
     names.append("edge_relative_pos_norm")
     names.append("edge_rest_relative_pos_norm")
     names.append("edge_displacement_norm")
+    if cfg.enable_past_pos_displ:
+        names.append("edge_displacement_pos_past")
+        names.append("edge_displacement_pos_past_norm")
     if cfg.enable_force_edge:
         names.append("edge_force_norm")
     if cfg.enable_edge_velocity:

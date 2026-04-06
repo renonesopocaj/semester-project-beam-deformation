@@ -215,6 +215,8 @@ class Preprocessor(ABC):
 
             # Inside loop: for each graph build its features
             effective_limit = self.selected_limit if idx_file in self.selected_indices else cfg.limit_timesteps
+            # Initialized past x position
+            _x_pos_tm1_prev = x[0]
             for t, graph in enumerate(graphs_list_batch):
                 # limit trajectory length to compute acceleration
                 if t > effective_limit - 2:
@@ -223,15 +225,15 @@ class Preprocessor(ABC):
                 # create local (inside for) variables
                 _node_force = all_node_force[t]
                 # All are (N, 3)
-                _x, _v, _a = x[t], v[t], a[t]
+                _x_t, _v_t, _a_t = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr, split_idx_node = build_node_features(_x, _v, rest_pos_x, _node_force, cfg.enable_node_norms)
+                _node_attr, split_idx_node = build_node_features(_x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force,
+                                                                 cfg)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr, split_idx_edge = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, _node_force,
-                                                                 cfg.enable_edge_velocity, cfg.enable_force_edge,
-                                                                 cfg.enable_stretch_edge, cfg.enable_rotation_angle)
+                _edge_attr, split_idx_edge = build_edge_features(_x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force,
+                                                                 graph.edge_index, cfg)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
@@ -247,10 +249,12 @@ class Preprocessor(ABC):
                 self.valued_node_features.append(_node_attr.clone())
                 self.edge_features.append(_edge_attr.clone())
                 # Appends and creates PyG data object for both val and train
-                # For val it's already normalized
-                self._append_outgraphs(graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
+                # For val the features are normalized via the train stats before appending, for train I have yet
+                # to compute the stats
+                self._append_outgraphs(graph, _a_t, _x_t, _v_t, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                                        all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                                       surface_left_triangles, surface_right_triangles)
+                                       surface_left_triangles, surface_right_triangles, _x_pos_tm1_prev)
+                _x_pos_tm1_prev = _x_t.clone()
 
         # --- Open: All these do nothing if split NOT train ---
         self._compute_stats_train(cfg, split_idx_edge, split_idx_node)  # if val doesn't do anything
@@ -279,7 +283,7 @@ class Preprocessor(ABC):
     @abstractmethod
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                          boundary_left_triangles, boundary_right_triangles):
+                          boundary_left_triangles, boundary_right_triangles, x_pos_tm1_prev):
         raise NotImplementedError("_normalize_append_outgraphs")
 
     @abstractmethod
@@ -354,18 +358,22 @@ class TrainPreprocessor(Preprocessor):
         return surface_left_triangles, surface_right_triangles
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                          boundary_left_triangles, boundary_right_triangles):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
+                          boundary_right_triangles, x_pos_tm1_prev):
         # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
         # used for NNs
-        self.out_graphs.append(Data(edge_index=graph.edge_index, # global index
-                                    t=graph.time, # global t attribute
-                                    y_acc_t=_a, # TARGET feature acceleration
+        self.out_graphs.append(Data(y_acc_t=_a, # TARGET feature acceleration
+                                    # Helpers for rollout or other tasks
+                                    edge_index=graph.edge_index,  # global index
+                                    t=graph.time,  # global t attribute
+                                    # Features (input, x)
                                     x_pos_t=_x, # FEATURE position
+                                    x_pos_tm1_prev=x_pos_tm1_prev,
                                     x_vel_t=_v, # FEATURE velocity
                                     rest_pos=rest_pos_x, # rest position (for runtime noise injection)
                                     node_force=all_node_force[t],
                                     x_bc=_categorical_node_attr,
+                                    # Helper for curvature physics informed loss
                                     boundary_left_tri_index=boundary_left_triangles,
                                     boundary_right_tri_index=boundary_right_triangles))
         self.targets.append(torch.concat([_a, _von_mises], dim=1))
@@ -437,8 +445,8 @@ class ValPreprocessor(Preprocessor):
 
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
-                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                          boundary_left_triangles, boundary_right_triangles):
+                          all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
+                          boundary_right_triangles, x_pos_tm1_prev):
         _target = torch.concat([_a, _von_mises], dim=1)
         node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
             _edge_attr, _node_attr, _categorical_node_attr, _target)
@@ -455,6 +463,7 @@ class ValPreprocessor(Preprocessor):
                 # ==================================================================
                 # x = [is_bc, position, velocity, rest_position, node_force]
                 x=node_attr_norm,  # this will be the NN input feature for training
+                x_pos_tm1_prev=x_pos_tm1_prev,
                 # note: the position x_next, velocity v_next of t + 1 can be given since they can be computed
                 # from x, v at time t and acceleration of t - 1 (previous step prediction)
                 # note: not used for NN input, used only for building next time step graph / ground truth

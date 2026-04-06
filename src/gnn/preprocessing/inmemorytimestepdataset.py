@@ -70,7 +70,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     base_seed: int
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_node_norms, enable_rotation_angle):
+                 preprocess_cfg):
         """
         Args:
             sample_dir: str
@@ -91,6 +91,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                 Target normalization statistics.
             base_seed: int
                 Base seed used to build deterministic per-sample noise.
+            preprocess_cfg: PreprocessYaml
+
         """
         super().__init__(sample_dir, device)
         self.noise_scale = noise_scale
@@ -102,12 +104,9 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
-        # Featuress
-        self.enable_velocity_edge = enable_velocity_edge
-        self.enable_force_edge = enable_force_edge
-        self.enable_stretch_edge = enable_stretch_edge
-        self.enable_node_norms = enable_node_norms
-        self.enable_rotation_angle = enable_rotation_angle
+        # Features enablers
+        self.preprocess_cfg = preprocess_cfg
+        self.preprocess_cfg = preprocess_cfg.noise_prev_scale_train
 
     def __getitem__(self, idx):
         """
@@ -123,41 +122,54 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             PyG Data with noised input features, recomputed edge features, and corrected acceleration target.
         """
         data = self.data[idx]
-
+        seed_t = 2 * idx
+        seed_tm1 = 2 * idx + 1
         # Derive noise from a deterministic per-sample seed so repeated runs are reproducible.
-        noise_generator = torch.Generator(device=data.x_pos_t.device)
-        noise_generator.manual_seed(self.base_seed + int(idx))
-        noise_added = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
-                                                     device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
+        noise_generator_t = torch.Generator(device=data.x_pos_t.device)
+        noise_generator_t.manual_seed(self.base_seed + int(seed_t))
+        noise_added_t = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
+                                                       device=data.x_pos_t.device, generator=noise_generator_t)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
-        noise_added[fixed_mask] = 0.0
+        noise_added_t[fixed_mask] = 0.0
         # x_pos_t and x_vel_t are raw (not normalized): we add noise in raw space, then
         # rebuild node/edge features and normalize them with precomputed train statistics. The train statistics are
         # thus not affected by noise.
-        x_noised = data.x_pos_t + noise_added
-        v_noised = data.x_vel_t + noise_added / self.dt
-
+        x_noised = data.x_pos_t + noise_added_t
+        # NOTE: eventually, noise also previous, but much less in scale
+        x_pos_tm1_prev = data.x_pos_tm1_prev
+        if self.preprocess_cfg.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
+            noise_generator_tm1 = torch.Generator(device=data.x_pos_t.device)
+            noise_generator_tm1.manual_seed(self.base_seed + int(seed_tm1))
+            noise_added_prev_tm1 = self.noise_prev_scale_train * torch.randn(data.x_prev_pos_tm1.shape,
+                                                                             dtype=data.x_prev_pos_tm1.dtype,
+                                                                             device=data.x_pos_t.device,
+                                                                             generator=noise_generator_t)
+            noise_added_prev_tm1[fixed_mask] = 0.0
+            x_pos_tm1_prev += + noise_added_prev_tm1
+        # Propagate on velocity v[t] = x[t] + noise[t] - (x[t-1] - noise[t-1]) ---> v[t] + noise[t] - noise[t-1]
+        v_noised = data.x_vel_t + noise_added_t / self.dt
+        if self.preprocess_cfg.noise_also_prev:
+            v_noised = v_noised - noise_added_prev_tm1 / self.dt
         # Node features: full recomputation from raw attributes
         # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
         #                                            self.enable_velocity_edge)
         # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
-        node_attr_raw, _ = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-                                                            self.enable_node_norms)
+        node_attr_raw, _ = build_node_features(x_noised, v_noised, data.x_prev_pos_tm1, data.rest_pos, data.node_force,
+                                               self.preprocess_cfg)
         node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw, _ = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
-                                                            data.node_force, self.enable_velocity_edge,
-                                                            self.enable_force_edge, self.enable_stretch_edge,
-                                                            self.enable_rotation_angle)
+        # x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index, preprocess_cfg
+        edge_attr_raw, _ = build_edge_features(x_noised, v_noised, data.x_prev_pos_tm1, data.rest_pos, data.node_force,
+                                               data.edge_index, self.preprocess_cfg)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)
         # position-correcting acceleration is a_P = a_star - 2 eps / dt^2
         # velocity-correcting acceleration is a_V = a_star - eps / dt^2
         # Thus a_tilde = a_star - (1 + gamma) * eps / dt^2
-        acc_correction = -(1.0 + self.gamma) * noise_added / (self.dt ** 2)
+        acc_correction = -(1.0 + self.gamma) * noise_added_t / (self.dt ** 2)
         # new_y is target
         new_y = data.y.clone()
         # FIXME: hardcoded target handling
@@ -165,9 +177,10 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
 
         return Data(x=new_x, edge_attr=new_edge_attr, # input node and edge features
                     y=new_y, # target
+                    # Other features helpers for rollout or others
                     edge_index=data.edge_index,
-                    # Other features
                     y_acc_t=data.y_acc_t, # kept the same because it should be non-noised ground truth
+                    x_pos_tm1_prev=x_pos_tm1_prev,
                     x_pos_t=x_noised,
                     x_vel_t=v_noised,
                     boundary_left_tri_index=data.boundary_left_tri_index,

@@ -1,6 +1,0 @@
-device: cpu
-noise_scale_train: 0.0003
-noise_scale_test: 0.0
-dt: 0.08
-seed: 42
-time_discretization_method: "second_order_central" # newmark vs second_order_central
