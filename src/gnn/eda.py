@@ -20,8 +20,8 @@ import shutil
 from pathlib import Path
 
 import hydra
-from src.gnn.eda.eda_features_helpers import EdaObj, build_node_feature_names, build_edge_feature_names
-from src.gnn.eda.eda_plot import plot_all_distributions
+from src.gnn.eda_helpers.eda_features_helpers import EdaObj, build_node_feature_names, build_edge_feature_names
+from src.gnn.eda_helpers.eda_plot import plot_all_distributions
 import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
