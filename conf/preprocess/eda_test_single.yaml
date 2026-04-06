@@ -45,11 +45,13 @@ scalar_run_names:
 # Includes target von Mises, node norms (enable_node_norms), edge norms, stretch, and direction cosine when features: all.
 scalar_feature_names:
   - von_mises
-  - position_norm
   - displacement_norm
   - force_norm
   - velocity_norm
+  - position_norm
   - rest_pos_norm
+  - displacement_pos_past_norm
+  - position_past_norm
   - edge_relative_pos_norm
   - edge_rest_relative_pos_norm
   - edge_displacement_norm
