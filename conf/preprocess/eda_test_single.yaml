@@ -1,0 +1,54 @@
+defaults:
+  - dataset: large # size only: large | medium | small
+  - numerical: default # apply log to von mises vs do not apply
+  - paths: single_direction_beam # rotated_beam | single_direction_beam
+  - normalizer: z_anisotropic
+  - features: all # which feature augmentation use
+  - _self_
+
+eda_split: test
+gif_generation_mode: ALL
+gif_sample_percentage: 100.0
+generate_distributions: false
+
+normalization_runs:
+  - name: none
+    label: "No norm"
+    normalizer_method: "None"
+    isotropic_normalizer: true
+    generate_gifs: true
+
+run_colors:
+  none: "gray"
+  z_isotr: "tab:blue"
+  z_anisotr: "tab:orange"
+  robust_isotr: "tab:green"
+  robust_anisotr: "tab:red"
+
+vector_run_names:
+  - none
+  - z_isotr
+  - z_anisotr
+  - robust_isotr
+  - robust_anisotr
+
+scalar_run_names:
+  - none
+  - z_isotr
+  - robust_isotr
+
+# Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
+scalar_feature_names:
+  - von_mises
+  - edge_relative_pos_norm
+  - edge_rest_relative_pos_norm
+  - edge_displacement_norm
+
+hydra:
+  run:
+    dir: hydra/outputs/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false

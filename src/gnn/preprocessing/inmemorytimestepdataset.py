@@ -127,14 +127,15 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # Derive noise from a deterministic per-sample seed so repeated runs are reproducible.
         noise_generator = torch.Generator(device=data.x_pos_t.device)
         noise_generator.manual_seed(self.base_seed + int(idx))
-        eps = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
-                                             device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
+        noise_added = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
+                                                     device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
-        eps[fixed_mask] = 0.0
-        # x_pos_t and x_vel_t are raw kinematics (not normalized): we add noise in raw space, then
-        # rebuild node/edge features and normalize them with precomputed train statistics.
-        x_noised = data.x_pos_t + eps
-        v_noised = data.x_vel_t + eps / self.dt
+        noise_added[fixed_mask] = 0.0
+        # x_pos_t and x_vel_t are raw (not normalized): we add noise in raw space, then
+        # rebuild node/edge features and normalize them with precomputed train statistics. The train statistics are
+        # thus not affected by noise.
+        x_noised = data.x_pos_t + noise_added
+        v_noised = data.x_vel_t + noise_added / self.dt
 
         # Node features: full recomputation from raw attributes
         # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
@@ -156,7 +157,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # position-correcting acceleration is a_P = a_star - 2 eps / dt^2
         # velocity-correcting acceleration is a_V = a_star - eps / dt^2
         # Thus a_tilde = a_star - (1 + gamma) * eps / dt^2
-        acc_correction = -(1.0 + self.gamma) * eps / (self.dt ** 2)
+        acc_correction = -(1.0 + self.gamma) * noise_added / (self.dt ** 2)
         # new_y is target
         new_y = data.y.clone()
         # FIXME: hardcoded target handling
