@@ -474,7 +474,7 @@ class EdaPreprocessor(TrainPreprocessor):
 
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_val")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train")
 def main(cfg):
     """
     Args:

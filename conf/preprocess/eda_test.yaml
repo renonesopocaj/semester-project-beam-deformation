@@ -9,7 +9,7 @@ defaults:
 eda_split: test
 gif_generation_mode: ALL
 gif_sample_percentage: 100.0
-generate_distributions: true
+generate_distributions: false
 
 normalization_runs:
   - name: none
@@ -17,26 +17,6 @@ normalization_runs:
     normalizer_method: "None"
     isotropic_normalizer: true
     generate_gifs: true
-#  - name: z_isotr
-#    label: "Z isotr."
-#    normalizer_method: "z"
-#    isotropic_normalizer: true
-#    generate_gifs: false
-#  - name: z_anisotr
-#    label: "Z anisotr."
-#    normalizer_method: "z"
-#    isotropic_normalizer: false
-#    generate_gifs: false
-#  - name: robust_isotr
-#    label: "Robust isotr."
-#    normalizer_method: "robust"
-#    isotropic_normalizer: true
-#    generate_gifs: false
-#  - name: robust_anisotr
-#    label: "Robust anisotr."
-#    normalizer_method: "robust"
-#    isotropic_normalizer: false
-#    generate_gifs: false
 
 run_colors:
   none: "gray"
