@@ -135,7 +135,6 @@ class LitModule(L.LightningModule):
         # Features
         self.enable_edge_velocity = preprocess_cfg.enable_edge_velocity
         self.enable_node_norms = preprocess_cfg.enable_node_norms
-        self.enable_stretch_node = preprocess_cfg.enable_stretch_node
         self.enable_stretch_edge = preprocess_cfg.enable_stretch_edge
         self.enable_force_edge = preprocess_cfg.enable_force_edge
         self.enable_rotation_angle = preprocess_cfg.enable_rotation_angle
@@ -488,7 +487,6 @@ class LitModule(L.LightningModule):
                                                 enable_edge_velocity=self.enable_edge_velocity,
                                                 enable_node_norms=self.enable_node_norms,
                                                 time_discretizer=self.time_discretizer,
-                                                enable_stretch_node=self.enable_stretch_node,
                                                 enable_force_edge=self.enable_force_edge,
                                                 enable_stretch_edge=self.enable_stretch_edge,
                                                 enable_rotation_angle=self.enable_rotation_angle)

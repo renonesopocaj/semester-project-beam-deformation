@@ -176,7 +176,6 @@ class Preprocessor(ABC):
         """
         torch.manual_seed(cfg.seed)
         filenames = _sort_filenames_by_traj_params(list(Path(graphs_dir).glob("*.pt")), graphs_dir)
-        split_idx_edge = 9
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Processing trajectories")
@@ -208,7 +207,7 @@ class Preprocessor(ABC):
                                                                                                 idx_file)
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
-            # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3) FIXME: does it make any difference?
+            # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3)
             # x_node_force is the force (scalar) in every point (x,y,z) of the graph at time t
             all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)  # (T, N, 3)
             # .x_bc contains 0,1 value with 1 = fixed, 0 = free
@@ -227,13 +226,12 @@ class Preprocessor(ABC):
                 _x, _v, _a = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr = build_node_features(_x, _v, rest_pos_x, _node_force, cfg.enable_node_norms,
-                                                 cfg.enable_stretch_node)
+                _node_attr, split_idx_node = build_node_features(_x, _v, rest_pos_x, _node_force, cfg.enable_node_norms)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, _node_force, cfg.enable_edge_velocity,
-                                                 cfg.enable_force_edge, cfg.enable_stretch_edge,
-                                                 cfg.enable_rotation_angle)
+                _edge_attr, split_idx_edge = build_edge_features(_x, rest_pos_x, graph.edge_index, _v, _node_force,
+                                                                 cfg.enable_edge_velocity, cfg.enable_force_edge,
+                                                                 cfg.enable_stretch_edge, cfg.enable_rotation_angle)
                 # .y_sig_t contains the full stress tensor
                 # took the log because it helps making the distribution normal-like (symmetrical)
                 # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
@@ -255,7 +253,7 @@ class Preprocessor(ABC):
                                        surface_left_triangles, surface_right_triangles)
 
         # --- Open: All these do nothing if split NOT train ---
-        self._compute_stats_train(cfg, split_idx_edge)  # if val doesn't do anything
+        self._compute_stats_train(cfg, split_idx_edge, split_idx_node)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
         self._save_auxiliary_train_artifacts(save_dir)
         self._normalize_assign_features_train()
@@ -263,7 +261,7 @@ class Preprocessor(ABC):
         self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
 
     @abstractmethod
-    def _compute_stats_train(self, cfg, split_idx_edge):
+    def _compute_stats_train(self, cfg, split_idx_edge, split_idx_node):
         raise NotImplementedError("compute_stats_train")
 
     @abstractmethod
@@ -313,15 +311,25 @@ class TrainPreprocessor(Preprocessor):
             json.dump({"theta_max": float(self.theta_max)}, f, indent=4)
         print(f"Theta max saved to {stats_dir / 'theta_max.json'}")
 
-    def _compute_stats_train(self, cfg, split_idx_edge):
+    def _compute_stats_train(self, cfg, split_idx_edge, split_idx_node):
+        """
+        Args
+            cfg: PreprocessYaml
+                contains config parameters
+            split_idx_edge:
+                index where to split the edge features  between isotropic (3 coordinates) and not isotropic ("1 coordinate")
+            split_idx_node:
+                index where to split the node features between isotropic (3 coordinates) and not isotropic ("1 coordinate")
+        :return:
+        """
         print("\nComputing train stats...\n")
         # Compute statistics
-        PLACEHOLDER_ALL_ISOTROPIC = self.valued_node_features[0].shape[1]
-        self.node_stats = self.normalizer.compute_stats(self.valued_node_features, PLACEHOLDER_ALL_ISOTROPIC)
+        self.node_stats = self.normalizer.compute_stats(self.valued_node_features, split_idx_node)
         # print(f"edge_features.shape = {self.edge_features[0].shape}")
         self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
         # isotropic acceleration iff normalizer is isotropic
-        self.target_stats = self.normalizer.compute_stats(self.targets, 3) # FIXME: hardcoded 3 for now
+        # FIXME: hardcoded target handling
+        self.target_stats = self.normalizer.compute_stats(self.targets, 3)
         print("\nFinished computing train stats\n")
 
     def _load_stats(self, cfg):
@@ -503,6 +511,7 @@ def main(cfg):
             Hydra-composed configuration. Run with --multirun to sweep over multiple values,
             e.g.: python -m src.gnn.preprocess --multirun split=train,val,test
     """
+    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
     cfg_obj = PreprocessYaml(cfg)
     print(f"Preprocessing {cfg_obj.dataset_size} dataset\n" + "=" * 60)
     print(f"\tSave dir of config.yaml = {cfg_obj.save_dir}")

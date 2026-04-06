@@ -70,8 +70,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     base_seed: int
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_node_norms, enable_stretch_node,
-                 enable_rotation_angle):
+                 enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_node_norms, enable_rotation_angle):
         """
         Args:
             sample_dir: str
@@ -108,7 +107,6 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.enable_force_edge = enable_force_edge
         self.enable_stretch_edge = enable_stretch_edge
         self.enable_node_norms = enable_node_norms
-        self.enable_stretch_node = enable_stretch_node
         self.enable_rotation_angle = enable_rotation_angle
 
     def __getitem__(self, idx):
@@ -133,6 +131,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                                              device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
         eps[fixed_mask] = 0.0
+        # FIXME: is x_post_t normalized? It's unclear in the paper MGN, in the code it should be pre-normalized,
+        #       but they do not implement it per-epoch and I did it post normalized and it works fine.
         x_noised = data.x_pos_t + eps
         v_noised = data.x_vel_t + eps / self.dt
 
@@ -140,15 +140,16 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
         #                                            self.enable_velocity_edge)
         # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
-        node_attr_raw = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-                                            self.enable_node_norms, self.enable_stretch_node)
+        node_attr_raw, _ = build_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
+                                                            self.enable_node_norms)
         node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised, data.node_force,
-                                            self.enable_velocity_edge, self.enable_force_edge,
-                                            self.enable_stretch_edge, self.enable_rotation_angle)
+        edge_attr_raw, _ = build_edge_features(x_noised, data.rest_pos, data.edge_index, v_noised,
+                                                            data.node_force, self.enable_velocity_edge,
+                                                            self.enable_force_edge, self.enable_stretch_edge,
+                                                            self.enable_rotation_angle)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)
@@ -158,10 +159,13 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         acc_correction = -(1.0 + self.gamma) * eps / (self.dt ** 2)
         # new_y is target
         new_y = data.y.clone()
+        # FIXME: hardcoded target handling
         new_y[:, :3] += acc_correction / (self.target_stats_std_acc + EPS)
 
-        return Data(x=new_x, edge_attr=new_edge_attr, y=new_y, # target
+        return Data(x=new_x, edge_attr=new_edge_attr, # input node and edge features
+                    y=new_y, # target
                     edge_index=data.edge_index,
+                    # Other features
                     y_acc_t=data.y_acc_t, # kept the same because it should be non-noised ground truth
                     x_pos_t=x_noised,
                     x_vel_t=v_noised,

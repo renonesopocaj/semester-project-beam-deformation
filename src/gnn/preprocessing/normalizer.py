@@ -80,7 +80,7 @@ class Normalizer(ABC):
             tensor_list: list[torch.Tensor]
                 list of tensors with shape (N, F)
             split_idx: int
-                first split_idx features are grouped in xyz triplets
+                first split_idx features are grouped in xyz triplets, so have 3 coordinates and treated isotropically
 
         return: Stats
             robust stats with isotropic pooling on triplets

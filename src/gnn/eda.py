@@ -1,14 +1,14 @@
 """
 eda.py
 Main file to run in order to do Exploratory Data Analysis.
-The del command are there to avoid out of memory errors.
+- The del command are there to avoid out of memory errors.
 This script does the following:
 1. Preprocess the data and save it in a format that is easy to use for EDA.
 2. Plot the distributions of the features.
 3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
-For train the normalized distributions are computed via train stats, for val and test also with train stats.
-To avoid code repetition, the preprocessing reuses the samefeature builders used in preprocess.py.
-All the possible normalization are done.
+- For train the normalized distributions are computed via train stats, for val and test also with train stats.
+- To avoid code repetition, the preprocessing reuses the samefeature builders used in preprocess.py.
+- All the possible normalization are done.
 """
 
 import copy
@@ -20,10 +20,12 @@ import shutil
 from pathlib import Path
 
 import hydra
-import matplotlib.pyplot as plt
+from src.gnn.eda.eda_features_helpers import EdaObj, build_node_feature_names, build_edge_feature_names
+from src.gnn.eda.eda_plot import plot_all_distributions
 import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
+from omegaconf import OmegaConf
 
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import (TrainPreprocessor, load_selected_trajectories,
@@ -63,8 +65,8 @@ def _build_uniformly_spread_indices(total_count, percentage):
             Total number of trajectories in the split.
         percentage: float
             Percentage of trajectories to sample.
-        return: set[int]
-            Uniformly spread trajectory indices.
+    return: set[int]
+        Uniformly spread trajectory indices.
     """
     if total_count <= 0:
         return set()
@@ -109,210 +111,13 @@ def _create_variant_cfg(base_cfg, normalizer_method, isotropic_normalizer):
             Normalizer method for the variant.
         isotropic_normalizer: bool
             Whether the normalizer pools xyz triplets isotropically.
-        return: PreprocessYaml
-            Independent config object for one EDA run.
+    return: PreprocessYaml
+        Independent config object for one EDA run.
     """
     variant_cfg = copy.deepcopy(base_cfg)
     variant_cfg.normalizer_method = normalizer_method
     variant_cfg.isotropic_normalizer = isotropic_normalizer
     return variant_cfg
-
-
-def _get_variant_names_for_feature(attr_name, SCALAR_RUN_NAMES, VECTOR_RUN_NAMES, SCALAR_FEATURE_NAMES):
-    """
-    Args:
-        attr_name: str
-            EDA feature name.
-        return: list[str]
-            The normalization runs that should be plotted for that feature.
-    """
-    if attr_name in SCALAR_FEATURE_NAMES:
-        return SCALAR_RUN_NAMES
-    return VECTOR_RUN_NAMES
-
-
-def _get_display_label(run_name, attr_name, RUN_METADATA, SCALAR_FEATURE_NAMES):
-    """
-    Args:
-        run_name: str
-            Normalization run name.
-        attr_name: str
-            EDA feature name.
-        return: str
-            Human-readable plot label.
-    """
-    if attr_name in SCALAR_FEATURE_NAMES:
-        scalar_labels = {"none": "No norm", "z_isotr": "Z norm", "robust_isotr": "Robust norm"}
-        return scalar_labels[run_name]
-    return RUN_METADATA[run_name]["label"]
-
-
-def _xyz_names(prefix):
-    """
-    Args:
-        prefix: str
-            Feature name prefix.
-        return: list[str]
-            xyz-expanded feature names.
-    """
-    return [f"{prefix}_x", f"{prefix}_y", f"{prefix}_z"]
-
-
-def _build_node_feature_names(cfg):
-    """
-    Args:
-        cfg: object
-            EDA/preprocess config.
-        return: list[str]
-            Node valued feature names in the exact order returned by build_node_features().
-    """
-    names = []
-    names.extend(_xyz_names("position"))
-    names.extend(_xyz_names("rest_pos"))
-    names.extend(_xyz_names("velocity"))
-    names.extend(_xyz_names("displacement_pos"))
-    names.extend(_xyz_names("force"))
-    if cfg.enable_stretch_node:
-        names.extend(_xyz_names("stretch_node"))
-        if cfg.enable_node_norms:
-            names.append("stretch_node_norm")
-    if cfg.enable_node_norms:
-        names.append("position_norm")
-        names.append("displacement_norm")
-        names.append("force_norm")
-        names.append("velocity_norm")
-        names.append("rest_pos_norm")
-    return names
-
-
-def _build_edge_feature_names(cfg):
-    """
-    Args:
-        cfg: object
-            EDA/preprocess config.
-        return: list[str]
-            Edge feature names in the exact order returned by build_edge_features().
-    """
-    names = []
-    names.extend(_xyz_names("edge_relative_pos"))
-    names.extend(_xyz_names("edge_rest_relative_pos"))
-    names.extend(_xyz_names("edge_displacement_pos"))
-    if cfg.enable_edge_velocity:
-        names.extend(_xyz_names("edge_velocity_pos"))
-    if cfg.enable_force_edge:
-        names.extend(_xyz_names("edge_force_pos"))
-    names.append("edge_relative_pos_norm")
-    names.append("edge_rest_relative_pos_norm")
-    names.append("edge_displacement_norm")
-    if cfg.enable_edge_velocity:
-        names.append("edge_velocity_norm")
-    if cfg.enable_stretch_edge:
-        names.append("edge_stretch_norm")
-    if cfg.enable_force_edge:
-        names.append("edge_force_norm")
-    if cfg.enable_rotation_angle:
-        names.append("edge_direction_cosine")
-    return names
-
-
-def plot_all_distributions(eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
-                           scalar_feature_names, run_colors):
-    """
-    Args:
-        eda_obj_dict: dict[str, EdaObj]
-            One EdaObj per normalization run.
-        save_dir: str or Path
-            Directory where the plots will be saved.
-        scalar_run_names: list[str]
-        vector_run_names: list[str]
-        run_metadata: dict[str, dict]
-        scalar_feature_names: list[str]
-        run_colors: dict[str, str]
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    reference_eda_obj = eda_obj_dict["none"]
-    pbar = tqdm(reference_eda_obj.feature_names, desc="Plotting distribution")
-    for key in pbar:
-        if len(getattr(reference_eda_obj, key)) == 0:
-            continue
-        pbar.set_postfix({"key": key})
-        plot_distribution(key, eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
-                          scalar_feature_names, run_colors)
-
-
-def plot_distribution(attr_name, eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
-                      scalar_feature_names, run_colors):
-    """
-    Plots non-normalized distribution on the left y-axis and the selected
-    normalized distributions on the right y-axis (shared scale).
-
-    Args:
-        attr_name: str
-            Attribute name (used for titles/labels).
-        eda_obj_dict: dict[str, EdaObj]
-            Mapping run_name -> EdaObj.
-        save_dir: str or Path
-            Directory where the plots will be saved.
-        scalar_run_names: list[str]
-        vector_run_names: list[str]
-        run_metadata: dict[str, dict]
-        scalar_feature_names: list[str]
-        run_colors: dict[str, str]
-    """
-    run_names = _get_variant_names_for_feature(attr_name, scalar_run_names, vector_run_names, scalar_feature_names)
-    chunks_list = []
-    labels = []
-    colors = []
-    for run_name in run_names:
-        if run_name not in eda_obj_dict:
-            continue
-        values = getattr(eda_obj_dict[run_name], attr_name)
-        if len(values) == 0:
-            continue
-        chunks = []
-        for tensor in values:
-            chunks.append(tensor.reshape(-1, 1))
-        merged_tensor = torch.cat(chunks, dim=0).to(torch.float32)
-        chunks_list.append(merged_tensor.reshape(-1).detach().to(DEVICE).numpy())
-        labels.append(_get_display_label(run_name, attr_name, run_metadata, scalar_feature_names))
-        colors.append(run_colors[run_name])
-        del chunks
-        del values
-        del merged_tensor
-
-    if len(chunks_list) == 0:
-        return
-
-    raw_min = float(chunks_list[0].min())
-    raw_max = float(chunks_list[0].max())
-
-    fig, ax_left = plt.subplots(figsize=(10, 6))
-    ax_right = ax_left.twinx()
-
-    ax_left.hist(chunks_list[0], bins=200, density=True, alpha=0.3, color=colors[0], label=labels[0])
-    ax_left.set_ylabel("Density (non-normalized)")
-
-    for data, color, label in zip(chunks_list[1:], colors[1:], labels[1:]):
-        ax_right.hist(data, bins=200, density=True, alpha=0.5, color=color,
-                      label=label, histtype="step", linewidth=1.5)
-    ax_right.set_ylabel("Density (normalized)")
-
-    ax_left.set_xlabel(attr_name)
-    fig.suptitle(f"{attr_name} distribution")
-    ax_left.grid(True, alpha=0.3)
-    ax_left.text(0.02, 0.98, f"Raw range: [{raw_min:.6g}, {raw_max:.6g}]",
-                 transform=ax_left.transAxes, va="top", ha="left",
-                 bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8})
-
-    handles_left, labels_left = ax_left.get_legend_handles_labels()
-    handles_right, labels_right = ax_right.get_legend_handles_labels()
-    fig.legend(handles_left + handles_right, labels_left + labels_right,
-               loc="upper right", bbox_to_anchor=(0.98, 0.95))
-
-    plt.tight_layout()
-    plt.savefig(Path(save_dir) / f"eda_{attr_name}.png", dpi=150)
-    plt.close(fig)
-
 
 class EdaPreprocessor(TrainPreprocessor):
     eda_obj: object
@@ -350,7 +155,7 @@ class EdaPreprocessor(TrainPreprocessor):
         super().__init__(cfg, selected_indices, selected_limit)
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
-        self.eda_obj = EdaObj(_build_node_feature_names(cfg), _build_edge_feature_names(cfg))
+        self.eda_obj = EdaObj(build_node_feature_names(cfg), build_edge_feature_names(cfg))
         self.gif_generation_mode = gif_generation_mode
         self.gif_sample_percentage = gif_sample_percentage
         self.eda_split = eda_split
@@ -449,8 +254,6 @@ class EdaPreprocessor(TrainPreprocessor):
                 Trajectory files to process.
             generate_gifs: bool
                 Whether to generate trajectory GIFs during the pass.
-            return: None
-                Fills self.eda_obj lazily.
         """
         gif_indices = _build_gif_trajectory_indices(len(filenames), generate_gifs, self.gif_sample_percentage,
                                                     self.gif_generation_mode)
@@ -622,10 +425,10 @@ class EdaPreprocessor(TrainPreprocessor):
             x_t = x[t]
             v_t = v[t]
             a_t = a[t]
-            valued_node_attr = build_node_features(x_t, v_t, rest_pos_x, node_force, cfg.enable_node_norms,
-                                                   cfg.enable_stretch_node)
+            valued_node_attr, split_idx_node = build_node_features(x_t, v_t, rest_pos_x, node_force,
+                                                                   cfg.enable_node_norms)
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
-            edge_attr = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force,
+            edge_attr, split_idx_edge = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force,
                                             cfg.enable_edge_velocity,
                                             cfg.enable_force_edge, cfg.enable_stretch_edge, cfg.enable_rotation_angle)
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
@@ -670,64 +473,16 @@ class EdaPreprocessor(TrainPreprocessor):
                               split_name="eda", traj_idx=traj_idx, traj_metadata=traj_metadata)
 
 
-class EdaObj:
-    feature_names: list
-    node_feature_names: list
-    edge_feature_names: list
 
-    def __init__(self, node_feature_names, edge_feature_names):
-        """
-        Args:
-            node_feature_names: list[str]
-                Node feature names in valued-node order (without bc).
-            edge_feature_names: list[str]
-                Edge feature names in edge feature order.
-        """
-        self.node_feature_names = list(node_feature_names)
-        self.edge_feature_names = list(edge_feature_names)
-        self.feature_names = ["acceleration_x", "acceleration_y", "acceleration_z", "von_mises",
-                              *self.node_feature_names, *self.edge_feature_names]
-        for name in self.feature_names:
-            setattr(self, name, [])
-
-    def append_timestep(self, node_features, edge_features, target):
-        """
-        Args:
-            node_features: torch.Tensor
-                Node input tensor `[bc, valued_node_features]`.
-            edge_features: torch.Tensor
-                Edge feature tensor.
-            target: torch.Tensor
-                Target tensor `[acc_x, acc_y, acc_z, von_mises]`.
-            return: None
-                Appends the current timestep to the internal EDA lists.
-        """
-        self.acceleration_x.append(target[:, 0])
-        self.acceleration_y.append(target[:, 1])
-        self.acceleration_z.append(target[:, 2])
-        self.von_mises.append(target[:, 3])
-
-        valued_node_features = node_features[:, 1:]
-        if valued_node_features.shape[1] != len(self.node_feature_names):
-            raise ValueError(f"Node feature mismatch: tensor has {valued_node_features.shape[1]} columns but "
-                             f"{len(self.node_feature_names)} names were configured.")
-        if edge_features.shape[1] != len(self.edge_feature_names):
-            raise ValueError(f"Edge feature mismatch: tensor has {edge_features.shape[1]} columns but "
-                             f"{len(self.edge_feature_names)} names were configured.")
-
-        for column_idx, feature_name in enumerate(self.node_feature_names):
-            getattr(self, feature_name).append(valued_node_features[:, column_idx])
-        for column_idx, feature_name in enumerate(self.edge_feature_names):
-            getattr(self, feature_name).append(edge_features[:, column_idx])
-
-
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_test")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_val")
 def main(cfg):
     """
     Args:
         cfg: object
             Hydra-composed configuration.
     """
+    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
+
     eda_cfg = EdaYaml(cfg)
     base_cfg = PreprocessYaml(cfg)
 

@@ -10,7 +10,7 @@ from src.gnn.preprocessing.build_features import build_edge_features, build_node
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first,
                rollout_steps, normalizer, enable_edge_velocity, enable_node_norms, time_discretizer,
-               enable_stretch_node, enable_force_edge, enable_stretch_edge, enable_rotation_angle):
+               enable_force_edge, enable_stretch_edge, enable_rotation_angle):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -86,7 +86,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             # Input features (previous time step t) to obtain next step t+1
             x = input_graph.x_pos_t
             v = input_graph.x_vel_t
-            # Newmark / time integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
+            # Time integration: obtain v_predict_tp1, x_predict_tp1 + enforce bcs on fixed nodes
             boundary_condition = graph_ground_truth.x[:, 0]  # 1 = fixed, 0 = free
             x_predict_tp1, v_predict_tp1 = time_discretizer.integrate_acceleration(a, v, dt, x)
             # enforce bcs
@@ -98,7 +98,6 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                             edge_stats=edge_stats, normalizer=normalizer,
                                             enable_edge_velocity=enable_edge_velocity,
                                             enable_node_norms=enable_node_norms,
-                                            enable_stretch_node=enable_stretch_node,
                                             enable_force_edge=enable_force_edge,
                                             enable_stretch_edge=enable_stretch_edge,
                                             enable_rotation_angle=enable_rotation_angle)
@@ -120,8 +119,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     return true_rollout, pred_rollout
 
 def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos, node_stats, edge_stats, normalizer,
-                      enable_edge_velocity, enable_node_norms, enable_stretch_node, enable_force_edge,
-                      enable_stretch_edge, enable_rotation_angle):
+                      enable_edge_velocity, enable_node_norms, enable_force_edge, enable_stretch_edge,
+                      enable_rotation_angle):
     """
     Builds a graph for building the graph of next timestep from predicted state. Helper for do_rollout.
 
@@ -147,13 +146,13 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, rest_pos
     input_graph = ground_truth_graph.clone()
     # ---------------------- Nodes ----------------------
     # Obtain BCs (cannot change so always ground truth)
-    boundary_condition = ground_truth_graph.x[:, 0] # FIXME: hardcoded 0
+    boundary_condition = ground_truth_graph.x[:, 0] # FIXME: hardcoded 0, but ok by convention
     categorical_node_features = boundary_condition.unsqueeze(1)
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted
     ground_truth_force_tp1 = ground_truth_graph.node_force_next
     valued_node_features = build_node_features(x_predict_tp1, v_predict_tp1, rest_pos, ground_truth_force_tp1,
-                                               enable_node_norms, enable_stretch_node)
+                                               enable_node_norms)
     _x = torch.concat([categorical_node_features, normalizer.normalize(valued_node_features, node_stats)],
                       dim=1)
     # Keep force node features unchanged: deleted

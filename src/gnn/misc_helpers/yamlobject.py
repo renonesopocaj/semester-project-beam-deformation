@@ -108,7 +108,6 @@ class PreprocessYaml:
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
-        self.enable_stretch_node = flattened_cfg["enable_stretch_node"]
         self.enable_stretch_edge = flattened_cfg["enable_stretch_edge"]
         self.enable_force_edge = flattened_cfg["enable_force_edge"]
         self.enable_rotation_angle = flattened_cfg["enable_rotation_angle"]

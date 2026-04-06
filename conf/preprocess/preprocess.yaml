@@ -1,9 +1,9 @@
 defaults:
   - dataset: large
-  - numerical: default
+  - numerical: default # contains noise, device, time discretization
   - paths: single_direction_beam
   - normalizer: z_isotropic
-  - features: all
+  - features: all # contains all features to be toggled on/off
   - _self_
 
 hydra:

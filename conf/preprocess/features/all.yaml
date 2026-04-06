@@ -4,7 +4,6 @@ mises_log: true
 absolute_pos: true
 # Node
 enable_node_norms: true
-enable_stretch_node: true
 # Edge
 enable_edge_velocity: true
 enable_force_edge: true
