@@ -131,8 +131,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                                              device=data.x_pos_t.device, generator=noise_generator)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
         eps[fixed_mask] = 0.0
-        # FIXME: is x_post_t normalized? It's unclear in the paper MGN, in the code it should be pre-normalized,
-        #       but they do not implement it per-epoch and I did it post normalized and it works fine.
+        # x_pos_t and x_vel_t are raw kinematics (not normalized): we add noise in raw space, then
+        # rebuild node/edge features and normalize them with precomputed train statistics.
         x_noised = data.x_pos_t + eps
         v_noised = data.x_vel_t + eps / self.dt
 

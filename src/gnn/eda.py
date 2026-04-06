@@ -132,6 +132,13 @@ class EdaPreprocessor(TrainPreprocessor):
     def __init__(self, cfg, artifact_dir, run_name, gif_generation_mode, gif_sample_percentage,
                  eda_split, train_artifact_dir, selected_indices, selected_limit):
         """
+        Construct an EDA-oriented preprocessor: same stats machinery as TrainPreprocessor, plus paths and an EdaObj
+        wired to feature names from the current config.
+
+        1. Call the train preprocessor base initializer (normalizer factory, empty accumulators).
+        2. Store artifact paths, GIF settings, split name, and train artifact root for stats reuse.
+        3. Build EdaObj with node and edge feature name lists matching build_node_features / build_edge_features.
+
         Args:
             cfg: object
                 Config object.
@@ -175,8 +182,12 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def _save_eda_stats(self):
         """
-        Persist node/edge/target stats to disk so that val/test runs can reuse
-        train-computed statistics.
+        Write self.node_stats, self.edge_stats, and self.target_stats to JSON under the train EDA artifact tree so val/test
+        EDA runs can load identical normalization parameters.
+
+        1. Ensure the directory train_artifact_dir / .eda_stats / run_name exists.
+        2. Serialize the three Stats objects via to_dict into one JSON file named stats.json.
+        3. Print the output path for logging.
         """
         stats_dir = self.train_artifact_dir / ".eda_stats" / self.run_name
         stats_dir.mkdir(parents=True, exist_ok=True)
@@ -189,8 +200,12 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def _load_eda_stats(self):
         """
-        Load train-computed node/edge/target stats so that val/test splits
-        are normalized with the same statistics used during training EDA.
+        Read stats.json produced by a prior train-split EDA run and assign self.node_stats, self.edge_stats, and
+        self.target_stats.
+
+        1. Resolve stats.json under train_artifact_dir / .eda_stats / run_name.
+        2. Raise a clear error if the file is missing.
+        3. Parse JSON and rebuild Stats objects with Stats.from_dict.
         """
         stats_path = self.train_artifact_dir / ".eda_stats" / self.run_name / "stats.json"
         if not stats_path.exists():
@@ -205,8 +220,13 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def preprocess_data(self, cfg, graphs_dir, generate_gifs):
         """
-        Process the dataset trajectory by trajectory to avoid accumulating the full
-        rich EDA representation in memory.
+        Run EDA preprocessing for the current split: either collect raw feature lists, or cache per-trajectory tensors,
+        fit or load normalization stats, then fill the EdaObj with optionally normalized values.
+
+        1. Optionally load trajectory metadata from trajectory_params.json.
+        2. If normalizer is disabled, stream each file through a trajectory feature bundle into EdaObj (raw mode).
+        3. Otherwise write one disk cache file per trajectory, compute stats on train (or load saved stats), then
+           re-read caches and append normalized tensors to EdaObj.
 
         Args:
             cfg: object
@@ -234,10 +254,9 @@ class EdaPreprocessor(TrainPreprocessor):
             shutil.rmtree(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         try:
-            cache_files = self._cache_trajectories(cfg, filenames, cache_dir)
-            split_idx_edge = 9
+            cache_files, split_idx_node, split_idx_edge = self._cache_trajectories(cfg, filenames, cache_dir)
             if self.eda_split == "train":
-                self._compute_stats_from_cache(cache_files, split_idx_edge)
+                self._compute_stats_from_cache(cache_files, split_idx_node, split_idx_edge)
                 self._save_eda_stats()
             else:
                 self._load_eda_stats()
@@ -247,6 +266,13 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def _collect_raw_eda(self, cfg, filenames, generate_gifs):
         """
+        Build per-timestep node, edge, and target tensors for each trajectory and append them to EdaObj without
+        normalization (used when normalizer_method is none).
+
+        1. Decide which trajectory indices get GIF exports.
+        2. For each raw `.pt` file, build a trajectory_feature_bundle and pass its timestep lists to EdaObj.
+        3. Optionally render a ground-truth GIF and free memory after each file.
+
         Args:
             cfg: object
                 Preprocessing config.
@@ -260,17 +286,25 @@ class EdaPreprocessor(TrainPreprocessor):
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"EDA {self.run_name}")
         for traj_idx, filename in pbar:
             keep_gif_graphs = traj_idx in gif_indices
-            payload, trajectory_graphs = self._build_trajectory_payload(cfg, filename, keep_gif_graphs, traj_idx)
-            self._collect_payload(payload, normalize=False)
+            trajectory_feature_bundle, trajectory_graphs = self._build_trajectory_feature_bundle(
+                cfg, filename, keep_gif_graphs, traj_idx)
+            self._append_trajectory_feature_bundle_to_eda(trajectory_feature_bundle, normalize=False)
             if trajectory_graphs is not None:
                 traj_metadata = self.traj_params.get(filename.name, None)
                 self._generate_ground_truth_gif(trajectory_graphs, traj_idx, traj_metadata)
-            del payload
+            del trajectory_feature_bundle
             del trajectory_graphs
             gc.collect()
 
     def _cache_trajectories(self, cfg, filenames, cache_dir):
         """
+        For each raw trajectory file, build the same per-timestep tensors as training preprocessing would use, save them
+        to a temporary `.pt` file, and return paths plus the node/edge isotropic split indices shared by all files.
+
+        1. Iterate sorted trajectory files and call _build_trajectory_feature_bundle without GIF side data.
+        2. torch.save each trajectory_feature_bundle under cache_dir with a stable index-based name.
+        3. Verify split_idx_node and split_idx_edge match every trajectory; return paths and those indices.
+
         Args:
             cfg: object
                 Preprocessing config.
@@ -278,27 +312,45 @@ class EdaPreprocessor(TrainPreprocessor):
                 Trajectory files to process.
             cache_dir: Path
                 Directory used to store compact raw trajectory bundles.
-            return: list[Path]
-                Cache file paths.
+            return: (list[Path], int, int)
+                Cache file paths and split indices for node/edge xyz-triplet regions.
         """
         cache_files = []
+        split_idx_node = None
+        split_idx_edge = None
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc=f"Caching {self.run_name}")
         for traj_idx, filename in pbar:
-            payload, _ = self._build_trajectory_payload(cfg, filename, False, traj_idx)
+            trajectory_feature_bundle, _ = self._build_trajectory_feature_bundle(cfg, filename, False, traj_idx)
             cache_path = cache_dir / f"traj_{traj_idx:05d}.pt"
-            torch.save(payload, cache_path)
+            torch.save(trajectory_feature_bundle, cache_path)
             cache_files.append(cache_path)
-            del payload
+            if split_idx_node is None:
+                split_idx_node = trajectory_feature_bundle["split_idx_node"]
+            elif split_idx_node != trajectory_feature_bundle["split_idx_node"]:
+                raise ValueError("Inconsistent node split_idx across cached trajectories.")
+            if split_idx_edge is None:
+                split_idx_edge = trajectory_feature_bundle["split_idx_edge"]
+            elif split_idx_edge != trajectory_feature_bundle["split_idx_edge"]:
+                raise ValueError("Inconsistent edge split_idx across cached trajectories.")
+            del trajectory_feature_bundle
             gc.collect()
-        return cache_files
+        if split_idx_node is None or split_idx_edge is None:
+            raise ValueError("No trajectory cache produced, cannot infer split_idx.")
+        return cache_files, split_idx_node, split_idx_edge
 
-    def _load_family_from_cache(self, cache_files, payload_key, start_column):
+    def _load_family_from_cache(self, cache_files, bundle_field_name, start_column):
         """
+        Load one tensor family (all timesteps, all trajectories) from the on-disk trajectory caches into a flat list.
+
+        1. For each cache file, load the saved trajectory_feature_bundle dict.
+        2. Take the list stored under bundle_field_name and extend the output with each timestep tensor.
+        3. Optionally drop leading columns (e.g. skip boundary-condition column for node valued stats).
+
         Args:
             cache_files: list[Path]
                 Cache files created by _cache_trajectories().
-            payload_key: str
-                One of node_inputs, edge_features, or targets.
+            bundle_field_name: str
+                Key in the saved dict: node_inputs, edge_features, or targets.
             start_column: int or None
                 Optional column offset used to skip the BC feature in node inputs.
             return: list[torch.Tensor]
@@ -306,20 +358,29 @@ class EdaPreprocessor(TrainPreprocessor):
         """
         tensor_list = []
         for cache_path in cache_files:
-            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
-            for tensor in payload[payload_key]:
+            cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+            for tensor in cached_trajectory_bundle[bundle_field_name]:
                 if start_column is None:
                     tensor_list.append(tensor)
                 else:
                     tensor_list.append(tensor[:, start_column:])
-            del payload
+            del cached_trajectory_bundle
         return tensor_list
 
-    def _compute_stats_from_cache(self, cache_files, split_idx_edge):
+    def _compute_stats_from_cache(self, cache_files, split_idx_node, split_idx_edge):
         """
+        Fit self.node_stats, self.edge_stats, and self.target_stats from all cached timestep tensors using the current
+        normalizer (including isotropic pooling boundaries).
+
+        1. Load node_inputs from disk, strip the BC column, compute node_stats with split_idx_node.
+        2. Load edge_features and compute edge_stats with split_idx_edge.
+        3. Load targets and compute target_stats with TARGET_ACCELERATION_SPLIT_IDX for the acceleration xyz block.
+
         Args:
             cache_files: list[Path]
                 Cache files created by _cache_trajectories().
+            split_idx_node: int
+                Number of node valued feature columns grouped as xyz triplets.
             split_idx_edge: int
                 Number of edge feature columns grouped as xyz triplets.
             return: None
@@ -327,7 +388,7 @@ class EdaPreprocessor(TrainPreprocessor):
         """
         print("\nComputing EDA stats from cached trajectories...\n")
         node_tensors = self._load_family_from_cache(cache_files, "node_inputs", 1)
-        self.node_stats = self.normalizer.compute_stats(node_tensors, node_tensors[0].shape[1])
+        self.node_stats = self.normalizer.compute_stats(node_tensors, split_idx_node)
         del node_tensors
         gc.collect()
 
@@ -344,6 +405,13 @@ class EdaPreprocessor(TrainPreprocessor):
 
     def _collect_normalized_eda(self, cache_files):
         """
+        Re-read every cached trajectory_feature_bundle, normalize tensors with train-loaded or train-fitted stats, and
+        append each timestep to self.eda_obj.
+
+        1. Load each cache file as a trajectory_feature_bundle dict.
+        2. For each timestep triple (node_input, edge_features, target), normalize then call EdaObj.append_timestep.
+        3. Drop the loaded bundle from memory after each file to limit RAM use.
+
         Args:
             cache_files: list[Path]
                 Cache files created by _cache_trajectories().
@@ -352,13 +420,20 @@ class EdaPreprocessor(TrainPreprocessor):
         """
         pbar = tqdm(cache_files, total=len(cache_files), desc=f"Collecting {self.run_name}")
         for cache_path in pbar:
-            payload = torch.load(cache_path, map_location="cpu", weights_only=False)
-            self._collect_payload(payload, normalize=True)
-            del payload
+            cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+            self._append_trajectory_feature_bundle_to_eda(cached_trajectory_bundle, normalize=True)
+            del cached_trajectory_bundle
             gc.collect()
 
     def _normalize_node_input(self, node_input):
         """
+        Normalize only the valued node feature columns using self.node_stats, leaving the boundary-condition column
+        unchanged.
+
+        1. Split node_input into column 0 (BC) and columns 1: (valued features).
+        2. Apply self.normalizer.normalize to the valued block with self.node_stats.
+        3. Concatenate BC and normalized valued columns back to the original width.
+
         Args:
             node_input: torch.Tensor
                 Raw node input tensor `[bc, valued_node_features]`.
@@ -368,37 +443,53 @@ class EdaPreprocessor(TrainPreprocessor):
         normalized_valued = self.normalizer.normalize(node_input[:, 1:], self.node_stats)
         return torch.concat([node_input[:, 0:1], normalized_valued], dim=1)
 
-    def _collect_payload(self, payload, normalize):
+    def _append_trajectory_feature_bundle_to_eda(self, trajectory_feature_bundle, normalize):
         """
+        Zip the per-timestep lists inside trajectory_feature_bundle and feed each step into EdaObj, optionally after
+        normalizing with self.node_stats, self.edge_stats, and self.target_stats.
+
+        1. Iterate aligned entries from node_inputs, edge_features, and targets.
+        2. If normalize is true, normalize the valued node block, edges, and targets.
+        3. Call append_timestep on self.eda_obj for each timestep.
+
         Args:
-            payload: dict
-                Compact trajectory bundle containing node_inputs, edge_features, and targets.
+            trajectory_feature_bundle: dict
+                Per-trajectory structure with keys node_inputs, edge_features, targets, split_idx_node, split_idx_edge
+                (split indices are ignored here; only the three tensor lists are consumed).
             normalize: bool
                 Whether to apply the current normalizer before appending to EdaObj.
             return: None
-                Appends all timestep features in the payload to self.eda_obj.
+                Appends all timestep features to self.eda_obj.
         """
-        for node_input, edge_features, target in zip(payload["node_inputs"], payload["edge_features"],
-                                                     payload["targets"]):
+        for node_input, edge_features, target in zip(trajectory_feature_bundle["node_inputs"],
+                                                     trajectory_feature_bundle["edge_features"],
+                                                     trajectory_feature_bundle["targets"]):
             if normalize:
                 node_input = self._normalize_node_input(node_input)
                 edge_features = self.normalizer.normalize(edge_features, self.edge_stats)
                 target = self.normalizer.normalize(target, self.target_stats)
             self.eda_obj.append_timestep(node_input, edge_features, target)
 
-    def _build_trajectory_payload(self, cfg, filename, keep_gif_graphs, traj_idx):
+    def _build_trajectory_feature_bundle(self, cfg, filename, keep_gif_graphs, traj_idx):
         """
+        Load one raw trajectory `.pt` file, compute kinematics and the same node/edge/target tensors as the training
+        preprocessor uses for each usable timestep, and return them as lists plus feature-layout split indices.
+
+        1. Batch all graphs in the file and differentiate positions to get velocity and acceleration.
+        2. For each timestep within the effective limit, build node_input, edge_attr, and target tensors on CPU clones.
+        3. Optionally collect minimal PyG Data objects for GIF rendering; return the dict and that list (or None).
+
         Args:
             cfg: object
                 Preprocessing config.
             filename: Path
                 Raw trajectory file.
             keep_gif_graphs: bool
-                True iff the returned payload should include minimal GIF graph objects.
+                True iff the returned optional list should include minimal GIF graph objects.
             traj_idx: int
                 Index of the trajectory in processing order.
             return: (dict, list or None)
-                Compact payload and optional GIF graph list for the current trajectory.
+                trajectory_feature_bundle dict and optional GIF graph list for the current trajectory.
         """
         dataloader = torch.load(filename, weights_only=False)
         graphs_list_batch = []
@@ -413,7 +504,8 @@ class EdaPreprocessor(TrainPreprocessor):
         all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)
         boundary_condition = graphs_list_batch[0].x_bc
 
-        payload = {"node_inputs": [], "edge_features": [], "targets": []}
+        trajectory_feature_bundle = {"node_inputs": [], "edge_features": [], "targets": [],
+                                     "split_idx_node": None, "split_idx_edge": None}
         trajectory_graphs = [] if keep_gif_graphs else None
 
         effective_limit = self.selected_limit if traj_idx in self.selected_indices else cfg.limit_timesteps
@@ -427,10 +519,14 @@ class EdaPreprocessor(TrainPreprocessor):
             a_t = a[t]
             valued_node_attr, split_idx_node = build_node_features(x_t, v_t, rest_pos_x, node_force,
                                                                    cfg.enable_node_norms)
+            if trajectory_feature_bundle["split_idx_node"] is None:
+                trajectory_feature_bundle["split_idx_node"] = split_idx_node
             node_input = torch.concat([boundary_condition, valued_node_attr], dim=1)
             edge_attr, split_idx_edge = build_edge_features(x_t, rest_pos_x, graph.edge_index, v_t, node_force,
                                             cfg.enable_edge_velocity,
                                             cfg.enable_force_edge, cfg.enable_stretch_edge, cfg.enable_rotation_angle)
+            if trajectory_feature_bundle["split_idx_edge"] is None:
+                trajectory_feature_bundle["split_idx_edge"] = split_idx_edge
             von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
             if cfg.mises_log:
                 von_mises = von_mises_log
@@ -438,9 +534,9 @@ class EdaPreprocessor(TrainPreprocessor):
                 von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
             target = torch.concat([a_t, von_mises], dim=1)
 
-            payload["node_inputs"].append(_to_cpu_clone(node_input))
-            payload["edge_features"].append(_to_cpu_clone(edge_attr))
-            payload["targets"].append(_to_cpu_clone(target))
+            trajectory_feature_bundle["node_inputs"].append(_to_cpu_clone(node_input))
+            trajectory_feature_bundle["edge_features"].append(_to_cpu_clone(edge_attr))
+            trajectory_feature_bundle["targets"].append(_to_cpu_clone(target))
 
             if keep_gif_graphs:
                 trajectory_graphs.append(Data(x_pos_t=_to_cpu_clone(x_t),
@@ -450,10 +546,16 @@ class EdaPreprocessor(TrainPreprocessor):
         del dataloader; del graphs_list_batch; del whole_trajectory_batch; del x; del v; del a; del rest_pos_x
         del all_node_force; del boundary_condition
 
-        return payload, trajectory_graphs
+        return trajectory_feature_bundle, trajectory_graphs
 
     def _generate_ground_truth_gif(self, trajectory_graphs, traj_idx, traj_metadata):
         """
+        Attach von Mises stress to each minimal graph and write one animated GIF under the EDA artifact folder.
+
+        1. For each graph in the list, set graph.von_mises from the stress tensor.
+        2. Call make_ground_truth_gif with fixed scene dimensions and trajectory metadata in the filename context.
+        3. Create the output directory if needed.
+
         Args:
             trajectory_graphs: list[Data]
                 Raw trajectory graphs for one trajectory.

@@ -51,12 +51,12 @@ def build_edge_feature_names(cfg):
     names.append("edge_relative_pos_norm")
     names.append("edge_rest_relative_pos_norm")
     names.append("edge_displacement_norm")
+    if cfg.enable_force_edge:
+        names.append("edge_force_norm")
     if cfg.enable_edge_velocity:
         names.append("edge_velocity_norm")
     if cfg.enable_stretch_edge:
         names.append("edge_stretch_norm")
-    if cfg.enable_force_edge:
-        names.append("edge_force_norm")
     if cfg.enable_rotation_angle:
         names.append("edge_direction_cosine")
     return names
