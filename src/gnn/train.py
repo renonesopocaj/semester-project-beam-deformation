@@ -151,8 +151,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                  preprocess_cfg=preprocess_cfg, training_id=training_id, model_root=model_root,
                                  len_train_dataloader=len(train_dataloader),
                                  enable_wandb_watch=(not train_cfg.torch_compile) and train_cfg.enable_wandb_watch,
-                                 train_cfg=train_cfg, theta_max=theta_max,
-                                 wandb_train_cfg_yaml=wandb_train_cfg_yaml)
+                                 train_cfg=train_cfg, theta_max=theta_max, wandb_train_cfg_yaml=wandb_train_cfg_yaml)
     lightning_module.set_rollout_context(validation_dataset=validation_dataset, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
