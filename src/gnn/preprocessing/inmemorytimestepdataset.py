@@ -70,7 +70,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     base_seed: int
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 preprocess_cfg):
+                 preprocess_cfg, noise_also_prev, noise_prev_scale):
         """
         Args:
             sample_dir: str
@@ -92,7 +92,10 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             base_seed: int
                 Base seed used to build deterministic per-sample noise.
             preprocess_cfg: PreprocessYaml
-
+            noise_also_prev: bool
+                Whether to also inject noise on the previous-step position x(t-1).
+            noise_prev_scale: float
+                Scale of noise on x(t-1), typically much smaller than noise_scale.
         """
         super().__init__(sample_dir, device)
         self.noise_scale = noise_scale
@@ -104,9 +107,9 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.edge_stats_std = edge_stats.std.clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
-        # Features enablers
         self.preprocess_cfg = preprocess_cfg
-        self.preprocess_cfg = preprocess_cfg.noise_prev_scale_train
+        self.noise_also_prev = noise_also_prev
+        self.noise_prev_scale = noise_prev_scale
 
     def __getitem__(self, idx):
         """
@@ -136,32 +139,29 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # thus not affected by noise.
         x_noised = data.x_pos_t + noise_added_t
         # NOTE: eventually, noise also previous, but much less in scale
-        x_pos_tm1_prev = data.x_pos_tm1_prev
-        if self.preprocess_cfg.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
+        x_pos_tm1_prev = data.x_pos_tm1_prev.clone()
+        noise_added_prev_tm1 = None
+        if self.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
             noise_generator_tm1 = torch.Generator(device=data.x_pos_t.device)
             noise_generator_tm1.manual_seed(self.base_seed + int(seed_tm1))
-            noise_added_prev_tm1 = self.noise_prev_scale_train * torch.randn(data.x_prev_pos_tm1.shape,
-                                                                             dtype=data.x_prev_pos_tm1.dtype,
-                                                                             device=data.x_pos_t.device,
-                                                                             generator=noise_generator_t)
+            noise_added_prev_tm1 = self.noise_prev_scale * torch.randn(data.x_pos_tm1_prev.shape,
+                                                                       dtype=data.x_pos_tm1_prev.dtype,
+                                                                       device=data.x_pos_t.device,
+                                                                       generator=noise_generator_tm1)
             noise_added_prev_tm1[fixed_mask] = 0.0
-            x_pos_tm1_prev += + noise_added_prev_tm1
+            x_pos_tm1_prev += noise_added_prev_tm1
         # Propagate on velocity v[t] = x[t] + noise[t] - (x[t-1] - noise[t-1]) ---> v[t] + noise[t] - noise[t-1]
         v_noised = data.x_vel_t + noise_added_t / self.dt
-        if self.preprocess_cfg.noise_also_prev:
+        if noise_added_prev_tm1 is not None:
             v_noised = v_noised - noise_added_prev_tm1 / self.dt
         # Node features: full recomputation from raw attributes
-        # node_attr_raw = build_valued_node_features(x_noised, v_noised, data.rest_pos, data.node_force,
-        #                                            self.enable_velocity_edge)
-        # node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
-        node_attr_raw, _ = build_node_features(x_noised, v_noised, data.x_prev_pos_tm1, data.rest_pos, data.node_force,
+        node_attr_raw, _ = build_node_features(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos, data.node_force,
                                                self.preprocess_cfg)
         node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        # x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index, preprocess_cfg
-        edge_attr_raw, _ = build_edge_features(x_noised, v_noised, data.x_prev_pos_tm1, data.rest_pos, data.node_force,
+        edge_attr_raw, _ = build_edge_features(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos, data.node_force,
                                                data.edge_index, self.preprocess_cfg)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 

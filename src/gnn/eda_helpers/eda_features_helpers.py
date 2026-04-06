@@ -18,23 +18,27 @@ def build_node_feature_names(cfg):
             Node valued feature names in the exact order returned by build_node_features().
     """
     names = []
-    names.extend(_xyz_names("position"))
-    names.extend(_xyz_names("rest_pos"))
     names.extend(_xyz_names("velocity"))
     names.extend(_xyz_names("displacement_pos"))
     names.extend(_xyz_names("force"))
     if cfg.enable_past_pos_displ:
-        names.extend(_xyz_names("position_past"))
+        if cfg.enable_absolute_pos:
+            names.extend(_xyz_names("position_past"))
         names.extend(_xyz_names("displacement_pos_past"))
+    if cfg.enable_absolute_pos:
+        names.extend(_xyz_names("position"))
+        names.extend(_xyz_names("rest_pos"))
     if cfg.enable_node_norms:
-        names.append("position_norm")
         names.append("displacement_norm")
         names.append("force_norm")
         names.append("velocity_norm")
-        names.append("rest_pos_norm")
+        if cfg.enable_absolute_pos:
+            names.append("position_norm")
+            names.append("rest_pos_norm")
         if cfg.enable_past_pos_displ:
-            names.extend(_xyz_names("position_past_norm"))
-            names.extend(_xyz_names("displacement_pos_past_norm"))
+            names.append("displacement_pos_past_norm")
+            if cfg.enable_absolute_pos:
+                names.append("position_past_norm")
     return names
 
 
@@ -47,19 +51,23 @@ def build_edge_feature_names(cfg):
             Edge feature names in the exact order returned by build_edge_features().
     """
     names = []
-    names.extend(_xyz_names("edge_relative_pos"))
-    names.extend(_xyz_names("edge_rest_relative_pos"))
+    # Vector features (xyz triplets), same order as build_edge_features
     names.extend(_xyz_names("edge_displacement_pos"))
     if cfg.enable_edge_velocity:
         names.extend(_xyz_names("edge_velocity_pos"))
     if cfg.enable_force_edge:
         names.extend(_xyz_names("edge_force_pos"))
+    if cfg.enable_absolute_pos:
+        names.extend(_xyz_names("edge_relative_pos"))
+        names.extend(_xyz_names("edge_rest_relative_pos"))
+    if cfg.enable_past_pos_displ:
+        names.extend(_xyz_names("edge_displacement_pos_past"))
+        if cfg.enable_absolute_pos:
+            names.extend(_xyz_names("edge_relative_pos_past"))
+    # Scalar features (norms)
     names.append("edge_relative_pos_norm")
     names.append("edge_rest_relative_pos_norm")
     names.append("edge_displacement_norm")
-    if cfg.enable_past_pos_displ:
-        names.append("edge_displacement_pos_past")
-        names.append("edge_displacement_pos_past_norm")
     if cfg.enable_force_edge:
         names.append("edge_force_norm")
     if cfg.enable_edge_velocity:

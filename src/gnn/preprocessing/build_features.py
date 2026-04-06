@@ -47,7 +47,6 @@ def build_node_features(x, v, x_tm1_prev, rest_pos, node_force, preprocess_cfg):
         feat_list.append(u_tm1)
         split_idx_node += 3
     # absolute position x, rest absolute position rest_pos (max +6 --> 21)
-    feat_list.append(x)
     if enable_absolute_pos:
         # absolute position x[t]
         feat_list.append(x)
@@ -94,7 +93,7 @@ def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index
     """
     # First
     (enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_rotation_angle, enable_absolute_pos,
-     enable_past_pos_displ_edge) = (preprocess_cfg.enable_velocity_edge, preprocess_cfg.enable_force_edge,
+     enable_past_pos_displ_edge) = (preprocess_cfg.enable_edge_velocity, preprocess_cfg.enable_force_edge,
                                     preprocess_cfg.enable_stretch_edge, preprocess_cfg.enable_rotation_angle,
                                     preprocess_cfg.enable_absolute_pos, preprocess_cfg.enable_past_pos_displ)
     # Start preprocessing
@@ -103,6 +102,7 @@ def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index
     xij_t = x_t[dst] - x_t[src] # (E, 3) relative position
     x_tm1_past_ij = x_tm1_prev[dst] - x_tm1_prev[src]
     u_tm1_past = x_tm1_prev - rest_pos
+    rest_pos_ij = rest_pos[dst] - rest_pos[src]
     # current displacement u_ij[t] (3)
     u_t = x_t - rest_pos
     uij_t = u_t[dst] - u_t[src] # (E, 3) rest relative position
@@ -123,7 +123,6 @@ def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index
         feat_list.append(xij_t)
         split_idx_edge += 3
         # rest pos x_ij[0] (+3 --> max 15)
-        rest_pos_ij = rest_pos[dst] - rest_pos[src]
         feat_list.append(rest_pos_ij)
         split_idx_edge += 3
     if enable_past_pos_displ_edge:

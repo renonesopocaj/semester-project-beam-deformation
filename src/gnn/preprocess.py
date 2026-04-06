@@ -406,7 +406,7 @@ class ValPreprocessor(Preprocessor):
         super().__init__(cfg, selected_indices, selected_limit)
         self.save_dir_train = save_dir_train
 
-    def _compute_stats_train(self, cfg, split_idx_edge):
+    def _compute_stats_train(self, cfg, split_idx_edge, split_idx_node):
         pass
 
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):

@@ -145,16 +145,16 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, res
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted.
     ground_truth_force_tp1 = ground_truth_graph.node_force_next
-    valued_node_features_tp1 = build_node_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
-                                                   ground_truth_force_tp1, preprocess_cfg)
+    valued_node_features_tp1, _ = build_node_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
+                                                      ground_truth_force_tp1, preprocess_cfg)
     x_node_features = torch.concat(
         [categorical_node_features, normalizer.normalize(valued_node_features_tp1, node_stats)], dim=1)
     # Keep force node features unchanged: deleted
     # _x[-1] = ground_truth_graph.x[-1]
 
     # --------------- Edges ----------------------
-    edge_features_tp1 = build_edge_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
-                                            ground_truth_force_tp1, ground_truth_graph.edge_index, preprocess_cfg)
+    edge_features_tp1, _ = build_edge_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
+                                               ground_truth_force_tp1, ground_truth_graph.edge_index, preprocess_cfg)
     edge_attr_normalized_tp1 = normalizer.normalize(edge_features_tp1, edge_stats)
 
     # -------------- Final: create next-time–step input graph -----------------

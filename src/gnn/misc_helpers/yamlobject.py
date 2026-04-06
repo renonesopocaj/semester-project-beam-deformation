@@ -105,6 +105,7 @@ class PreprocessYaml:
             self.save_dir_val = flattened_cfg["save_dir_val"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
+        self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
         self.enable_stretch_edge = flattened_cfg["enable_stretch_edge"]
         self.enable_past_pos_displ = flattened_cfg["enable_past_pos_displ"]
@@ -171,7 +172,7 @@ class TrainYaml:
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         # Noise
-        self.noise_scale = flattened_cfg["noise_scale"]
+        self.noise_scale = flattened_cfg["noise_scale_train"]
         self.noise_gamma = flattened_cfg["noise_gamma"]
         self.noise_seed = flattened_cfg["noise_seed"]
         self.noise_also_prev = flattened_cfg["noise_also_prev"]
