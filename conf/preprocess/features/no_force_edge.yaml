@@ -1,0 +1,13 @@
+# Processing target von mises
+mises_log: true
+# Both edge and node
+enable_absolute_pos: true
+enable_past_pos_displ: true
+# Node
+enable_node_norms: true
+# Edge
+enable_edge_velocity: true
+enable_force_edge: false
+enable_stretch_edge: true
+# Rotation (edge)
+enable_rotation_angle: true
