@@ -353,8 +353,8 @@ class EdaPreprocessor:
                 Trajectory files to process.
             cache_dir: Path
                 Directory used to store compact raw trajectory bundles.
-            return: (list[Path], int, int)
-                Cache file paths and split indices for node/edge xyz-triplet regions.
+        return: (list[Path], int, int)
+            Cache file paths and split indices for node/edge xyz-triplet regions.
         """
         cache_files = []
         split_idx_node = None
@@ -413,8 +413,6 @@ class EdaPreprocessor:
         Args:
             cache_files: list[Path]
                 Cache files created by _cache_trajectories().
-            return: None
-                Fills self.eda_obj from normalized cached trajectories.
         """
         pbar = tqdm(cache_files, total=len(cache_files), desc=f"Collecting {self.run_name}")
         for cache_path in pbar:
@@ -456,8 +454,6 @@ class EdaPreprocessor:
                 (split indices are ignored here; only the three tensor lists are consumed).
             normalize: bool
                 Whether to apply the current normalizer before appending to EdaObj.
-            return: None
-                Appends all timestep features to self.eda_obj.
         """
         for node_input, edge_features, target in zip(trajectory_feature_bundle["node_inputs"],
                                                      trajectory_feature_bundle["edge_features"],
@@ -486,8 +482,8 @@ class EdaPreprocessor:
                 True iff the returned optional list should include minimal GIF graph objects.
             traj_idx: int
                 Index of the trajectory in processing order.
-            return: (dict, list or None)
-                trajectory_feature_bundle dict and optional GIF graph list for the current trajectory.
+        return: (dict, list or None)
+            trajectory_feature_bundle dict and optional GIF graph list for the current trajectory.
         """
         dataloader = torch.load(filename, weights_only=False)
         graphs_list_batch = []
@@ -563,8 +559,6 @@ class EdaPreprocessor:
                 Current trajectory index.
             traj_metadata: dict or None
                 Trajectory parameters from trajectory_params.json, or None if unavailable.
-            return: None
-                Writes one GIF to disk.
         """
         gif_dir = self.artifact_dir / "ground_truth_gifs"
         os.makedirs(gif_dir, exist_ok=True)

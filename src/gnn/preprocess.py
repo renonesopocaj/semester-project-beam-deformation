@@ -60,6 +60,22 @@ def load_selected_trajectories(extra_info_dir):
         return json.load(f)
 
 
+def create_dir_name(cfg_obj):
+    isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else ''
+    miseslog_str = '_log' if cfg_obj.mises_log else ''
+    normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
+    enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
+    enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_pos_displ else '_noxtm1'
+    enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
+    enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
+    enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
+    enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
+    enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
+    processed_dir_name = (f"{normalizer_str}{isotropic_str}{miseslog_str}{enable_absolute_pos_str}"
+                          f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
+                          f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+    return processed_dir_name
+
 def _selected_indices_for_split(selected_trajs, split):
     """
     Return the set of trajectory indices that have longer rollouts for the given split.
@@ -184,7 +200,6 @@ class Preprocessor(ABC):
             # pbar.set_description(f"{filename.name}")
             # print(f"Processing file: {filename.name} ({idx_file + 1}/{len(filenames)})")
             dataloader = torch.load(filename, weights_only=False)
-
             # Create list graphs_list_batch with all graphs in the file
             graphs_list_batch = []
             for data in dataloader:
@@ -527,15 +542,13 @@ def main(cfg):
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     # OmegaConf.save(cfg, save_dir / "config.yaml")
-    # =============== NAME ================
-    isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else '_anisotr'
-    miseslog_str = '_log' if cfg_obj.mises_log else '_nolog'
-    normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
-    processed_dir_name = f"{normalizer_str}{isotropic_str}{miseslog_str}"
+    # ===================================================================
+    processed_dir_name = create_dir_name(cfg_obj)
+
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)
-    # ===============================
+    # ===================================================================
 
     # =============== SPLITS ================
     # Where to save results
