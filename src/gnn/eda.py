@@ -7,7 +7,7 @@ This script does the following:
 2. Plot the distributions of the features.
 3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
 - For train the normalized distributions are computed via train stats, for val and test also with train stats.
-- To avoid code repetition, the preprocessing reuses the samefeature builders used in preprocess.py.
+- To avoid code repetition, the preprocessing reuses the same feature builders used in preprocess.py.
 - All the possible normalization are done.
 """
 
@@ -776,7 +776,7 @@ class EdaPreprocessor(TrainPreprocessor):
 
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_single")
 def main(cfg):
     """
     Args:
