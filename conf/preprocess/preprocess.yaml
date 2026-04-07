@@ -8,7 +8,7 @@ defaults:
 device: cpu
 dt: 0.08
 seed: 42
-time_discretization_method: "second_order_central" # newmark vs second_order_central
+time_discretization_method: "second_order_central" # "newmark" | "second_order_central"
 
 hydra:
   run:

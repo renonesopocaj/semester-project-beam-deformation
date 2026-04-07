@@ -72,7 +72,8 @@ def create_dir_name(cfg_obj):
     enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
     enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
     enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
-    processed_dir_name = (f"{normalizer_str}{isotropic_str}{miseslog_str}{enable_absolute_pos_str}"
+    time_discr_str = "_centr" if cfg_obj.time_discretization_method == "second_order_central" else "_newmark"
+    processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
                           f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
                           f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
     return processed_dir_name
@@ -558,9 +559,8 @@ def main(cfg):
     save_dir = Path(cfg_obj.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     # OmegaConf.save(cfg, save_dir / "config.yaml")
-    # ===================================================================
+    # =============================================== NAME ============================
     processed_dir_name = create_dir_name(cfg_obj)
-
     processed_dataset_dir = Path(cfg_obj.save_dir) / processed_dir_name / cfg_obj.dataset_size
     print(f"\tProcessed data dir {processed_dataset_dir}")
     processed_dataset_dir.mkdir(parents=True, exist_ok=True)

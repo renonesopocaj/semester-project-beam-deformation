@@ -133,10 +133,8 @@ class NewmarkDiscretizer(TimeDiscretizer):
         """
         a_old = self._a_prev if self._a_prev is not None else torch.zeros_like(a_new)
         a_sum = a_old + a_new
-
-        x_tp1 = x_t + dt * v_t + 0.25 * dt ** 2 * a_sum
-        v_tp1 = v_t + 0.5 * dt * a_sum
-
+        x_tp1 = x_t + dt * v_t + self.BETA * dt ** 2 * a_sum
+        v_tp1 = v_t + self.GAMMA * dt * a_sum
         self._a_prev = a_new.clone()
         return x_tp1, v_tp1
 
@@ -167,20 +165,15 @@ class NewmarkDiscretizer(TimeDiscretizer):
         """
         T = x.shape[0]
         dt2 = dt ** 2
-
         v = torch.zeros_like(x) # (T, N, 3)
         a_track = torch.zeros_like(x) # (T, N, 3), a_track[0] = 0 (rest)
-
         for t in range(T - 1):
             # Newmark inverse with beta=0.25: (1-2*beta)/(2*beta) = 1
             a_new = 4.0 * (x[t + 1] - x[t] - dt * v[t]) / dt2 - a_track[t]
-
             # Newmark velocity with gamma=0.5: average of a_old and a_new
-            v_new = v[t] + 0.5 * dt * (a_track[t] + a_new)
-
+            v_new = v[t] + self.GAMMA * dt * (a_track[t] + a_new)
             a_track[t + 1] = a_new
             v[t + 1] = v_new
-
         # a_track[t+1] is the acceleration computed at step t→t+1.
         # Return a_track[1:] (T-1 entries) so that a[t] is the target for timestep t.
         return v, a_track[1:]
