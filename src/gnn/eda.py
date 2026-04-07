@@ -20,7 +20,8 @@ import shutil
 from pathlib import Path
 
 import hydra
-from src.gnn.eda_helpers.eda_features_helpers import EdaObj, build_node_feature_names, build_edge_feature_names
+from src.gnn.eda_helpers.eda_features_helpers import (
+    EdaObj, build_edge_feature_names, build_node_feature_names, verify_eda_feature_names_match_builders)
 from src.gnn.eda_helpers.eda_plot import plot_all_distributions
 import torch
 from torch_geometric.data import Batch, Data
@@ -214,6 +215,7 @@ class EdaPreprocessor:
         self.selected_limit = int(selected_limit)
         self.artifact_dir = Path(artifact_dir)
         self.run_name = run_name
+        verify_eda_feature_names_match_builders(cfg, torch.device(cfg.device))
         self.eda_obj = EdaObj(build_node_feature_names(cfg), build_edge_feature_names(cfg))
         self.gif_generation_mode = gif_generation_mode
         self.gif_sample_percentage = gif_sample_percentage

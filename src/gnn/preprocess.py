@@ -27,7 +27,8 @@ import hydra
 from omegaconf import OmegaConf, open_dict
 from src.gnn.mesh_numerical_helpers.time_discretizer import TimeDiscretizer, create_time_discretizer
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
-from src.gnn.preprocessing.build_features import (compute_von_mises_3d, build_edge_features, build_node_features)
+from src.gnn.preprocessing.build_features import (
+    compute_von_mises_3d, build_edge_features, build_node_features, probe_feature_layout)
 from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
@@ -147,6 +148,8 @@ class Preprocessor(ABC):
     time_discretizer: TimeDiscretizer
     selected_indices: set
     selected_limit: int
+    split_idx_node: int | None
+    split_idx_edge: int | None
 
     def __init__(self, cfg, selected_indices, selected_limit):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
@@ -156,6 +159,8 @@ class Preprocessor(ABC):
         self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
         self.selected_indices = set(selected_indices)
         self.selected_limit = int(selected_limit)
+        self.split_idx_node = None
+        self.split_idx_edge = None
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
@@ -272,6 +277,9 @@ class Preprocessor(ABC):
                                        surface_left_triangles, surface_right_triangles, _x_pos_tm1_prev)
                 _x_pos_tm1_prev = _x_t.clone()
 
+        self.split_idx_node = split_idx_node
+        self.split_idx_edge = split_idx_edge
+
         # --- Open: All these do nothing if split NOT train ---
         self._compute_stats_train(cfg, split_idx_edge, split_idx_node)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
@@ -330,6 +338,13 @@ class TrainPreprocessor(Preprocessor):
         with open(stats_dir / "theta_max.json", "w") as f:
             json.dump({"theta_max": float(self.theta_max)}, f, indent=4)
         print(f"Theta max saved to {stats_dir / 'theta_max.json'}")
+        layout_payload = {
+            "split_idx_node": int(self.split_idx_node) if self.split_idx_node is not None else None,
+            "split_idx_edge": int(self.split_idx_edge) if self.split_idx_edge is not None else None,
+        }
+        with open(stats_dir / "feature_layout.json", "w") as f:
+            json.dump(layout_payload, f, indent=4)
+        print(f"Feature layout saved to {stats_dir / 'feature_layout.json'}")
 
     def _compute_stats_train(self, cfg, split_idx_edge, split_idx_node):
         """
@@ -562,9 +577,12 @@ def main(cfg):
     graphs_dir_val = Path(cfg_obj.raw_data_dir) / "val" / "graphs"
     # ===============================
 
+    _layout_device = torch.device(cfg_obj.device)
+    _node_ch, _edge_ch, _, _ = probe_feature_layout(cfg_obj, _layout_device)
+    print(f"\tDerived from build_features: node_channels={_node_ch}, edge_channels={_edge_ch}")
     with open_dict(cfg):
-        cfg.node_channels = 16
-        cfg.edge_channels = 12
+        cfg.node_channels = _node_ch
+        cfg.edge_channels = _edge_ch
         cfg.train_dir = save_dir_train.as_posix()
         cfg.test_dir = save_dir_test.as_posix()
         cfg.val_dir = save_dir_val.as_posix()

@@ -169,6 +169,46 @@ def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index
     edge_feat_tensor = torch.concat(feat_list, dim=1)
     return edge_feat_tensor, split_idx_edge
 
+
+def probe_feature_layout(preprocess_cfg, device):
+    """
+    Run build_node_features / build_edge_features on minimal tensors to infer channel counts and split indices.
+
+    Args:
+        preprocess_cfg: object
+            Preprocess configuration (e.g. PreprocessYaml) with the same feature toggle flags as training.
+        device: torch.device
+            Device for probe tensors.
+
+    return: tuple
+        (node_channels, edge_channels, split_idx_node, split_idx_edge)
+            node_channels is 1 (boundary flag) plus the width of valued node features from build_node_features.
+            edge_channels is the width of build_edge_features output.
+            split_idx_node and split_idx_edge are the isotropic / anisotropic split indices used by the normalizer.
+
+    Resulting tensor shapes from the builders (here n=2 nodes, E=1 edge):
+        node_feat: (n, F_node) with F_node = valued node feature width; only shape[1] is used.
+        edge_feat: (E, F_edge) with F_edge = edge feature width; only shape[1] is used.
+        F_node and F_edge depend on preprocess_cfg toggles, not on n or E, as long as the graph is valid.
+    """
+    # At least two nodes so we can form one edge (0 -> 1); edge features index src/dst and need distinct endpoints.
+    n = 2
+    # Per-node kinematics / forces: (num_nodes, 3) for (x, y, z).
+    x = torch.zeros(n, 3, device=device, dtype=torch.float32)
+    v = torch.zeros(n, 3, device=device, dtype=torch.float32)
+    x_tm1_prev = torch.zeros(n, 3, device=device, dtype=torch.float32)
+    rest_pos = torch.zeros(n, 3, device=device, dtype=torch.float32)
+    node_force = torch.zeros(n, 3, device=device, dtype=torch.float32)
+    # Single undirected edge in COO form: shape (2, num_edges) = (2, 1).
+    edge_index = torch.tensor([[0], [1]], dtype=torch.long, device=device)
+    node_feat, split_idx_node = build_node_features(x, v, x_tm1_prev, rest_pos, node_force, preprocess_cfg)
+    edge_feat, split_idx_edge = build_edge_features(x, v, x_tm1_prev, rest_pos, node_force, edge_index,
+                                                    preprocess_cfg)
+    node_channels = 1 + int(node_feat.shape[1])
+    edge_channels = int(edge_feat.shape[1])
+    return node_channels, edge_channels, split_idx_node, split_idx_edge
+
+
 def compute_von_mises_3d(stress_9):
     """
     Compute von Mises stress from 9-component stress tensor.

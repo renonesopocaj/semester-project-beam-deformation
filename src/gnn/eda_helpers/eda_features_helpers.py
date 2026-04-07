@@ -1,3 +1,11 @@
+"""
+eda_features_helpers.py
+Feature names for EDA plots must stay aligned with build_node_features / build_edge_features in
+src/gnn/preprocessing/build_features.py. Use verify_eda_feature_names_match_builders() (runs
+probe_feature_layout) to fail fast on drift.
+"""
+
+
 def _xyz_names(prefix):
     """
     Args:
@@ -77,6 +85,38 @@ def build_edge_feature_names(cfg):
     if cfg.enable_rotation_angle:
         names.append("edge_direction_cosine")
     return names
+
+
+def verify_eda_feature_names_match_builders(preprocess_cfg, device):
+    """
+    Ensure name list lengths match tensor widths from build_node_features / build_edge_features.
+
+    Args:
+        preprocess_cfg: object
+            Config with feature toggles (e.g. PreprocessYaml).
+        device: torch.device
+            Device for probe tensors.
+
+    return: None
+        Raises ValueError if EDA name lists disagree with probe_feature_layout.
+    """
+    from src.gnn.preprocessing.build_features import probe_feature_layout
+
+    node_ch, edge_ch, _, _ = probe_feature_layout(preprocess_cfg, device)
+    valued_node_dim = node_ch - 1
+    n_node_names = len(build_node_feature_names(preprocess_cfg))
+    n_edge_names = len(build_edge_feature_names(preprocess_cfg))
+    if n_node_names != valued_node_dim:
+        raise ValueError(
+            "EDA node feature name count (%s) != valued node width from build_node_features (%s). "
+            "Sync build_node_feature_names with build_features.build_node_features."
+            % (n_node_names, valued_node_dim))
+    if n_edge_names != edge_ch:
+        raise ValueError(
+            "EDA edge feature name count (%s) != width from build_edge_features (%s). "
+            "Sync build_edge_feature_names with build_features.build_edge_features."
+            % (n_edge_names, edge_ch))
+
 
 class EdaObj:
     feature_names: list
