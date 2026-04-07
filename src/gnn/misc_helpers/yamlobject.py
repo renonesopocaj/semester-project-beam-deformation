@@ -166,10 +166,8 @@ class TrainYaml:
         self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
         self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
         self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
+        # Notes various
         self.pin_memory = flattened_cfg["pin_memory"]
-        self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
-        self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
-        self.enable_node_norms = flattened_cfg["enable_node_norms"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         # Noise
         self.noise_scale = flattened_cfg["noise_scale_train"]
