@@ -19,7 +19,7 @@ from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.preprocessing.stats import StatsModule
 from torch_geometric.loader import DataLoader
 from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
-from src.gnn.training.losses import loss_factory, angle_residual
+from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
@@ -43,6 +43,9 @@ class LitModule(L.LightningModule):
     normalizer_method: str
     isotropic_normalizer: bool
     used_dataset_normalizer: NormalizerFactory
+    # Exp mises
+    exp_mises: bool
+    stress_weight: float
     # Else
     log_test_media: bool
     node_stats: Any # Stats?
@@ -88,6 +91,7 @@ class LitModule(L.LightningModule):
         self.scheduler = scheduler
         self.loss_fn = loss_factory(loss_type)
         self.exp_mises = train_cfg.exp_mises
+        self.stress_weight = train_cfg.stress_weight
         self.residual_list = set(train_cfg.residual_list)
         self.theta_max = theta_max
         self.curvature_loss_weight = train_cfg.curvature_loss_weight
@@ -259,7 +263,10 @@ class LitModule(L.LightningModule):
                 Dictionary with the minimal training metrics.
         """
         metrics = {}
-        total_loss = self.loss_fn(pred, target)
+        if self.exp_mises:
+            total_loss = compute_total_loss_exp_mises(pred, target, self.target_stats, self.loss_fn, self.stress_weight)
+        else:
+            total_loss = self.loss_fn(pred, target)
         if "curvature" in self.residual_list:
             curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
@@ -478,7 +485,8 @@ class LitModule(L.LightningModule):
                                                 device=self.device, skip_first_num=0, rollout_steps=999999,
                                                 normalizer=self.used_dataset_normalizer,
                                                 preprocess_cfg=self.preprocess_cfg,
-                                                time_discretizer=self.time_discretize)
+                                                time_discretizer=self.time_discretizer,
+                                                exp_mises=self.exp_mises)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
         final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
         return true_rollout, pred_rollout, final_roll_err_pos

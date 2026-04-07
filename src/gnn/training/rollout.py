@@ -9,7 +9,7 @@ from torch_geometric.data import Data
 from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first_num,
-               rollout_steps, normalizer, preprocess_cfg, time_discretizer):
+               rollout_steps, normalizer, preprocess_cfg, time_discretizer, exp_mises):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -41,6 +41,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             time discretizer strategy to integrate
         normalizer: Normalizer
             Normalizer
+        exp_mises: bool
+            If True, exponentiate the denormalized log-stress prediction to physical stress space.
 
     Returns:
         true_rollout: list[Data]
@@ -76,7 +78,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             pred_denorm = normalizer.denormalize(pred, target_stats)
             # FIXME: hardcoded prediction target
             a_t_pred = pred_denorm[:, 0:3]
-            von_mises_t_pred = pred_denorm[:, 3]
+            von_mises_t_pred = torch.exp(pred_denorm[:, 3]) if exp_mises else pred_denorm[:, 3]
             # Get ground truth (graph_ground_truth) targets
             von_mises_true = graph_ground_truth.y_von_mises
             x_true = graph_ground_truth.x_next

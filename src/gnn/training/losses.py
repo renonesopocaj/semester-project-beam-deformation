@@ -67,6 +67,62 @@ def angle_residual(pred, batch, target_stats, dt, theta_max):
     return torch.mean(torch.relu(triangle_angles - theta_max))
 
 
+def compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn):
+    """
+    Denormalizes log-stress predictions and targets, exponentiates them back to physical
+    stress space, and computes the loss there.
+
+    Args:
+        pred: torch.Tensor
+            Model output of shape (num_nodes, 4). Last channel is normalized log-stress.
+        target: torch.Tensor
+            Normalized target of shape (num_nodes, 4). Last channel is normalized log-stress.
+        target_stats: object
+            Stats container with mean and std tensors of shape (4,) or compatible.
+        loss_fn: callable
+            Regression loss such as mse, mae, or huber.
+        return: torch.Tensor
+            Stress loss in physical stress space.
+    """
+    pred_log_norm = pred[:, 3:4]
+    target_log_norm = target[:, 3:4]
+
+    stress_mean = target_stats.mean[3:4]
+    stress_std = target_stats.std[3:4]
+
+    pred_log = pred_log_norm * stress_std + stress_mean
+    target_log = target_log_norm * stress_std + stress_mean
+
+    pred_stress = torch.exp(pred_log)
+    target_stress = torch.exp(target_log)
+
+    return loss_fn(pred_stress, target_stress)
+
+
+def compute_total_loss_exp_mises(pred, target, target_stats, loss_fn, stress_weight):
+    """
+    Computes total loss when exp_mises is enabled: acceleration loss in normalized space
+    plus stress loss in physical (exponentiated) space.
+
+    Args:
+        pred: torch.Tensor
+            Model output of shape (num_nodes, 4).
+        target: torch.Tensor
+            Normalized target of shape (num_nodes, 4).
+        target_stats: object
+            Stats container with mean and std tensors.
+        loss_fn: callable
+            Regression loss.
+        stress_weight: float
+            Weight applied to stress loss.
+        return: torch.Tensor
+            Combined loss.
+    """
+    acc_loss = loss_fn(pred[:, 0:3], target[:, 0:3])
+    stress_loss = compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn)
+    return acc_loss + stress_weight * stress_loss
+
+
 def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
     """
     Denormalizes predicted acceleration and reconstructs predicted next positions.
