@@ -17,7 +17,10 @@ import json
 import math
 import os
 import shutil
+import tempfile
 from pathlib import Path
+
+import numpy as np
 
 import hydra
 from src.gnn.eda_helpers.eda_features_helpers import EdaObj, build_node_feature_names, build_edge_feature_names
@@ -32,6 +35,7 @@ from src.gnn.preprocess import (TrainPreprocessor, load_selected_trajectories,
                                 _selected_indices_for_split, _selected_limit_from_json,
                                 _sort_filenames_by_traj_params)
 from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
+from src.gnn.preprocessing.normalizer import RobustAnisotropicNormalizer, RobustIsotropicNormalizer
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
 
@@ -338,13 +342,9 @@ class EdaPreprocessor(TrainPreprocessor):
             raise ValueError("No trajectory cache produced, cannot infer split_idx.")
         return cache_files, split_idx_node, split_idx_edge
 
-    def _load_family_from_cache(self, cache_files, bundle_field_name, start_column):
+    def _iter_tensors_from_cache(self, cache_files, bundle_field_name, start_column):
         """
-        Load one tensor family (all timesteps, all trajectories) from the on-disk trajectory caches into a flat list.
-
-        1. For each cache file, load the saved trajectory_feature_bundle dict.
-        2. Take the list stored under bundle_field_name and extend the output with each timestep tensor.
-        3. Optionally drop leading columns (e.g. skip boundary-condition column for node valued stats).
+        Yield tensors from disk cache one timestep at a time so compute_stats never holds all timesteps in RAM.
 
         Args:
             cache_files: list[Path]
@@ -353,28 +353,222 @@ class EdaPreprocessor(TrainPreprocessor):
                 Key in the saved dict: node_inputs, edge_features, or targets.
             start_column: int or None
                 Optional column offset used to skip the BC feature in node inputs.
-            return: list[torch.Tensor]
-                Family tensors loaded from cache.
+        return: generator
+            Yields torch.Tensor rows for each timestep.
         """
-        tensor_list = []
         for cache_path in cache_files:
             cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
-            for tensor in cached_trajectory_bundle[bundle_field_name]:
-                if start_column is None:
-                    tensor_list.append(tensor)
-                else:
-                    tensor_list.append(tensor[:, start_column:])
-            del cached_trajectory_bundle
-        return tensor_list
+            try:
+                for tensor in cached_trajectory_bundle[bundle_field_name]:
+                    if start_column is None:
+                        yield tensor
+                    else:
+                        yield tensor[:, start_column:]
+            finally:
+                del cached_trajectory_bundle
+                gc.collect()
+
+    def _robust_anisotropic_stats_from_cache(self, cache_files, bundle_field_name, start_column):
+        """
+        Match RobustAnisotropicNormalizer.compute_stats using a temp memmap instead of one huge in-memory array.
+
+        Args:
+            cache_files: list[Path]
+                Cache files created by _cache_trajectories().
+            bundle_field_name: str
+                Key in the saved dict.
+            start_column: int or None
+                Optional column offset for node inputs.
+        return: Stats
+            Median / IQR statistics per feature.
+        """
+        total_rows = 0
+        num_features = None
+        ref_device = None
+        ref_dtype = None
+        for cache_path in cache_files:
+            cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+            try:
+                for tensor in cached_trajectory_bundle[bundle_field_name]:
+                    sl = tensor if start_column is None else tensor[:, start_column:]
+                    if num_features is None:
+                        num_features = sl.shape[1]
+                        ref_device = sl.device
+                        ref_dtype = sl.dtype
+                    total_rows += sl.shape[0]
+            finally:
+                del cached_trajectory_bundle
+                gc.collect()
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".eda_robust_aniso.bin")
+        os.close(fd)
+        try:
+            mm = np.memmap(tmp_path, dtype=np.float64, mode="w+", shape=(total_rows, num_features))
+            row = 0
+            for cache_path in cache_files:
+                cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+                try:
+                    for tensor in cached_trajectory_bundle[bundle_field_name]:
+                        sl = tensor if start_column is None else tensor[:, start_column:]
+                        n = sl.shape[0]
+                        mm[row : row + n] = sl.detach().cpu().numpy().astype(np.float64, copy=False)
+                        row += n
+                finally:
+                    del cached_trajectory_bundle
+                    gc.collect()
+            mm.flush()
+
+            median_np = np.empty(num_features, dtype=np.float64)
+            q1_np = np.empty(num_features, dtype=np.float64)
+            q3_np = np.empty(num_features, dtype=np.float64)
+            for j in range(num_features):
+                col = np.asarray(mm[:, j], dtype=np.float64)
+                qs = np.quantile(col, [0.25, 0.5, 0.75])
+                q1_np[j] = qs[0]
+                median_np[j] = qs[1]
+                q3_np[j] = qs[2]
+            iqr_np = q3_np - q1_np
+            mean = torch.tensor(median_np, device=ref_device, dtype=ref_dtype)
+            std = torch.tensor(iqr_np, device=ref_device, dtype=ref_dtype)
+            return Stats(mean=mean, std=std)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _robust_isotropic_stats_from_cache(self, cache_files, bundle_field_name, start_column, split_idx):
+        """
+        Match RobustIsotropicNormalizer.compute_stats using temp memmaps per pooled triplet or scalar column.
+
+        Args:
+            cache_files: list[Path]
+                Cache files created by _cache_trajectories().
+            bundle_field_name: str
+                Key in the saved dict.
+            start_column: int or None
+                Optional column offset for node inputs.
+            split_idx: int
+                Number of leading features grouped as xyz triplets.
+        return: Stats
+            Median / IQR statistics per feature.
+        """
+        first_bundle = torch.load(cache_files[0], map_location="cpu", weights_only=False)
+        try:
+            first_t = first_bundle[bundle_field_name][0]
+            if start_column is not None:
+                first_t = first_t[:, start_column:]
+            num_features = first_t.shape[1]
+            ref_device = first_t.device
+            ref_dtype = first_t.dtype
+        finally:
+            del first_bundle
+            gc.collect()
+
+        if split_idx % 3 != 0:
+            raise ValueError("split_idx must be divisible by 3 for isotropic robust stats")
+
+        mean_np = np.zeros(num_features, dtype=np.float64)
+        std_np = np.zeros(num_features, dtype=np.float64)
+
+        for i in range(0, split_idx, 3):
+            total_len = 0
+            for cache_path in cache_files:
+                cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+                try:
+                    for tensor in cached_trajectory_bundle[bundle_field_name]:
+                        sl = tensor if start_column is None else tensor[:, start_column:]
+                        total_len += sl[:, i : i + 3].numel()
+                finally:
+                    del cached_trajectory_bundle
+            fd, tmp_path = tempfile.mkstemp(suffix=".eda_robust_iso.bin")
+            os.close(fd)
+            try:
+                mm = np.memmap(tmp_path, dtype=np.float64, mode="w+", shape=(total_len,))
+                off = 0
+                for cache_path in cache_files:
+                    cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+                    try:
+                        for tensor in cached_trajectory_bundle[bundle_field_name]:
+                            sl = tensor if start_column is None else tensor[:, start_column:]
+                            flat = sl[:, i : i + 3].reshape(-1).detach().cpu().numpy()
+                            n = flat.shape[0]
+                            mm[off : off + n] = flat.astype(np.float64, copy=False)
+                            off += n
+                    finally:
+                        del cached_trajectory_bundle
+                        gc.collect()
+                mm.flush()
+                pooled = np.asarray(mm, dtype=np.float64)
+                qs = np.quantile(pooled, [0.25, 0.5, 0.75])
+                median = float(qs[1])
+                iqr = float(qs[2] - qs[0])
+                mean_np[i] = median
+                mean_np[i + 1] = median
+                mean_np[i + 2] = median
+                std_np[i] = iqr
+                std_np[i + 1] = iqr
+                std_np[i + 2] = iqr
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                gc.collect()
+
+        for i in range(split_idx, num_features):
+            total_len = 0
+            for cache_path in cache_files:
+                cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+                try:
+                    for tensor in cached_trajectory_bundle[bundle_field_name]:
+                        sl = tensor if start_column is None else tensor[:, start_column:]
+                        total_len += sl.shape[0]
+                finally:
+                    del cached_trajectory_bundle
+            fd, tmp_path = tempfile.mkstemp(suffix=".eda_robust_iso.bin")
+            os.close(fd)
+            try:
+                mm = np.memmap(tmp_path, dtype=np.float64, mode="w+", shape=(total_len,))
+                off = 0
+                for cache_path in cache_files:
+                    cached_trajectory_bundle = torch.load(cache_path, map_location="cpu", weights_only=False)
+                    try:
+                        for tensor in cached_trajectory_bundle[bundle_field_name]:
+                            sl = tensor if start_column is None else tensor[:, start_column:]
+                            col = sl[:, i].detach().cpu().numpy()
+                            n = col.shape[0]
+                            mm[off : off + n] = col.astype(np.float64, copy=False)
+                            off += n
+                    finally:
+                        del cached_trajectory_bundle
+                        gc.collect()
+                mm.flush()
+                col_all = np.asarray(mm, dtype=np.float64)
+                qs = np.quantile(col_all, [0.25, 0.5, 0.75])
+                median = float(qs[1])
+                iqr = float(qs[2] - qs[0])
+                mean_np[i] = median
+                std_np[i] = iqr
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                gc.collect()
+
+        mean = torch.tensor(mean_np, device=ref_device, dtype=ref_dtype)
+        std = torch.tensor(std_np, device=ref_device, dtype=ref_dtype)
+        return Stats(mean=mean, std=std)
 
     def _compute_stats_from_cache(self, cache_files, split_idx_node, split_idx_edge):
         """
         Fit self.node_stats, self.edge_stats, and self.target_stats from all cached timestep tensors using the current
         normalizer (including isotropic pooling boundaries).
 
-        1. Load node_inputs from disk, strip the BC column, compute node_stats with split_idx_node.
-        2. Load edge_features and compute edge_stats with split_idx_edge.
-        3. Load targets and compute target_stats with TARGET_ACCELERATION_SPLIT_IDX for the acceleration xyz block.
+        1. Stream node_inputs from cache (strip BC column for stats), or use a temp memmap for robust anisotropic.
+        2. Stream edge_features the same way.
+        3. Stream targets with split index 3 for the acceleration xyz block.
 
         Args:
             cache_files: list[Path]
@@ -387,20 +581,24 @@ class EdaPreprocessor(TrainPreprocessor):
                 Fills self.node_stats, self.edge_stats, self.target_stats.
         """
         print("\nComputing EDA stats from cached trajectories...\n")
-        node_tensors = self._load_family_from_cache(cache_files, "node_inputs", 1)
-        self.node_stats = self.normalizer.compute_stats(node_tensors, split_idx_node)
-        del node_tensors
-        gc.collect()
-
-        edge_tensors = self._load_family_from_cache(cache_files, "edge_features", None)
-        self.edge_stats = self.normalizer.compute_stats(edge_tensors, split_idx_edge)
-        del edge_tensors
-        gc.collect()
-
-        target_tensors = self._load_family_from_cache(cache_files, "targets", None)
-        self.target_stats = self.normalizer.compute_stats(target_tensors, 3)
-        del target_tensors
-        gc.collect()
+        if isinstance(self.normalizer, RobustAnisotropicNormalizer):
+            self.node_stats = self._robust_anisotropic_stats_from_cache(cache_files, "node_inputs", 1)
+            self.edge_stats = self._robust_anisotropic_stats_from_cache(cache_files, "edge_features", None)
+            self.target_stats = self._robust_anisotropic_stats_from_cache(cache_files, "targets", None)
+        elif isinstance(self.normalizer, RobustIsotropicNormalizer):
+            self.node_stats = self._robust_isotropic_stats_from_cache(cache_files, "node_inputs", 1, split_idx_node)
+            self.edge_stats = self._robust_isotropic_stats_from_cache(cache_files, "edge_features", None, split_idx_edge)
+            self.target_stats = self._robust_isotropic_stats_from_cache(cache_files, "targets", None, 3)
+        else:
+            node_it = self._iter_tensors_from_cache(cache_files, "node_inputs", 1)
+            self.node_stats = self.normalizer.compute_stats(node_it, split_idx_node)
+            gc.collect()
+            edge_it = self._iter_tensors_from_cache(cache_files, "edge_features", None)
+            self.edge_stats = self.normalizer.compute_stats(edge_it, split_idx_edge)
+            gc.collect()
+            target_it = self._iter_tensors_from_cache(cache_files, "targets", None)
+            self.target_stats = self.normalizer.compute_stats(target_it, 3)
+            gc.collect()
         print("\nFinished computing EDA stats\n")
 
     def _collect_normalized_eda(self, cache_files):

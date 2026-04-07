@@ -92,11 +92,17 @@ class NoNormalizer(Normalizer):
     def compute_stats(self, tensor_list, split_idx):
         assert split_idx % 3 == 0
 
-        sum_val = torch.zeros(tensor_list[0].shape[1],device=tensor_list[0].device, dtype=tensor_list[0].dtype)
-        sum_sq = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
-        count = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+        tensor_iterator = iter(tensor_list)
+        first_tensor = next(tensor_iterator)
+        sum_val = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
+        sum_sq = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
+        count = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
 
-        for tensor in tensor_list:
+        sum_val += first_tensor.sum(dim=0)
+        sum_sq += (first_tensor ** 2).sum(dim=0)
+        count += first_tensor.shape[0]
+
+        for tensor in tensor_iterator:
             # sum across first dimension, i.e. (N, #features) --> (#features) tensor of means (for each feature,
             # the mean along all coordinates)
             sum_val += tensor.sum(dim=0)
