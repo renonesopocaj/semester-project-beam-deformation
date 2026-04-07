@@ -98,6 +98,12 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                 Scale of noise on x(t-1), typically much smaller than noise_scale.
         """
         super().__init__(sample_dir, device)
+        if preprocess_cfg.time_discretization_method != "second_order_central":
+            raise ValueError(
+                f"Noise injection only supports second_order_central time discretization, "
+                f"got '{preprocess_cfg.time_discretization_method}'. The acceleration correction "
+                f"formula -(1+gamma)*eps/dt^2 is derived for central differences and is incorrect "
+                f"for other schemes (e.g. Newmark).")
         self.noise_scale = noise_scale
         self.gamma = gamma
         self.dt = dt

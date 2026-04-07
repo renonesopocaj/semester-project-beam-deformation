@@ -8,7 +8,7 @@ from pathlib import Path
 import lightning as L
 import math
 import torch
-import torch.nn.functional as F
+
 import wandb
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
@@ -30,11 +30,10 @@ class LitModule(L.LightningModule):
     model: torch.nn.Module
     optimizer: torch.optim.Optimizer
     scheduler: SchedulerWrapper
-    loss_fn: F
+    loss_fn: callable
     # String info
     training_id: str
     eval_split_name: str
-    target_names: list[str]
     # Directories
     model_dir: Path
     training_plots_dir: Path
@@ -268,7 +267,8 @@ class LitModule(L.LightningModule):
         else:
             total_loss = self.loss_fn(pred, target)
         if "curvature" in self.residual_list:
-            curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max)
+            curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max,
+                                                self.time_discretizer)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
         if "volume" in self.residual_list:
             pass
@@ -403,7 +403,7 @@ class LitModule(L.LightningModule):
         wb_prefix = self._wandb_final_eval_metric_prefix()
         metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
         self._log_metrics(metrics,
-            [f"{wb_prefix}/loss", f"{wb_prefix}/overall_relative_mae"],
+            [f"{wb_prefix}/overall_relative_mae"],
             batch_size=batch.num_graphs,
             sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
@@ -654,16 +654,6 @@ class LitModule(L.LightningModule):
         if self.eval_split_name == "test":
             return "final_test"
         return self.eval_split_name
-
-    def _wandb_final_eval_media_roots(self):
-        """
-        W&B folder roots for overall summary media vs per-trajectory in-depth media.
-
-        Args:
-            return: (str, str)
-                overall_root and traj_root, e.g. final_validation and final_validation_traj.
-        """
-
 
     def _log_all_wandb_media(self, overall_plot_paths, per_traj_in_depth_paths):
         """

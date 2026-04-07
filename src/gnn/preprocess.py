@@ -192,8 +192,12 @@ class Preprocessor(ABC):
         """
         torch.manual_seed(cfg.seed)
         filenames = _sort_filenames_by_traj_params(list(Path(graphs_dir).glob("*.pt")), graphs_dir)
+        if not filenames:
+            raise FileNotFoundError(f"No .pt files found in {graphs_dir}")
         self._load_stats(cfg)  # if train doesn't do anything since I have to compute them
 
+        split_idx_node = None
+        split_idx_edge = None
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Processing trajectories")
         # Main loop: process all files, one file = one trajectory, idx_file = index of the file
         for idx_file, filename in pbar:
@@ -230,11 +234,11 @@ class Preprocessor(ABC):
 
             # Inside loop: for each graph build its features
             effective_limit = self.selected_limit if idx_file in self.selected_indices else cfg.limit_timesteps
+            max_usable_timesteps = min(max(0, effective_limit - 1), a.shape[0])
             # Initialized past x position
             _x_pos_tm1_prev = x[0]
             for t, graph in enumerate(graphs_list_batch):
-                # limit trajectory length to compute acceleration
-                if t > effective_limit - 2:
+                if t >= max_usable_timesteps:
                     break
                 self.traj_idx_list.append(idx_file)  # idx_file of the traj (of the file process)
                 # create local (inside for) variables
@@ -250,14 +254,11 @@ class Preprocessor(ABC):
                 _edge_attr, split_idx_edge = build_edge_features(_x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force,
                                                                  graph.edge_index, cfg)
                 # .y_sig_t contains the full stress tensor
-                # took the log because it helps making the distribution normal-like (symmetrical)
-                # Output _von_mises is (N, 1) [graph.y_sig_t is (N, 9)]
-                _von_mises_log = torch.log(compute_von_mises_3d(graph.y_sig_t).unsqueeze(1) + EPS)
-                _von_mises_nolog = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
-                if cfg.mises_log:
-                    _von_mises = _von_mises_log
-                else:
-                    _von_mises = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+                # Output _von_mises_raw is (N, 1) [graph.y_sig_t is (N, 9)]
+                _von_mises_raw = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
+                # log transform helps making the distribution normal-like (symmetrical)
+                _von_mises_log = torch.log(_von_mises_raw + EPS)
+                _von_mises = _von_mises_log if cfg.mises_log else _von_mises_raw
 
                 # accumulate all graphs to out_graphs for stats computation
                 self.categorical_node_features.append(boundary_condition)
@@ -433,7 +434,7 @@ class ValPreprocessor(Preprocessor):
     def _load_stats(self, cfg):
         self.node_stats, self.edge_stats, self.target_stats = load_stats(self.save_dir_train)
         print(f"Stats:\n\tnode_stats.mean = \t{self.node_stats.mean}\n\tnode_stats.std =\t{self.node_stats.std}"
-              f"edge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
+              f"\n\tedge_stats.mean =\t{self.edge_stats.mean}\n\tedge_stats.std =\t{self.edge_stats.std}"
               f"\n\ttarget_stats =\t{self.target_stats.mean}\n\ttarget_stats.std =\t{self.target_stats.std}")
 
     def _maybe_update_maxangle_train(self, x_raw, graphs_list_batch, rest_pos_x, cfg, idx_file):
