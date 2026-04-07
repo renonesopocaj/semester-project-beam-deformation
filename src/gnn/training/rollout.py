@@ -80,7 +80,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             a_t_pred = pred_denorm[:, 0:3]
             von_mises_t_pred = torch.exp(pred_denorm[:, 3]) if exp_mises else pred_denorm[:, 3]
             # Get ground truth (graph_ground_truth) targets
-            von_mises_true = graph_ground_truth.y_von_mises
+            # When exp_mises is True the prediction is exponentiated to physical space,
+            # so the ground truth must be converted to the same space for consistent comparison.
+            von_mises_true = torch.exp(graph_ground_truth.y_von_mises) if exp_mises else graph_ground_truth.y_von_mises
             x_true = graph_ground_truth.x_next
             v_true = graph_ground_truth.v_next
             # Input features (previous time step t) to obtain next step t+1

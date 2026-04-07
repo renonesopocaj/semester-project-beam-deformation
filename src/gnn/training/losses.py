@@ -43,7 +43,7 @@ def volume_loss(pred, target):
     return
 
 
-def angle_residual(pred, batch, target_stats, dt, theta_max):
+def angle_residual(pred, batch, target_stats, dt, theta_max, time_discretizer):
     """
     Computes Relu(theta - theta_max) for each angle between surface triangles.
 
@@ -58,10 +58,12 @@ def angle_residual(pred, batch, target_stats, dt, theta_max):
             Simulation time step.
         theta_max: float
             Maximum allowed angle from the train set.
+        time_discretizer: TimeDiscretizer
+            Time integration strategy used for position reconstruction.
     return: torch.Tensor
         Mean thresholded curvature penalty.
     """
-    predicted_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt)
+    predicted_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer)
     triangle_angles = compute_surface_angles_torch(predicted_next_positions, batch.boundary_left_tri_index,
                                                    batch.boundary_right_tri_index)
     return torch.mean(torch.relu(triangle_angles - theta_max))
@@ -123,9 +125,10 @@ def compute_total_loss_exp_mises(pred, target, target_stats, loss_fn, stress_wei
     return acc_loss + stress_weight * stress_loss
 
 
-def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
+def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer):
     """
-    Denormalizes predicted acceleration and reconstructs predicted next positions.
+    Denormalizes predicted acceleration and reconstructs predicted next positions
+    using the same time integration scheme that was used for preprocessing.
     Helper for angle_residual.
 
     Args:
@@ -137,9 +140,12 @@ def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt):
             Target normalization statistics.
         dt: float
             Simulation time step.
+        time_discretizer: TimeDiscretizer
+            Time integration strategy matching the preprocessing scheme.
     return: torch.Tensor
         Predicted next positions with shape `(num_nodes, 3)`.
     """
     pred_acc = pred[:, :TARGET_ACC_DIM]
     pred_acc_denorm = pred_acc * (target_stats.std[:TARGET_ACC_DIM] + EPS) + target_stats.mean[:TARGET_ACC_DIM]
-    return batch.x_pos_t + batch.x_vel_t * dt + pred_acc_denorm * (dt ** 2)
+    x_tp1, _ = time_discretizer.integrate_acceleration(pred_acc_denorm, batch.x_vel_t, dt, batch.x_pos_t)
+    return x_tp1

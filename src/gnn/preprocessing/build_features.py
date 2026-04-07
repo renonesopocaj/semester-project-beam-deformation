@@ -179,7 +179,7 @@ def compute_von_mises_3d(stress_9):
     :return
         vm: torch.Tensor (N,)
     """
-    sxx = stress_9[:, 0] # (N, 9)
+    sxx = stress_9[:, 0]
     sxy = stress_9[:, 1]
     sxz = stress_9[:, 2]
     syy = stress_9[:, 4]

@@ -126,11 +126,9 @@ class NoNormalizer(Normalizer):
             count[i + 1] = pooled_count
             count[i + 2] = pooled_count
 
-        mean = sum_val / count
-        mean = torch.zeros(mean.shape)
-        var = torch.clamp((sum_sq / count) - (mean ** 2), min=0.0)
-        std = torch.sqrt(var)
-        std = torch.ones(std.shape)
+        num_features = first_tensor.shape[1]
+        mean = torch.zeros(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
+        std = torch.ones(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
 
         return Stats(mean=mean, std=std)
 
