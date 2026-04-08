@@ -133,13 +133,15 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     # device = "cpu" hardcoded for performance reason
     if train_cfg.noise_scale_train > 0:
         print(f"\tNoise injection enabled: scale={train_cfg.noise_scale_train}, gamma={train_cfg.noise_gamma}")
+        # Per-epoch noise draws: LitModule.on_train_epoch_start calls set_noise_epoch on this dataset.
         train_dataset = InMemoryNoisedDataset(
             sample_dir=train_cfg.train_dir, device="cpu",
             noise_scale=train_cfg.noise_scale_train, gamma=train_cfg.noise_gamma,
             dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
             base_seed=train_cfg.noise_seed, preprocess_cfg=preprocess_cfg,
             noise_also_prev=train_cfg.noise_also_prev,
-            noise_prev_scale=train_cfg.noise_prev_scale_train)
+            noise_prev_scale=train_cfg.noise_prev_scale_train,
+            noise_feature_update_mode=train_cfg.noise_feature_update_mode)
     else:
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and

@@ -5,15 +5,37 @@ In-memory dataset for graph data.
 Two versions:
 - InMemoryTimeStepDataset: loads all preprocessed graphs into memory for fast training.
 - InMemoryNoisedDataset: wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
-    at every __getitem__ call, so each epoch sees a different perturbation.
+    at every __getitem__ call, with RNG seeds varying by training epoch (see set_noise_epoch).
 """
 
 from torch_geometric.data import Dataset, Data
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
+from src.gnn.preprocessing.normalizer import (
+    build_affine_normalizer_tensors,
+    apply_affine_normalization,
+    apply_affine_denormalization,
+)
+import multiprocessing
 import os
 import torch
 
-EPS = 1e-8
+# Large stride so (base_seed + epoch * stride + per_sample_offset) stays well separated across epochs.
+_NOISE_EPOCH_SEED_STRIDE = 1_000_003
+# torch.Generator.manual_seed expects a non-negative int in a bounded range; fold mixed seeds into this range.
+_TORCH_SEED_MOD = 2**63 - 1
+
+
+def _fold_torch_seed(seed):
+    """
+    Fold an arbitrary integer into a safe range for torch.Generator.manual_seed.
+
+    Args:
+        seed: int
+            Unbounded mixed seed.
+    return: int
+        Non-negative seed in [0, 2**63 - 2].
+    """
+    return int(seed) % _TORCH_SEED_MOD
 
 class InMemoryTimeStepDataset(Dataset):
     """
@@ -52,7 +74,9 @@ class InMemoryTimeStepDataset(Dataset):
 class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     """
     Wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
-    at every __getitem__ call, so each epoch sees a different perturbation.
+    at every __getitem__ call. Noise RNG seeds depend on (training epoch, sample index) so each
+    epoch uses a different draw at the same noise scales; call set_noise_epoch from the trainer
+    at the start of each training epoch (see LitModule.on_train_epoch_start).
 
     Noise affects:
       - Node features: fully recomputed from noised position/velocity via build_valued_node_features
@@ -70,11 +94,20 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     node_stats_std: torch.Tensor
     edge_stats_mean: torch.Tensor
     edge_stats_std: torch.Tensor
+    target_stats_mean_acc: torch.Tensor
     target_stats_std_acc: torch.Tensor
     base_seed: int
+    node_norm_scale: torch.Tensor
+    node_norm_bias: torch.Tensor
+    node_denorm_scale: torch.Tensor
+    edge_norm_scale: torch.Tensor
+    edge_norm_bias: torch.Tensor
+    edge_denorm_scale: torch.Tensor
+    target_acc_norm_scale: torch.Tensor
+    noise_feature_update_mode: str
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 preprocess_cfg, noise_also_prev, noise_prev_scale):
+                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
         """
         Args:
             sample_dir: str
@@ -94,12 +127,14 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             target_stats: Stats
                 Target normalization statistics.
             base_seed: int
-                Base seed used to build deterministic per-sample noise.
+                Base seed mixed with training epoch and sample index for noise RNG (see set_noise_epoch).
             preprocess_cfg: PreprocessYaml
             noise_also_prev: bool
                 Whether to also inject noise on the previous-step position x(t-1).
             noise_prev_scale: float
                 Scale of noise on x(t-1), typically much smaller than noise_scale_train.
+            noise_feature_update_mode: str
+                Feature update mode for noisy samples: "exact" or "taylor".
         """
         super().__init__(sample_dir, device)
         if preprocess_cfg.time_discretization_method != "second_order_central":
@@ -115,19 +150,105 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.node_stats_std = node_stats.std.clone()
         self.edge_stats_mean = edge_stats.mean.clone()
         self.edge_stats_std = edge_stats.std.clone()
+        self.target_stats_mean_acc = target_stats.mean[:3].clone()
         self.target_stats_std_acc = target_stats.std[:3].clone()
         self.base_seed = int(base_seed)
         self.preprocess_cfg = preprocess_cfg
         self.noise_also_prev = noise_also_prev
         self.noise_prev_scale = noise_prev_scale
+        self.noise_feature_update_mode = str(noise_feature_update_mode).lower()
+        if self.noise_feature_update_mode not in {"exact", "taylor"}:
+            raise ValueError(
+                f"Unknown noise_feature_update_mode '{noise_feature_update_mode}'. Expected 'exact' or 'taylor'."
+            )
+        (self.node_norm_scale, self.node_norm_bias,
+         self.node_denorm_scale) = build_affine_normalizer_tensors(self.node_stats_mean, self.node_stats_std,
+                                                                    self.preprocess_cfg.normalizer_method)
+        (self.edge_norm_scale, self.edge_norm_bias,
+         self.edge_denorm_scale) = build_affine_normalizer_tensors(self.edge_stats_mean, self.edge_stats_std,
+                                                                    self.preprocess_cfg.normalizer_method)
+        self.target_acc_norm_scale, _, _ = build_affine_normalizer_tensors(
+            self.target_stats_mean_acc, self.target_stats_std_acc, self.preprocess_cfg.normalizer_method
+        )
         self._build_node_features_scripted, self._build_edge_features_scripted = make_scripted_feature_builders(
             self.preprocess_cfg)
+        self._noise_epoch = multiprocessing.Value('i', 0)
+
+    def set_noise_epoch(self, epoch):
+        """
+        Set training epoch used to derive noise seeds so each epoch draws different noise at the same scales.
+
+        Args:
+            epoch: int
+                Current training epoch (0-based), typically Lightning's current_epoch.
+        return: None
+        """
+        self._noise_epoch.value = int(epoch)
+
+    def _normalize_node_features(self, node_attr_raw):
+        return apply_affine_normalization(node_attr_raw, self.node_norm_scale, self.node_norm_bias)
+
+    def _normalize_edge_features(self, edge_attr_raw):
+        return apply_affine_normalization(edge_attr_raw, self.edge_norm_scale, self.edge_norm_bias)
+
+    def _denormalize_node_features(self, node_attr_norm):
+        return apply_affine_denormalization(node_attr_norm, self.node_stats_mean, self.node_denorm_scale,
+                                            self.preprocess_cfg.normalizer_method)
+
+    def _denormalize_edge_features(self, edge_attr_norm):
+        return apply_affine_denormalization(edge_attr_norm, self.edge_stats_mean, self.edge_denorm_scale,
+                                            self.preprocess_cfg.normalizer_method)
+
+    def _build_features_exact(self, data, x_noised, v_noised, x_pos_tm1_prev):
+        node_attr_raw, _ = self._build_node_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force)
+        edge_attr_raw, _ = self._build_edge_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force, data.edge_index)
+        return node_attr_raw, edge_attr_raw
+
+    def _build_features_taylor(self, data, noise_added_t, noise_added_prev_tm1):
+        x_clean = data.x_pos_t
+        v_clean = data.x_vel_t
+        x_tm1_clean = data.x_pos_tm1_prev
+        delta_x_t = noise_added_t
+        delta_x_tm1 = torch.zeros_like(x_tm1_clean) if noise_added_prev_tm1 is None else noise_added_prev_tm1
+        delta_v_t = noise_added_t / self.dt
+        if noise_added_prev_tm1 is not None:
+            delta_v_t = delta_v_t - noise_added_prev_tm1 / self.dt
+
+        node_attr_base_raw = self._denormalize_node_features(data.x[:, 1:])
+        edge_attr_base_raw = self._denormalize_edge_features(data.edge_attr)
+
+        def node_feature_fn(x_t, v_t, x_tm1):
+            out, _ = self._build_node_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force)
+            return out
+
+        def edge_feature_fn(x_t, v_t, x_tm1):
+            out, _ = self._build_edge_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force,
+                                                        data.edge_index)
+            return out
+
+        _, node_delta_raw = torch.autograd.functional.jvp(
+            node_feature_fn,
+            (x_clean, v_clean, x_tm1_clean),
+            (delta_x_t, delta_v_t, delta_x_tm1),
+            create_graph=False,
+            strict=False
+        )
+        _, edge_delta_raw = torch.autograd.functional.jvp(
+            edge_feature_fn,
+            (x_clean, v_clean, x_tm1_clean),
+            (delta_x_t, delta_v_t, delta_x_tm1),
+            create_graph=False,
+            strict=False
+        )
+        return node_attr_base_raw + node_delta_raw, edge_attr_base_raw + edge_delta_raw
 
     def __getitem__(self, idx):
         """
         Returns a noised copy of the sample at idx.
-        - A fresh eps ~ N(0, noise_scale_train^2) is drawn every call, so every epoch produces different perturbations.
-        - One call = one epoch, so this is correct
+        Noise seeds depend on (epoch set via set_noise_epoch, sample index, base_seed) so each epoch
+        uses different noise at the same scales.
 
 
         Args:
@@ -137,11 +258,11 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             PyG Data with noised input features, recomputed edge features, and corrected acceleration target.
         """
         data = self.data[idx]
-        seed_t = 2 * idx
-        seed_tm1 = 2 * idx + 1
-        # Derive noise from a deterministic per-sample seed so repeated runs are reproducible.
+        epoch_part = int(self._noise_epoch.value) * _NOISE_EPOCH_SEED_STRIDE
+        seed_t = self.base_seed + epoch_part + 2 * int(idx)
+        seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
         noise_generator_t = torch.Generator(device=data.x_pos_t.device)
-        noise_generator_t.manual_seed(self.base_seed + int(seed_t))
+        noise_generator_t.manual_seed(_fold_torch_seed(seed_t))
         noise_added_t = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
                                                        device=data.x_pos_t.device, generator=noise_generator_t)  # (N, 3)
         fixed_mask = (data.x_bc > 0.5).squeeze(-1)  # (N,) True for wall-clamped nodes
@@ -155,7 +276,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         noise_added_prev_tm1 = None
         if self.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
             noise_generator_tm1 = torch.Generator(device=data.x_pos_t.device)
-            noise_generator_tm1.manual_seed(self.base_seed + int(seed_tm1))
+            noise_generator_tm1.manual_seed(_fold_torch_seed(seed_tm1))
             noise_added_prev_tm1 = self.noise_prev_scale * torch.randn(data.x_pos_tm1_prev.shape,
                                                                        dtype=data.x_pos_tm1_prev.dtype,
                                                                        device=data.x_pos_t.device,
@@ -166,16 +287,15 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         v_noised = data.x_vel_t + noise_added_t / self.dt
         if noise_added_prev_tm1 is not None:
             v_noised = v_noised - noise_added_prev_tm1 / self.dt
-        # Node features: full recomputation from raw attributes
-        node_attr_raw, _ = self._build_node_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
-                                                              data.node_force)
-        node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
+        if self.noise_feature_update_mode == "taylor":
+            node_attr_raw, edge_attr_raw = self._build_features_taylor(data, noise_added_t, noise_added_prev_tm1)
+        else:
+            node_attr_raw, edge_attr_raw = self._build_features_exact(data, x_noised, v_noised, x_pos_tm1_prev)
+        node_attr_norm = self._normalize_node_features(node_attr_raw)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
-        # Edge features: full recomputation due to norms
-        edge_attr_raw, _ = self._build_edge_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
-                                                              data.node_force, data.edge_index)
-        new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
+        # Edge features
+        new_edge_attr = self._normalize_edge_features(edge_attr_raw)
 
         # Target acceleration correction (in normalized space)
         # position-correcting acceleration is a_P = a_star - 2 eps / dt^2
@@ -185,7 +305,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # new_y is target
         new_y = data.y.clone()
         # FIXME: hardcoded target handling
-        new_y[:, :3] += acc_correction / (self.target_stats_std_acc + EPS)
+        new_y[:, :3] += acc_correction * self.target_acc_norm_scale
 
         return Data(x=new_x, edge_attr=new_edge_attr, # input node and edge features
                     y=new_y, # target

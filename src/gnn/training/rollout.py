@@ -50,6 +50,8 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
         pred_rollout: list[Data]
             List of predicted graphs
     """
+    if not hasattr(normalizer, "normalize") or not hasattr(normalizer, "denormalize"):
+        raise TypeError("Rollout expects a normalizer implementing normalize() and denormalize().")
     with torch.no_grad():
         true_rollout, pred_rollout = [], []
         rest_pos = None

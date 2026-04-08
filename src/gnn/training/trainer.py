@@ -61,6 +61,7 @@ class LitModule(L.LightningModule):
     # Which trajectories get in-depth plots
     selected_validation_trajectories: list[int]
     selected_test_trajectories: list[int]
+    noise_feature_update_mode: str
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
@@ -140,6 +141,12 @@ class LitModule(L.LightningModule):
         self.preprocess_cfg = preprocess_cfg
         # Time discretizer from preprocess
         self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
+        self.noise_feature_update_mode = str(train_cfg.noise_feature_update_mode).lower()
+        if self.noise_feature_update_mode not in {"exact", "taylor"}:
+            raise ValueError(
+                f"Unknown noise_feature_update_mode '{train_cfg.noise_feature_update_mode}'. "
+                f"Expected 'exact' or 'taylor'."
+            )
 
 
     ##############################################################################################################
@@ -195,6 +202,32 @@ class LitModule(L.LightningModule):
                 Optimizer whose gradients are cleared.
         """
         optimizer.zero_grad(set_to_none=True)
+
+    def _unwrap_train_dataset_root(self, dataset):
+        """
+        Unwrap torch.utils.data.Subset (and similar) to reach the underlying map-style dataset.
+
+        Args:
+            dataset: object
+                Dataset instance from the train DataLoader.
+        return: object
+            Innermost dataset before repeated Subset wrapping stops.
+        """
+        ds = dataset
+        while isinstance(ds, Subset):
+            ds = ds.dataset
+        return ds
+
+    def on_train_epoch_start(self):
+        """
+        Syncs InMemoryNoisedDataset noise RNG epoch so each training epoch draws different noise at the same scales.
+        Uses a multiprocessing-safe counter on the dataset so forked DataLoader workers see the same epoch.
+        """
+        if self.trainer is None or self.trainer.train_dataloader is None:
+            return
+        root_ds = self._unwrap_train_dataset_root(self.trainer.train_dataloader.dataset)
+        if hasattr(root_ds, "set_noise_epoch"):
+            root_ds.set_noise_epoch(self.current_epoch)
 
     def on_fit_start(self):
         """

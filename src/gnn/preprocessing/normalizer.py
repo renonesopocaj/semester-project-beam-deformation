@@ -10,6 +10,71 @@ import numpy as np
 
 EPS = 1e-8
 
+
+def build_affine_normalizer_tensors(stats_mean, stats_std, normalizer_method):
+    """
+    Build affine tensors so normalization can be applied as x * scale + bias.
+
+    Args:
+        stats_mean: torch.Tensor
+            Feature-wise center statistics.
+        stats_std: torch.Tensor
+            Feature-wise scale statistics.
+        normalizer_method: str
+            Normalizer identifier. If "none", identity affine is returned.
+    return: (torch.Tensor, torch.Tensor, torch.Tensor)
+        (scale, bias, inv_scale) affine normalization tensors.
+    """
+    method = str(normalizer_method).lower()
+    if method == "none":
+        scale = torch.ones_like(stats_std)
+        bias = torch.zeros_like(stats_mean)
+        inv_scale = torch.ones_like(stats_std)
+        return scale, bias, inv_scale
+    inv_scale = stats_std + EPS
+    scale = 1.0 / inv_scale
+    bias = -stats_mean * scale
+    return scale, bias, inv_scale
+
+
+def apply_affine_normalization(tensor, scale, bias):
+    """
+    Apply precomputed affine normalization.
+
+    Args:
+        tensor: torch.Tensor
+            Raw tensor to normalize.
+        scale: torch.Tensor
+            Multiplicative factor.
+        bias: torch.Tensor
+            Additive factor.
+    return: torch.Tensor
+        Normalized tensor.
+    """
+    return tensor * scale + bias
+
+
+def apply_affine_denormalization(tensor, stats_mean, inv_scale, normalizer_method):
+    """
+    Reverse affine normalization.
+
+    Args:
+        tensor: torch.Tensor
+            Normalized tensor.
+        stats_mean: torch.Tensor
+            Feature-wise center statistics.
+        inv_scale: torch.Tensor
+            Feature-wise denominator (std + eps style).
+        normalizer_method: str
+            Normalizer identifier.
+    return: torch.Tensor
+        Tensor in raw space.
+    """
+    method = str(normalizer_method).lower()
+    if method == "none":
+        return tensor
+    return tensor * inv_scale + stats_mean
+
 class NormalizerFactory:
 
     @staticmethod
