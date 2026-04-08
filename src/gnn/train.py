@@ -26,6 +26,7 @@ from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
+from src.gnn.preprocess import load_selected_trajectories
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
@@ -252,6 +253,18 @@ def main(cfg):
         train_cfg.extra_info_dir = preprocess_cfg.extra_info_dir
     if train_cfg.extra_info_dir is not None:
         print(f"Extra info dir: {train_cfg.extra_info_dir}")
+
+    # Resolve selected trajectory indices: YAML overrides take priority, otherwise read from JSON
+    selected_trajs = load_selected_trajectories(train_cfg.extra_info_dir)
+    if train_cfg.selected_validation_trajectories is None:
+        train_cfg.selected_validation_trajectories = selected_trajs.get("selected_validation_trajectories", [])
+    if train_cfg.selected_test_trajectories is None:
+        train_cfg.selected_test_trajectories = selected_trajs.get("selected_test_trajectories", [])
+    if train_cfg.selected_validation_trajectories:
+        print(f"Selected validation trajectories: {train_cfg.selected_validation_trajectories}")
+    if train_cfg.selected_test_trajectories:
+        print(f"Selected test trajectories: {train_cfg.selected_test_trajectories}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not torch.cuda.is_available() and train_cfg.training_type == "slurm":
         raise RuntimeError("CUDA is not available.")
