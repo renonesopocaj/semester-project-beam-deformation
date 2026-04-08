@@ -185,71 +185,11 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         """
         self._noise_epoch.value = int(epoch)
 
-    def _normalize_node_features(self, node_attr_raw):
-        return apply_affine_normalization(node_attr_raw, self.node_norm_scale, self.node_norm_bias)
-
-    def _normalize_edge_features(self, edge_attr_raw):
-        return apply_affine_normalization(edge_attr_raw, self.edge_norm_scale, self.edge_norm_bias)
-
-    def _denormalize_node_features(self, node_attr_norm):
-        return apply_affine_denormalization(node_attr_norm, self.node_stats_mean, self.node_denorm_scale,
-                                            self.preprocess_cfg.normalizer_method)
-
-    def _denormalize_edge_features(self, edge_attr_norm):
-        return apply_affine_denormalization(edge_attr_norm, self.edge_stats_mean, self.edge_denorm_scale,
-                                            self.preprocess_cfg.normalizer_method)
-
-    def _build_features_exact(self, data, x_noised, v_noised, x_pos_tm1_prev):
-        node_attr_raw, _ = self._build_node_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
-                                                              data.node_force)
-        edge_attr_raw, _ = self._build_edge_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
-                                                              data.node_force, data.edge_index)
-        return node_attr_raw, edge_attr_raw
-
-    def _build_features_taylor(self, data, noise_added_t, noise_added_prev_tm1):
-        x_clean = data.x_pos_t
-        v_clean = data.x_vel_t
-        x_tm1_clean = data.x_pos_tm1_prev
-        delta_x_t = noise_added_t
-        delta_x_tm1 = torch.zeros_like(x_tm1_clean) if noise_added_prev_tm1 is None else noise_added_prev_tm1
-        delta_v_t = noise_added_t / self.dt
-        if noise_added_prev_tm1 is not None:
-            delta_v_t = delta_v_t - noise_added_prev_tm1 / self.dt
-
-        node_attr_base_raw = self._denormalize_node_features(data.x[:, 1:])
-        edge_attr_base_raw = self._denormalize_edge_features(data.edge_attr)
-
-        def node_feature_fn(x_t, v_t, x_tm1):
-            out, _ = self._build_node_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force)
-            return out
-
-        def edge_feature_fn(x_t, v_t, x_tm1):
-            out, _ = self._build_edge_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force,
-                                                        data.edge_index)
-            return out
-
-        _, node_delta_raw = torch.autograd.functional.jvp(
-            node_feature_fn,
-            (x_clean, v_clean, x_tm1_clean),
-            (delta_x_t, delta_v_t, delta_x_tm1),
-            create_graph=False,
-            strict=False
-        )
-        _, edge_delta_raw = torch.autograd.functional.jvp(
-            edge_feature_fn,
-            (x_clean, v_clean, x_tm1_clean),
-            (delta_x_t, delta_v_t, delta_x_tm1),
-            create_graph=False,
-            strict=False
-        )
-        return node_attr_base_raw + node_delta_raw, edge_attr_base_raw + edge_delta_raw
-
     def __getitem__(self, idx):
         """
         Returns a noised copy of the sample at idx.
         Noise seeds depend on (epoch set via set_noise_epoch, sample index, base_seed) so each epoch
         uses different noise at the same scales.
-
 
         Args:
             idx: int
@@ -318,3 +258,62 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                     boundary_left_tri_index=data.boundary_left_tri_index,
                     boundary_right_tri_index=data.boundary_right_tri_index,
                     t=data.t)
+
+    ##################################################################################################################
+    #                                   HELPERS COMPILED NORMALIZATION
+    ##################################################################################################################
+
+    def _normalize_node_features(self, node_attr_raw):
+        return apply_affine_normalization(node_attr_raw, self.node_norm_scale, self.node_norm_bias)
+
+    def _normalize_edge_features(self, edge_attr_raw):
+        return apply_affine_normalization(edge_attr_raw, self.edge_norm_scale, self.edge_norm_bias)
+
+    def _denormalize_node_features(self, node_attr_norm):
+        return apply_affine_denormalization(node_attr_norm, self.node_stats_mean, self.node_denorm_scale,
+                                            self.preprocess_cfg.normalizer_method)
+
+    def _denormalize_edge_features(self, edge_attr_norm):
+        return apply_affine_denormalization(edge_attr_norm, self.edge_stats_mean, self.edge_denorm_scale,
+                                            self.preprocess_cfg.normalizer_method)
+
+    def _build_features_exact(self, data, x_noised, v_noised, x_pos_tm1_prev):
+        node_attr_raw, _ = self._build_node_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force)
+        edge_attr_raw, _ = self._build_edge_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force, data.edge_index)
+        return node_attr_raw, edge_attr_raw
+
+    def _build_features_taylor(self, data, noise_added_t, noise_added_prev_tm1):
+        x_clean = data.x_pos_t
+        v_clean = data.x_vel_t
+        x_tm1_clean = data.x_pos_tm1_prev
+        delta_x_t = noise_added_t
+        delta_x_tm1 = torch.zeros_like(x_tm1_clean) if noise_added_prev_tm1 is None else noise_added_prev_tm1
+        delta_v_t = noise_added_t / self.dt
+        if noise_added_prev_tm1 is not None:
+            delta_v_t = delta_v_t - noise_added_prev_tm1 / self.dt
+
+        node_attr_base_raw = self._denormalize_node_features(data.x[:, 1:])
+        edge_attr_base_raw = self._denormalize_edge_features(data.edge_attr)
+
+        def node_feature_fn(x_t, v_t, x_tm1):
+            out, _ = self._build_node_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force)
+            return out
+
+        def edge_feature_fn(x_t, v_t, x_tm1):
+            out, _ = self._build_edge_features_scripted(x_t, v_t, x_tm1, data.rest_pos, data.node_force,
+                                                        data.edge_index)
+            return out
+
+        _, node_delta_raw = torch.autograd.functional.jvp(node_feature_fn,
+                                                          (x_clean, v_clean, x_tm1_clean),
+                                                          (delta_x_t, delta_v_t, delta_x_tm1),
+                                                          create_graph=False,
+                                                          strict=False)
+        _, edge_delta_raw = torch.autograd.functional.jvp(edge_feature_fn,
+                                                          (x_clean, v_clean, x_tm1_clean),
+                                                          (delta_x_t, delta_v_t, delta_x_tm1),
+                                                          create_graph=False,
+                                                          strict=False)
+        return node_attr_base_raw + node_delta_raw, edge_attr_base_raw + edge_delta_raw
