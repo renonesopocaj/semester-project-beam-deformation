@@ -24,4 +24,6 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 
 mkdir -p saved_models
-python -m src.gnn.train computational=in_memory computational.torch_compile=True lr_scheduler=plateau training=slurm training.total_epochs=100 model=meshgraphnet_message devices=two_gpu training.loss_type=mae
+# python -m src.gnn.train computational=in_memory computational.torch_compile=True lr_scheduler=plateau training=slurm training.total_epochs=100 model=meshgraphnet_message devices=two_gpu training.loss_type=mae
+# Two ranks (matches devices=two_gpu): explicit torchrun avoids Lightning staying at world_size 1.
+torchrun --standalone --nproc_per_node=2 -m src.gnn.train computational=in_memory computational.torch_compile=True lr_scheduler=plateau training=slurm training.total_epochs=100 model=meshgraphnet_message devices=two_gpu training.loss_type=mae
