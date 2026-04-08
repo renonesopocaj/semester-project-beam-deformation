@@ -1,3 +1,10 @@
+"""
+time_discretizer.py
+
+Contains time discretization (differentiation and integration) helper functions to obtain velocity, acceleration from
+position and viceversa. Implements a strategy pattern.
+"""
+
 from abc import ABC, abstractmethod
 import torch
 

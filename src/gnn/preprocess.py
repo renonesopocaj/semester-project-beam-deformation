@@ -603,7 +603,7 @@ def main(cfg):
     preprocessor_train = create_preprocessor("train", cfg_obj, None, selected_train, selected_limit)
     preprocessor_val = create_preprocessor("val", cfg_obj, save_dir_train, selected_val, selected_limit)
     preprocessor_test = create_preprocessor("test", cfg_obj, save_dir_train, selected_test, selected_limit)
-    print("\n" + "=" * 60 + "\nTrain preprocesing")
+    print("\n" + "=" * 60 + "\nTrain preprocessing")
     preprocessor_train.preprocess_data(cfg_obj, graphs_dir_train, save_dir_train)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
     print("\n" + "=" * 60 + "\nTest preprocessing"+ "\n" + "=" * 60)

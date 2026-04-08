@@ -2,6 +2,10 @@
 inmemorytimestepdataset.py
 
 In-memory dataset for graph data.
+Two versions:
+- InMemoryTimeStepDataset: loads all preprocessed graphs into memory for fast training.
+- InMemoryNoisedDataset: wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
+    at every __getitem__ call, so each epoch sees a different perturbation.
 """
 
 from torch_geometric.data import Dataset, Data
