@@ -2,4 +2,3 @@ training_type: "slurm"
 total_epochs: 150
 resume_from: null
 checkpoint_interval: 20
-residual_list: []
