@@ -24,5 +24,11 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 
 mkdir -p saved_models
-# FIXME: fix 1 gpu instead of 2, it's temporary
-python -m src.gnn.train computational=in_memory computational.torch_compile=True lr_scheduler=plateau training=slurm training.total_epochs=100 training.loss_type="mae" model=meshgraphnet_message
+python -m src.gnn.train computational=in_memory \
+  computational.torch_compile=True \
+  lr_scheduler=plateau \
+  training=slurm \
+  training.total_epochs=100 \
+  training.loss_type="mae" \
+  model=meshgraphnet_message \
+  data=slurm
