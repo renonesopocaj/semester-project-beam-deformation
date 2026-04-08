@@ -48,13 +48,13 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(output_dir)  # Normalize to pathlib so joins/mkdir are consistent.
+    output_dir.mkdir(parents=True, exist_ok=True)  # Ensure PNG parent folders exist before savefig.
 
-    paths = {"images": {}, "videos": {}}
+    paths = {"images": {}, "videos": {}}  # Collect paths; videos key unused here but matches trainer contract.
 
     # 1) Final rollout position error per trajectory
-    p1 = output_dir / "final_roll_err_pos_per_traj.png"
+    p1 = output_dir / "final_roll_err_pos_per_traj.png"  # Output file for sorted bar chart of rollout pos error.
     _plot_sorted_per_traj_histogram(
         np.asarray(all_final_roll_err_pos, dtype=float),
         ylabel="Final Rollout Position MAE",
@@ -63,7 +63,7 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
         x_sort_caption="final rollout position MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["final_roll_err_pos_per_traj"] = p1
+    paths["images"]["final_roll_err_pos_per_traj"] = p1  # Register path for logging/UI.
 
     # 2) Acceleration relative MAE per trajectory (no rollout)
     p2 = output_dir / "acc_rel_mae_noroll_per_traj.png"
@@ -75,7 +75,7 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
         x_sort_caption="acceleration relative MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["acc_rel_mae_noroll_per_traj"] = p2
+    paths["images"]["acc_rel_mae_noroll_per_traj"] = p2  # Record path.
 
     # 3) Stress relative MAE per trajectory (no rollout)
     p3 = output_dir / "stress_rel_mae_noroll_per_traj.png"
@@ -87,7 +87,7 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
         x_sort_caption="stress relative MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["stress_rel_mae_noroll_per_traj"] = p3
+    paths["images"]["stress_rel_mae_noroll_per_traj"] = p3  # Store path.
 
     # 4) Absolute final volume error |pred - true| per trajectory
     vol_true = np.asarray(final_volumes_true, dtype=float)
@@ -102,9 +102,9 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
         x_sort_caption="absolute volume error (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["final_volume_per_traj"] = p4
+    paths["images"]["final_volume_per_traj"] = p4  # Register fourth summary figure.
 
-    return paths
+    return paths  # Return map of artifact names to paths (images only populated here).
 
 
 def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_caption,
@@ -127,40 +127,58 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
         selected_trajectory_indices: list[int]
             Trajectory indices drawn in red.
     """
-    n = int(values.shape[0])
+    n = int(values.shape[0])  # Number of trajectories = number of bars to draw.
     if n == 0:
-        return
-    order = np.argsort(values, kind="stable")
-    sorted_values = values[order]
-    selected_set = set(selected_trajectory_indices)
-    colors = []
-    for rank, traj_idx in enumerate(order):
+        return  # Nothing to plot; avoid empty figure.
+    order = np.argsort(values, kind="stable")  # Permutation that sorts bar heights ascending (stable ties).
+    sorted_values = values[order]  # Bar heights left-to-right after sorting.
+    selected_set = set(selected_trajectory_indices)  # Fast membership test for red coloring by original index.
+    colors = []  # One bar color per sorted position, built in loop below.
+    for rank, traj_idx in enumerate(order):  # rank = x position; traj_idx = original trajectory id.
         if int(traj_idx) in selected_set:
-            colors.append(_COLOR_SELECTED)
+            colors.append(_COLOR_SELECTED)  # Plot this bar crimson if traj is in selected list.
         elif rank % 2 == 0:
-            colors.append(_COLOR_STRIPE_A)
+            colors.append(_COLOR_STRIPE_A)  # Even rank after sort: gold stripe.
         else:
-            colors.append(_COLOR_STRIPE_B)
+            colors.append(_COLOR_STRIPE_B)  # Odd rank after sort: blue stripe.
 
-    span = max(1, n)
-    fig_width = min(_FIG_WIDTH_CAP, max(_FIG_WIDTH_FLOOR, 0.13 * span))
-    fig, ax = plt.subplots(figsize=(fig_width, _FIG_HEIGHT))
-    x_left = np.arange(n, dtype=float)
-    ax.bar(x_left, sorted_values, width=_BAR_WIDTH, align="edge", color=colors, linewidth=0, edgecolor="none")
-    ax.set_xlim(0, n)
-    ax.set_xticks([])
-    ax.set_xlabel(f"Trajectory index (sorted by {x_sort_caption})")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3, axis="y")
-    med = float(np.median(values))
-    p90 = float(np.percentile(values, 90))
-    ax.text(0.02, 0.98, f"median = {med:.6g}\n90th percentile = {p90:.6g}", transform=ax.transAxes, va="top",
-            ha="left", fontsize=9, bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="0.7", alpha=0.9))
-    legend_handles = [Patch(facecolor=_COLOR_SELECTED, edgecolor="none", label="Selected trajectory"),
-                      Patch(facecolor=_COLOR_STRIPE_A, edgecolor="none", label="Other (stripe A)"),
-                      Patch(facecolor=_COLOR_STRIPE_B, edgecolor="none", label="Other (stripe B)")]
-    ax.legend(handles=legend_handles, loc="upper right", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+    span = max(1, n)  # Avoid zero in width formula when n==0 (already returned); else use n.
+    fig_width = min(_FIG_WIDTH_CAP, max(_FIG_WIDTH_FLOOR, 0.13 * span))  # Wider figure when more bars (~0.13"/bar).
+    fig, ax = plt.subplots(figsize=(fig_width, _FIG_HEIGHT))  # Single axes for vertical bar chart.
+    x_left = np.arange(n, dtype=float)  # Left edges of bars at 0,1,...,n-1 (align="edge" draws rightward).
+    ax.bar(
+        x_left,  # X positions of bar left edges in data coordinates.
+        sorted_values,  # Bar heights = sorted metric values.
+        width=_BAR_WIDTH,  # Each bar spans one unit in x so bars touch without overlap.
+        align="edge",  # x_left is the left edge of each rectangle (not center).
+        color=colors,  # Per-bar face color list (matplotlib cycles one color per bar).
+        linewidth=0,  # No border stroke on bars.
+        edgecolor="none",  # Explicitly disable bar outlines for flat fill look.
+    )
+    ax.set_xlim(0, n)  # Clip x view to bar region [0, n].
+    ax.set_xticks([])  # Hide per-bar tick labels (too many trajectories); caption explains order instead.
+    ax.set_xlabel(f"Trajectory index (sorted by {x_sort_caption})")  # Explains x is sort order not raw index.
+    ax.set_ylabel(ylabel)  # Metric name and units on vertical axis.
+    ax.set_title(title)  # Figure headline above axes.
+    ax.grid(True, alpha=0.3, axis="y")  # Light horizontal gridlines to read bar heights.
+    med = float(np.median(values))  # Median over unsorted per-traj values (population summary).
+    p90 = float(np.percentile(values, 90))  # 90th percentile for annotation box.
+    ax.text(
+        0.02,  # X in axes fraction: near left margin inside axes.
+        0.98,  # Y in axes fraction: near top inside axes.
+        f"median = {med:.6g}\n90th percentile = {p90:.6g}",  # Text box content with compact numeric formatting.
+        transform=ax.transAxes,  # Interpret 0..1 coords relative to axes box (not data coords).
+        va="top",  # Anchor text box top to the given point (text grows downward).
+        ha="left",  # Anchor text’s left edge to the point.
+        fontsize=9,  # Small but readable overlay text.
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="0.7", alpha=0.9),  # White rounded label background.
+    )
+    legend_handles = [
+        Patch(facecolor=_COLOR_SELECTED, edgecolor="none", label="Selected trajectory"),  # Legend patch for red bars.
+        Patch(facecolor=_COLOR_STRIPE_A, edgecolor="none", label="Other (stripe A)"),  # Legend for gold bars.
+        Patch(facecolor=_COLOR_STRIPE_B, edgecolor="none", label="Other (stripe B)"),  # Legend for blue bars.
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=8)  # Fixed legend explaining color semantics.
+    fig.tight_layout()  # Reduce subplot padding so title/labels fit before rasterizing.
+    fig.savefig(output_path, dpi=150)  # Write PNG at 150 dpi to disk.
+    plt.close(fig)  # Free figure memory after save.
