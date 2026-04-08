@@ -9,7 +9,7 @@ Two versions:
 """
 
 from torch_geometric.data import Dataset, Data
-from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
+from src.gnn.preprocessing.build_features import make_scripted_feature_builders
 import os
 import torch
 
@@ -120,6 +120,8 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self.preprocess_cfg = preprocess_cfg
         self.noise_also_prev = noise_also_prev
         self.noise_prev_scale = noise_prev_scale
+        self._build_node_features_scripted, self._build_edge_features_scripted = make_scripted_feature_builders(
+            self.preprocess_cfg)
 
     def __getitem__(self, idx):
         """
@@ -165,14 +167,14 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         if noise_added_prev_tm1 is not None:
             v_noised = v_noised - noise_added_prev_tm1 / self.dt
         # Node features: full recomputation from raw attributes
-        node_attr_raw, _ = build_node_features(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos, data.node_force,
-                                               self.preprocess_cfg)
+        node_attr_raw, _ = self._build_node_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force)
         node_attr_norm = (node_attr_raw - self.node_stats_mean) / (self.node_stats_std + EPS)
         new_x = torch.cat([data.x_bc, node_attr_norm], dim=1)
 
         # Edge features: full recomputation due to norms
-        edge_attr_raw, _ = build_edge_features(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos, data.node_force,
-                                               data.edge_index, self.preprocess_cfg)
+        edge_attr_raw, _ = self._build_edge_features_scripted(x_noised, v_noised, x_pos_tm1_prev, data.rest_pos,
+                                                              data.node_force, data.edge_index)
         new_edge_attr = (edge_attr_raw - self.edge_stats_mean) / (self.edge_stats_std + EPS)
 
         # Target acceleration correction (in normalized space)

@@ -7,6 +7,139 @@ import torch
 
 EPS = 1e-8
 
+@torch.jit.script
+def _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ: bool,
+                              enable_absolute_pos: bool, enable_node_norms: bool):
+    """
+    TorchScript-compatible node feature builder with explicit feature flags.
+    """
+    feat_list = []
+    feat_list.append(v)
+    u = x - rest_pos
+    feat_list.append(u)
+    feat_list.append(node_force)
+    split_idx_node = 9
+    u_tm1 = x_tm1_prev - rest_pos
+    if enable_past_pos_displ:
+        if enable_absolute_pos:
+            feat_list.append(x_tm1_prev)
+            split_idx_node += 3
+        feat_list.append(u_tm1)
+        split_idx_node += 3
+    if enable_absolute_pos:
+        feat_list.append(x)
+        split_idx_node += 3
+        feat_list.append(rest_pos)
+        split_idx_node += 3
+    if enable_node_norms:
+        feat_list.append(torch.norm(u, dim=1, keepdim=True))
+        feat_list.append(torch.norm(node_force, dim=1, keepdim=True))
+        feat_list.append(torch.norm(v, dim=1, keepdim=True))
+        if enable_absolute_pos:
+            feat_list.append(torch.norm(x, dim=1, keepdim=True))
+            feat_list.append(torch.norm(rest_pos, dim=1, keepdim=True))
+        if enable_past_pos_displ:
+            feat_list.append(torch.norm(u_tm1, dim=1, keepdim=True))
+            if enable_absolute_pos:
+                feat_list.append(torch.norm(x_tm1_prev, dim=1, keepdim=True))
+    node_feat_tensor = torch.cat(feat_list, dim=1)
+    return node_feat_tensor, split_idx_node
+
+
+@torch.jit.script
+def _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index, enable_edge_velocity: bool,
+                              enable_force_edge: bool, enable_stretch_edge: bool, enable_rotation_angle: bool,
+                              enable_absolute_pos: bool, enable_past_pos_displ: bool):
+    """
+    TorchScript-compatible edge feature builder with explicit feature flags.
+    """
+    src = edge_index[0]
+    dst = edge_index[1]
+    feat_list = []
+    eps = 1e-8
+
+    xij_t = x_t[dst] - x_t[src]
+    x_tm1_past_ij = x_tm1_prev[dst] - x_tm1_prev[src]
+    u_tm1_past = x_tm1_prev - rest_pos
+    rest_pos_ij = rest_pos[dst] - rest_pos[src]
+    u_t = x_t - rest_pos
+    uij_t = u_t[dst] - u_t[src]
+    feat_list.append(uij_t)
+    split_idx_edge = 3
+
+    force_ij = node_force_t[dst] - node_force_t[src]
+    vij = v_t[dst] - v_t[src]
+
+    if enable_edge_velocity:
+        feat_list.append(vij)
+        split_idx_edge += 3
+    if enable_force_edge:
+        feat_list.append(force_ij)
+        split_idx_edge += 3
+    if enable_absolute_pos:
+        feat_list.append(xij_t)
+        split_idx_edge += 3
+        feat_list.append(rest_pos_ij)
+        split_idx_edge += 3
+    if enable_past_pos_displ:
+        u_tm1_past_ij = u_tm1_past[dst] - u_tm1_past[src]
+        feat_list.append(u_tm1_past_ij)
+        split_idx_edge += 3
+        if enable_absolute_pos:
+            feat_list.append(x_tm1_past_ij)
+            split_idx_edge += 3
+
+    xij_norm = torch.norm(xij_t, dim=1, keepdim=True)
+    feat_list.append(xij_norm)
+    rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1, keepdim=True)
+    feat_list.append(rest_pos_ij_norm)
+    uij_norm = torch.norm(uij_t, dim=1, keepdim=True)
+    feat_list.append(uij_norm)
+    if enable_force_edge:
+        feat_list.append(torch.norm(force_ij, dim=1, keepdim=True))
+    if enable_edge_velocity:
+        feat_list.append(torch.norm(vij, dim=1, keepdim=True))
+    if enable_stretch_edge:
+        stretch_ij_norm = xij_norm / (rest_pos_ij_norm + eps)
+        feat_list.append(stretch_ij_norm)
+    if enable_rotation_angle:
+        _e0 = rest_pos_ij / (rest_pos_ij_norm + eps)
+        _et = xij_t / (xij_norm + eps)
+        direction_cosine = torch.sum(_e0 * _et, dim=1, keepdim=True)
+        feat_list.append(direction_cosine)
+    edge_feat_tensor = torch.cat(feat_list, dim=1)
+    return edge_feat_tensor, split_idx_edge
+
+
+def make_scripted_feature_builders(preprocess_cfg):
+    """
+    Creates node/edge scripted feature builders with config flags baked in once.
+
+    Args:
+        preprocess_cfg: PreprocessYaml
+    return: tuple
+        (node_builder, edge_builder)
+    """
+    enable_past_pos_displ = preprocess_cfg.enable_past_pos_displ
+    enable_absolute_pos = preprocess_cfg.enable_absolute_pos
+    enable_node_norms = preprocess_cfg.enable_node_norms
+    enable_edge_velocity = preprocess_cfg.enable_edge_velocity
+    enable_force_edge = preprocess_cfg.enable_force_edge
+    enable_stretch_edge = preprocess_cfg.enable_stretch_edge
+    enable_rotation_angle = preprocess_cfg.enable_rotation_angle
+
+    def node_builder(x, v, x_tm1_prev, rest_pos, node_force):
+        return _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ,
+                                         enable_absolute_pos, enable_node_norms)
+
+    def edge_builder(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index):
+        return _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index,
+                                         enable_edge_velocity, enable_force_edge, enable_stretch_edge,
+                                         enable_rotation_angle, enable_absolute_pos, enable_past_pos_displ)
+
+    return node_builder, edge_builder
+
+
 def build_node_features(x, v, x_tm1_prev, rest_pos, node_force, preprocess_cfg):
     """
     Build node features: [position, velocity, rest_position, node_force, displacement] FOR ONE TIMESTEP
@@ -20,57 +153,10 @@ def build_node_features(x, v, x_tm1_prev, rest_pos, node_force, preprocess_cfg):
     return: Tensor
         Concatenated features with shape (N, ???).
     """
-    # Now
-    enable_past_pos_displ_node, enable_absolute_pos, enable_node_norms = (preprocess_cfg.enable_past_pos_displ,
+    enable_past_pos_displ, enable_absolute_pos, enable_node_norms = (preprocess_cfg.enable_past_pos_displ,
         preprocess_cfg.enable_absolute_pos, preprocess_cfg.enable_node_norms)
-    # Start preprocessing
-    device = x.device
-    feat_list = []
-    # velocty v (3)
-    v = v.to(device)
-    feat_list.append(v)
-    # displacement field u (6)
-    u = x - rest_pos
-    feat_list.append(u)
-    # node force f (9)
-    node_force = node_force.to(device)
-    feat_list.append(node_force)
-    split_idx_node = 9
-    # past position absolute and displacement x[t-1], u[t-1] (max +6 --> 15)
-    if enable_past_pos_displ_node:
-        # include x[t-1]
-        if enable_absolute_pos:
-            feat_list.append(x_tm1_prev)
-            split_idx_node += 3
-        # include u[t-1]
-        u_tm1 = x_tm1_prev - rest_pos
-        feat_list.append(u_tm1)
-        split_idx_node += 3
-    # absolute position x, rest absolute position rest_pos (max +6 --> 21)
-    if enable_absolute_pos:
-        # absolute position x[t]
-        feat_list.append(x)
-        split_idx_node += 3
-        # rest position x[0]
-        rest_pos = rest_pos.to(device)
-        feat_list.append(rest_pos)
-        split_idx_node += 3
-    # node norms of each feature (max +7 --> 28)
-    if enable_node_norms:
-        feat_list.append(torch.norm(u, dim=1).unsqueeze(1))
-        feat_list.append(torch.norm(node_force, dim=1).unsqueeze(1))
-        feat_list.append(torch.norm(v, dim=1).unsqueeze(1))
-        if enable_absolute_pos:
-            feat_list.append(torch.norm(x, dim=1).unsqueeze(1))
-            feat_list.append(torch.norm(rest_pos, dim=1).unsqueeze(1))
-        if enable_past_pos_displ_node:
-            feat_list.append(torch.norm(u_tm1, dim=1).unsqueeze(1))
-            if enable_absolute_pos:
-                feat_list.append(torch.norm(x_tm1_prev, dim=1).unsqueeze(1))
-
-    # Finally, concatenate
-    node_feat_tensor = torch.concat(feat_list, dim=1)
-    return node_feat_tensor, split_idx_node
+    return _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ,
+                                     enable_absolute_pos, enable_node_norms)
 
 
 def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index, preprocess_cfg):
@@ -91,83 +177,13 @@ def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index
             enable/disable features
     return: torch.Tensor (E, ???)
     """
-    # First
-    (enable_velocity_edge, enable_force_edge, enable_stretch_edge, enable_rotation_angle, enable_absolute_pos,
-     enable_past_pos_displ_edge) = (preprocess_cfg.enable_edge_velocity, preprocess_cfg.enable_force_edge,
-                                    preprocess_cfg.enable_stretch_edge, preprocess_cfg.enable_rotation_angle,
-                                    preprocess_cfg.enable_absolute_pos, preprocess_cfg.enable_past_pos_displ)
-    # Start preprocessing
-    src, dst = edge_index
-    feat_list = []
-    xij_t = x_t[dst] - x_t[src] # (E, 3) relative position
-    x_tm1_past_ij = x_tm1_prev[dst] - x_tm1_prev[src]
-    u_tm1_past = x_tm1_prev - rest_pos
-    rest_pos_ij = rest_pos[dst] - rest_pos[src]
-    # current displacement u_ij[t] (3)
-    u_t = x_t - rest_pos
-    uij_t = u_t[dst] - u_t[src] # (E, 3) rest relative position
-    feat_list.append(uij_t)
-    split_idx_edge = 3
-    # velocity v_ij (6)
-    if enable_velocity_edge:
-        vij = v_t[dst] - v_t[src]
-        feat_list.append(vij)
-        split_idx_edge += 3
-    # force f_ij (+3 --> max 9)
-    if enable_force_edge:
-        force_ij = node_force_t[dst] - node_force_t[src]
-        feat_list.append(force_ij)
-        split_idx_edge += 3
-    if enable_absolute_pos:
-        # current abs position x_ij[t] (+3 --> max 12)
-        feat_list.append(xij_t)
-        split_idx_edge += 3
-        # rest pos x_ij[0] (+3 --> max 15)
-        feat_list.append(rest_pos_ij)
-        split_idx_edge += 3
-    if enable_past_pos_displ_edge:
-        # past t-1 displacement u_ij[t-1] (+3 --> max 18)
-        u_tm1_past_ij = u_tm1_past[dst] - u_tm1_past[src]
-        feat_list.append(u_tm1_past_ij)
-        split_idx_edge += 3
-        # past t-1 absolute position x_ij[t-1] (+3 --> max 21)
-        if enable_absolute_pos:
-            feat_list.append(x_tm1_past_ij)
-            split_idx_edge += 3
-    # ==============================================================
-    #                                   NORMS
-    # ===============================================================
-    # position norm (+1)
-    xij_norm = torch.norm(xij_t, dim=1).unsqueeze(1) # (E, 1)
-    feat_list.append(xij_norm)
-    # rest position norm (+1)
-    rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1) # (E, 1)
-    feat_list.append(rest_pos_ij_norm)
-    # displacement norm (+1)
-    uij_norm = torch.norm(uij_t, dim=1).unsqueeze(1)
-    feat_list.append(uij_norm)
-    # force norm (+1)
-    if enable_force_edge:
-        force_ij_norm = torch.norm(force_ij, dim=1).unsqueeze(1)
-        feat_list.append(force_ij_norm)
-    # velocity norm (+1)
-    if enable_velocity_edge:
-        vij_norm = torch.norm(vij, dim=1).unsqueeze(1)
-        feat_list.append(vij_norm)
-    # stretch (norm-only-feature) (+1)
-    if enable_stretch_edge:
-        rest_pos_ij_norm = torch.norm(rest_pos_ij, dim=1).unsqueeze(1)
-        stretch_ij_norm = xij_norm / (rest_pos_ij_norm + EPS)
-        feat_list.append(stretch_ij_norm)
-    # rotation angle (norm-only-feature) (+1)
-    if enable_rotation_angle:
-        _e0 = rest_pos_ij / (rest_pos_ij_norm + EPS)
-        _et = xij_t / (xij_norm + EPS)
-        direction_cosine = torch.sum(_e0 * _et, dim=1, keepdim=True)
-        feat_list.append(direction_cosine)
-    # Finally concatenate all features
-    edge_feat_tensor = torch.concat(feat_list, dim=1)
-    return edge_feat_tensor, split_idx_edge
+    (enable_edge_velocity, enable_force_edge, enable_stretch_edge, enable_rotation_angle, enable_absolute_pos,
+     enable_past_pos_displ) = (preprocess_cfg.enable_edge_velocity, preprocess_cfg.enable_force_edge,
+                               preprocess_cfg.enable_stretch_edge, preprocess_cfg.enable_rotation_angle,
+                               preprocess_cfg.enable_absolute_pos, preprocess_cfg.enable_past_pos_displ)
+    return _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index,
+                                     enable_edge_velocity, enable_force_edge, enable_stretch_edge,
+                                     enable_rotation_angle, enable_absolute_pos, enable_past_pos_displ)
 
 
 def probe_feature_layout(preprocess_cfg, device):

@@ -6,7 +6,7 @@ Only thing from ground truth graph, i.e. is not predicted, is the node force, th
 
 import torch
 from torch_geometric.data import Data
-from src.gnn.preprocessing.build_features import build_edge_features, build_node_features
+from src.gnn.preprocessing.build_features import make_scripted_feature_builders
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first_num,
                rollout_steps, normalizer, preprocess_cfg, time_discretizer, exp_mises):
@@ -53,6 +53,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     with torch.no_grad():
         true_rollout, pred_rollout = [], []
         rest_pos = None
+        node_feature_builder, edge_feature_builder = make_scripted_feature_builders(preprocess_cfg)
         node_stats.to(device)
         edge_stats.to(device)
         target_stats.to(device)
@@ -98,7 +99,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             input_graph = _build_next_graph(ground_truth_graph=graph_ground_truth, x_predict_tp1=x_predict_tp1,
                                             v_predict_tp1=v_predict_tp1, x_t=x_t, rest_pos=rest_pos,
                                             node_stats=node_stats,
-                                            edge_stats=edge_stats, normalizer=normalizer, preprocess_cfg=preprocess_cfg)
+                                            edge_stats=edge_stats, normalizer=normalizer,
+                                            node_feature_builder=node_feature_builder,
+                                            edge_feature_builder=edge_feature_builder)
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
@@ -121,7 +124,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     return true_rollout, pred_rollout
 
 def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, rest_pos, node_stats, edge_stats,
-                      normalizer, preprocess_cfg):
+                      normalizer, node_feature_builder, edge_feature_builder):
     """
     Builds a graph for building the graph of next timestep t+1 from predicted state. Helper for do_rollout.
 
@@ -137,7 +140,10 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, res
         node_stats: Stats
         edge_stats: Stats
         normalizer: Normalizer
-        preprocess_cfg: PreprocessYaml
+        node_feature_builder: callable
+            Cached scripted node feature builder.
+        edge_feature_builder: callable
+            Cached scripted edge feature builder.
 
     :return input_graph
     """
@@ -149,16 +155,16 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, res
     # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
     # (valued node features) with it, but the rest is predicted.
     ground_truth_force_tp1 = ground_truth_graph.node_force_next
-    valued_node_features_tp1, _ = build_node_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
-                                                      ground_truth_force_tp1, preprocess_cfg)
+    valued_node_features_tp1, _ = node_feature_builder(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
+                                                       ground_truth_force_tp1)
     x_node_features = torch.concat(
         [categorical_node_features, normalizer.normalize(valued_node_features_tp1, node_stats)], dim=1)
     # Keep force node features unchanged: deleted
     # _x[-1] = ground_truth_graph.x[-1]
 
     # --------------- Edges ----------------------
-    edge_features_tp1, _ = build_edge_features(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
-                                               ground_truth_force_tp1, ground_truth_graph.edge_index, preprocess_cfg)
+    edge_features_tp1, _ = edge_feature_builder(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
+                                                ground_truth_force_tp1, ground_truth_graph.edge_index)
     edge_attr_normalized_tp1 = normalizer.normalize(edge_features_tp1, edge_stats)
 
     # -------------- Final: create next-time–step input graph -----------------

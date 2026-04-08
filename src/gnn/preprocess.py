@@ -22,6 +22,7 @@ Train:
 
 
 import shutil
+from typing import Any
 
 import torch
 import json
@@ -30,7 +31,7 @@ from omegaconf import OmegaConf, open_dict
 from src.gnn.mesh_numerical_helpers.time_discretizer import TimeDiscretizer, create_time_discretizer
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml
 from src.gnn.preprocessing.build_features import (
-    compute_von_mises_3d, build_edge_features, build_node_features, probe_feature_layout)
+    compute_von_mises_3d, probe_feature_layout, make_scripted_feature_builders)
 from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
@@ -153,6 +154,8 @@ class Preprocessor(ABC):
     selected_limit: int
     split_idx_node: int | None
     split_idx_edge: int | None
+    _build_node_features_scripted: Any
+    _build_edge_features_scripted: Any
 
     def __init__(self, cfg, selected_indices, selected_limit):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
@@ -164,6 +167,8 @@ class Preprocessor(ABC):
         self.selected_limit = int(selected_limit)
         self.split_idx_node = None
         self.split_idx_edge = None
+        self._build_node_features_scripted = None
+        self._build_edge_features_scripted = None
 
     def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
         save_dir = Path(save_dir)
@@ -199,6 +204,7 @@ class Preprocessor(ABC):
                 Path to save the preprocessed data
         """
         torch.manual_seed(cfg.seed)
+        self._build_node_features_scripted, self._build_edge_features_scripted = make_scripted_feature_builders(cfg)
         filenames = _sort_filenames_by_traj_params(list(Path(graphs_dir).glob("*.pt")), graphs_dir)
         if not filenames:
             raise FileNotFoundError(f"No .pt files found in {graphs_dir}")
@@ -255,12 +261,12 @@ class Preprocessor(ABC):
                 _x_t, _v_t, _a_t = x[t], v[t], a[t]
                 _categorical_node_attr = boundary_condition
                 # concatenate [position, velocity, rest_position, node_force] and x_minus_u optionally (3)
-                _node_attr, split_idx_node = build_node_features(_x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force,
-                                                                 cfg)
+                _node_attr, split_idx_node = self._build_node_features_scripted(
+                    _x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force)
                 # Obtain edge features [rel_pos, rel_pos_norm, rest_rel_pos, rest_rel_pos_norm]
                 # .edge_index contains mesh connectivity
-                _edge_attr, split_idx_edge = build_edge_features(_x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force,
-                                                                 graph.edge_index, cfg)
+                _edge_attr, split_idx_edge = self._build_edge_features_scripted(
+                    _x_t, _v_t, _x_pos_tm1_prev, rest_pos_x, _node_force, graph.edge_index)
                 # .y_sig_t contains the full stress tensor
                 # Output _von_mises_raw is (N, 1) [graph.y_sig_t is (N, 9)]
                 _von_mises_raw = compute_von_mises_3d(graph.y_sig_t).unsqueeze(1)
