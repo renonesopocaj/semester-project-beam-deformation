@@ -152,6 +152,25 @@ class LitModule(L.LightningModule):
         """
         return isinstance(self.logger, WandbLogger)
 
+    def _current_wandb_epoch(self):
+        """
+        Returns the 1-based epoch number used as W&B step.
+        """
+        return int(self.current_epoch) + 1
+
+    def _log_wandb_epoch_marker(self, commit):
+        """
+        Writes an explicit epoch marker to W&B with step=epoch.
+
+        Args:
+            commit: bool
+                W&B commit flag for this epoch marker log.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+        epoch_number = self._current_wandb_epoch()
+        self.logger.experiment.log({"epoch": epoch_number}, step=epoch_number, commit=commit)
+
     def configure_optimizers(self):
         """
         Returns the optimizer to Lightning's training loop.
@@ -179,7 +198,7 @@ class LitModule(L.LightningModule):
         if self.enable_wandb_watch:
             self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
         # Log initial epoch value
-        # self.logger.experiment.log({"epoch": 0})
+        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
 
     def on_fit_end(self):
         """
@@ -338,6 +357,9 @@ class LitModule(L.LightningModule):
         has_logger = self._has_wandb_logger()
         prog_bar_key_set = set(prog_bar_keys)
         sync_dist_key_set = set(sync_dist_keys)
+        if has_logger:
+            self.log("epoch", float(self._current_wandb_epoch()), on_step=False, on_epoch=True,
+                     prog_bar=False, logger=True, batch_size=batch_size, sync_dist=False, rank_zero_only=True)
 
         for metric_name, metric_value in metrics.items():
             self.log(metric_name, metric_value, on_step=False, on_epoch=True,
@@ -376,8 +398,7 @@ class LitModule(L.LightningModule):
         3. Halts training early if the scheduler signals stop.
         """
         # Logs epoch
-        if self._has_wandb_logger() and self.trainer.is_global_zero:
-            self.logger.experiment.log({"epoch": self.current_epoch + 1})
+        self._log_wandb_epoch_marker(commit=False)
         # If there is no scheduler don't do nothing
         if self.scheduler is None:
             return
@@ -391,7 +412,8 @@ class LitModule(L.LightningModule):
         self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
         # Logs current learning rate value
         current_lr = float(self.optimizer.param_groups[0]["lr"])
-        self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())
+        self.log("train/lr", current_lr, on_step=False, on_epoch=True, prog_bar=True,
+                 logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
         # Checks if it has to stop
         if self.scheduler.stop:
             print("\n\n\n\n" + "=" * 60)
@@ -445,6 +467,7 @@ class LitModule(L.LightningModule):
             return
         if not self.enable_rollout_val or self.validation_dataset is None:
             return
+        self._log_wandb_epoch_marker(commit=False)
         # 1. Collect all (for each traj) final rollout MAE error on position (averaged among all nodes)
         all_final_roll_err_pos = []
         for traj_idx in range(self.validation_dataset.num_trajectories):
@@ -515,6 +538,7 @@ class LitModule(L.LightningModule):
         """
         if not self.trainer.is_global_zero:
             return
+        self._log_wandb_epoch_marker(commit=False)
 
         # 1. Compute per-trajectory no-rollout metrics (one-step inference)
         # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
@@ -560,7 +584,7 @@ class LitModule(L.LightningModule):
                                                                        all_pred_rollouts[traj_idx], traj_idx)
         # 6. Single wandb logging call
         log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
-                            self._has_wandb_logger())
+                            self._has_wandb_logger(), self._current_wandb_epoch())
 
     def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
         """
