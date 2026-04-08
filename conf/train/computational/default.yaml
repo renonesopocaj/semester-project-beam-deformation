@@ -6,3 +6,4 @@ torch_compile: False
 profiling: False # disabled because it worsens computational efficiency
 fused_adam: True
 pin_memory: True
+rollout_batch_size: 1

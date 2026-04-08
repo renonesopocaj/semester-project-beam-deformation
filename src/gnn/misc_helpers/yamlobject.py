@@ -169,6 +169,7 @@ class TrainYaml:
         self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
         # Notes various
         self.pin_memory = flattened_cfg["pin_memory"]
+        self.rollout_batch_size = flattened_cfg["rollout_batch_size"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         # Noise
         self.noise_scale_train = flattened_cfg["noise_scale_train"]

@@ -1,5 +1,6 @@
-dataset_type: rotated_beam
+# Absolute scratch paths (Izar). Requires selected_trajectories.json under extra_info_dir (same as raw extra_info).
+dataset_type: single_direction_beam
 base_dir: dataset
-raw_data_dir: scratch/izar/senoner/${paths.base_dir}/raw/raw/${paths.dataset_type}/${dataset.dataset_size}
-save_dir: scratch/izar/senoner/${paths.base_dir}/processed/${paths.dataset_type}
-extra_info_dir: scratch/izar/senoner/${paths.raw_data_dir}/extra_info
+raw_data_dir: /scratch/izar/senoner/${paths.base_dir}/raw/raw/${paths.dataset_type}/${dataset.dataset_size}
+save_dir: /scratch/izar/senoner/${paths.base_dir}/processed/${paths.dataset_type}
+extra_info_dir: ${paths.raw_data_dir}/extra_info
