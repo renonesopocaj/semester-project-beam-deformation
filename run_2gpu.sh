@@ -31,7 +31,6 @@ torchrun --standalone --nproc_per_node=2 -m src.gnn.train \
   lr_scheduler=plateau \
   training=slurm \
   training.total_epochs=100 \
-  training.loss_type=mae \
   model=mgn_message_mid \
   devices=two_gpu \
   data=slurm \
