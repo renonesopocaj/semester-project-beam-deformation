@@ -1,5 +1,5 @@
 num_workers: 0
-batch_size: 256
+batch_size: 384 # try 512
 # Lightning: 32-true (CPU / no AMP), bf16-mixed or 16-mixed on CUDA Tensor Core GPUs
 precision: bf16-mixed
 torch_compile: False
