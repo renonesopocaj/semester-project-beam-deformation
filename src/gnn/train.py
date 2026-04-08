@@ -155,7 +155,9 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         validation_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.val_dir, device="cpu")
         # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
         # recommend CPU tensors plus pin_memory=True for faster transfer instead.
-        validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False,
+        # NOTE: batch size does not influence rollout since we use a separate dataloader (internal)
+        val_batch_size = train_cfg.batch_size * 2
+        validation_dataloader = DataLoader(validation_dataset, batch_size=val_batch_size, shuffle=False,
                                            num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
                                            pin_memory=train_cfg.pin_memory)
 
@@ -229,7 +231,6 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     elif train_cfg.training_type == "slurm":
         if not torch.cuda.is_available():
             raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
-        # devices=8, num_nodes=4, strategy="ddp"
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
                                 check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
@@ -311,6 +312,7 @@ def main(cfg):
     # device = "cpu" hardcoded for performance reason
     test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device="cpu")
     # pin memory = True for faster transfer instead.
+    # We don't care about batch size since we're really just doing it in the end AND we're doing mostly rolllout
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,

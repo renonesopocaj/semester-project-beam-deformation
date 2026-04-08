@@ -1,7 +1,7 @@
 num_workers: 0
 batch_size: 16
 # Lightning: 32-true (CPU / no AMP), bf16-mixed or 16-mixed on CUDA Tensor Core GPUs
-precision: bf16-mixed
+precision: 32-true
 torch_compile: False
 profiling: False # disabled because it worsens computational efficiency
 fused_adam: True
