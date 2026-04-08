@@ -461,7 +461,9 @@ class LitModule(L.LightningModule):
 
     def _get_trajectory_loader(self, dataset, traj_idx):
         """
-        Creates a DataLoader for a single trajectory by slicing the dataset.
+        Creates a DataLoader for a single trajectory by slicing the dataset. Used for all rollouts operations,
+        since I cannot use "batches" to execute evaluation in parallel due to the sequential nature of autoregressive
+        rollout.
         Used for on_validation_epoch_end IFF self.enable_rollout_val == True, and by on_test_epoch_end by default
 
         Args:
