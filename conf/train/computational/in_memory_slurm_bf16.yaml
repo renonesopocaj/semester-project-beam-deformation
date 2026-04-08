@@ -5,4 +5,5 @@ precision: bf16-mixed
 torch_compile: False
 profiling: False # disabled because it worsens computational efficiency
 pin_memory: True
+rollout_batch_size: 1
 fused_adam: True
