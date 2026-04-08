@@ -1,6 +1,6 @@
 defaults:
   - computational: default
-  - model: meshgraphnet
+  - model: mgn_small
   - training: default
   - noise: default
   - loss: default
