@@ -181,6 +181,21 @@ class LitModule(L.LightningModule):
         """
         return self.optimizer
 
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer):
+        """
+        Clears gradients with set_to_none=True so Lightning skips zero-fill and may free grad storages (faster).
+        Overrides the default zero_grad method to use set_to_none=True.
+
+        Args:
+            epoch: int
+                Current epoch (Lightning hook).
+            batch_idx: int
+                Current batch index (Lightning hook).
+            optimizer: torch.optim.Optimizer
+                Optimizer whose gradients are cleared.
+        """
+        optimizer.zero_grad(set_to_none=True)
+
     def on_fit_start(self):
         """
         Called at the beginning of fit. Sets up W&B metric definitions and model watching.
