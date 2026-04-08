@@ -1,7 +1,7 @@
 defaults:
   - computational: default
   - model: mgn_small
-  - training: default
+  - training: default # contains .total_epochs
   - noise: default
   - loss: default
   - validation: validation

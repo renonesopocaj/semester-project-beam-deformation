@@ -170,7 +170,7 @@ class TrainYaml:
         self.pin_memory = flattened_cfg["pin_memory"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
         # Noise
-        self.noise_scale = flattened_cfg["noise_scale_train"]
+        self.noise_scale_train = flattened_cfg["noise_scale_train"]
         self.noise_gamma = flattened_cfg["noise_gamma"]
         self.noise_seed = flattened_cfg["noise_seed"]
         self.noise_also_prev = flattened_cfg["noise_also_prev"]

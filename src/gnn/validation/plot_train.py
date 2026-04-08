@@ -23,7 +23,6 @@ def _save_dual_axis_loss_rollout(train_epochs, train_loss, val_epochs, val_loss,
             Validation rollout error values (same length as val_epochs).
         output_path: Path
             Destination image path.
-        return: None
     """
     fig, ax_left = plt.subplots(figsize=(10, 6))
     _draw_dual_axis_loss_rollout(ax_left, train_epochs, train_loss, val_epochs, val_loss, rollout_error)
@@ -47,7 +46,6 @@ def _draw_dual_axis_loss_rollout(ax_left, train_epochs, train_loss, val_epochs, 
             Validation loss values.
         rollout_error: np.ndarray
             Validation rollout error values.
-        return: None
     """
     line_train, = ax_left.plot(train_epochs, train_loss, label="Train Loss", linewidth=2.0)
     line_val = None
@@ -99,7 +97,6 @@ def _draw_lr_curve(ax, epochs, lr_values):
             Epoch indices.
         lr_values: np.ndarray
             Learning rate per epoch.
-        return: None
     """
     ax.plot(epochs, lr_values, linewidth=2.0, color="tab:purple")
     ax.set_xlabel("Epoch")
@@ -113,8 +110,6 @@ def plot_training_history(trainer):
     Args:
         trainer: Trainer
             Trainer instance holding the epoch histories.
-        return: None
-            Saves end-of-training history plots.
     """
 
     model_dir = Path(trainer.model_dir)
@@ -172,8 +167,6 @@ def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, ti
             Plot title.
         ylabel: str
             Plot y-axis label.
-        return: None
-            Draws a single epoch curve on the axis.
     """
     ax.plot(train_epochs, train_values, label=train_label, linewidth=2.0)
     if len(val_values) > 0:
@@ -202,8 +195,6 @@ def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title,
             Plot y-axis label.
         output_path: Path
             Destination image path.
-        return: None
-            Saves the figure to disk.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, title, ylabel, train_label, val_label)

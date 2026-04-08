@@ -19,10 +19,13 @@ _COLOR_STRIPE_B = "royalblue"
 
 
 def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                 final_volumes_true, final_volumes_pred, output_dir, split,
-                 selected_trajectory_indices):
+                 final_volumes_true, final_volumes_pred, output_dir, split, selected_trajectory_indices):
     """
-    Generates summary bar-chart plots that aggregate metrics across all trajectories.
+    Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
+    - all_final_roll_err_pos
+    - per_traj_acc_rel_mae
+    - per_traj_stress_rel_mae
+    - (final_volumes_true, final_volumes_pred) err
     Main access point called by trainer.
 
     Args:
@@ -55,7 +58,7 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
     _plot_sorted_per_traj_histogram(
         np.asarray(all_final_roll_err_pos, dtype=float),
         ylabel="Final Rollout Position MAE",
-        title=f"Final Rollout Position Error per Trajectory [{split}]",
+        title=f"Final Rollout Position MAE Error per Trajectory averaged over all nodes [{split}]",
         output_path=p1,
         x_sort_caption="final rollout position MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
@@ -63,12 +66,11 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
     paths["images"]["final_roll_err_pos_per_traj"] = p1
 
     # 2) Acceleration relative MAE per trajectory (no rollout)
-    # FIXME: make sure this is also the one with last trajectory rollout
     p2 = output_dir / "acc_rel_mae_noroll_per_traj.png"
     _plot_sorted_per_traj_histogram(
         np.asarray(per_traj_acc_rel_mae, dtype=float),
         ylabel="Acceleration Relative MAE",
-        title=f"Acceleration Relative MAE per Trajectory (no rollout) [{split}]",
+        title=f"Acceleration Relative MAE per Trajectory (no rollout) averaged over all nodes [{split}]",
         output_path=p2,
         x_sort_caption="acceleration relative MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
@@ -76,12 +78,11 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
     paths["images"]["acc_rel_mae_noroll_per_traj"] = p2
 
     # 3) Stress relative MAE per trajectory (no rollout)
-    # FIXME: make sure this is also the one with last trajectory rollout
     p3 = output_dir / "stress_rel_mae_noroll_per_traj.png"
     _plot_sorted_per_traj_histogram(
         np.asarray(per_traj_stress_rel_mae, dtype=float),
         ylabel="Stress Relative MAE",
-        title=f"Stress Relative MAE per Trajectory (no rollout) [{split}]",
+        title=f"Stress Relative MAE per Trajectory (no rollout) averaged over all nodes [{split}]",
         output_path=p3,
         x_sort_caption="stress relative MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
@@ -125,8 +126,6 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
             Short phrase for the x-axis (how trajectories are ordered).
         selected_trajectory_indices: list[int]
             Trajectory indices drawn in red.
-    return: None
-        Saves figure to output_path.
     """
     n = int(values.shape[0])
     if n == 0:
@@ -147,15 +146,7 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
     fig_width = min(_FIG_WIDTH_CAP, max(_FIG_WIDTH_FLOOR, 0.13 * span))
     fig, ax = plt.subplots(figsize=(fig_width, _FIG_HEIGHT))
     x_left = np.arange(n, dtype=float)
-    ax.bar(
-        x_left,
-        sorted_values,
-        width=_BAR_WIDTH,
-        align="edge",
-        color=colors,
-        linewidth=0,
-        edgecolor="none",
-    )
+    ax.bar(x_left, sorted_values, width=_BAR_WIDTH, align="edge", color=colors, linewidth=0, edgecolor="none")
     ax.set_xlim(0, n)
     ax.set_xticks([])
     ax.set_xlabel(f"Trajectory index (sorted by {x_sort_caption})")
@@ -164,21 +155,11 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
     ax.grid(True, alpha=0.3, axis="y")
     med = float(np.median(values))
     p90 = float(np.percentile(values, 90))
-    ax.text(
-        0.02,
-        0.98,
-        f"median = {med:.6g}\n90th percentile = {p90:.6g}",
-        transform=ax.transAxes,
-        va="top",
-        ha="left",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="0.7", alpha=0.9),
-    )
-    legend_handles = [
-        Patch(facecolor=_COLOR_SELECTED, edgecolor="none", label="Selected trajectory"),
-        Patch(facecolor=_COLOR_STRIPE_A, edgecolor="none", label="Other (stripe A)"),
-        Patch(facecolor=_COLOR_STRIPE_B, edgecolor="none", label="Other (stripe B)"),
-    ]
+    ax.text(0.02, 0.98, f"median = {med:.6g}\n90th percentile = {p90:.6g}", transform=ax.transAxes, va="top",
+            ha="left", fontsize=9, bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="0.7", alpha=0.9))
+    legend_handles = [Patch(facecolor=_COLOR_SELECTED, edgecolor="none", label="Selected trajectory"),
+                      Patch(facecolor=_COLOR_STRIPE_A, edgecolor="none", label="Other (stripe A)"),
+                      Patch(facecolor=_COLOR_STRIPE_B, edgecolor="none", label="Other (stripe B)")]
     ax.legend(handles=legend_handles, loc="upper right", fontsize=8)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)

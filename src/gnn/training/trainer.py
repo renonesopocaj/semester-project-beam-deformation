@@ -17,6 +17,7 @@ from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discreti
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae
 from src.gnn.preprocessing.normalizer import NormalizerFactory
 from src.gnn.preprocessing.stats import StatsModule
+from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
 from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
 from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises
@@ -120,16 +121,18 @@ class LitModule(L.LightningModule):
         self.eval_split_name = "test"
         self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
-        # Others
-        self.enable_wandb_watch = enable_wandb_watch
+        # Train
+        self.wandb_train_cfg_yaml = wandb_train_cfg_yaml
         self.len_train_dataloader = len_train_dataloader
+        # Others validation
+        self.enable_wandb_watch = enable_wandb_watch
         self.enable_val = train_cfg.enable_val
         self.profile_loss_stress_vs_acceleration = train_cfg.profile_loss_stress_vs_acceleration
         self.enable_rollout_val = train_cfg.enable_rollout_val
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
-        self.wandb_train_cfg_yaml = wandb_train_cfg_yaml
+        self.rollout_batch_size = train_cfg.rollout_batch_size
         # performance stuff
         self.rollout_num_workers = train_cfg.num_workers
         self.pin_memory = train_cfg.pin_memory
@@ -139,17 +142,15 @@ class LitModule(L.LightningModule):
         self.time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
 
 
-    def forward(self, batch):
-        """
-        Runs a forward pass through the underlying GNN model.
+    ##############################################################################################################
+    #                                            SETUP FUNCTIONS
+    ##############################################################################################################
 
-        Args:
-            batch: Data
-                PyG batch.
-        return: torch.Tensor
-            Model prediction.
+    def _has_wandb_logger(self):
         """
-        return self.model(batch)
+        Check if we have a valid WandbLogger attached.
+        """
+        return isinstance(self.logger, WandbLogger)
 
     def configure_optimizers(self):
         """
@@ -173,7 +174,7 @@ class LitModule(L.LightningModule):
             self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
 
         # Define all metrics with epoch as x-axis
-        self._define_wandb_metrics()
+        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
         # Watch model gradients and parameters
         if self.enable_wandb_watch:
             self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
@@ -249,17 +250,34 @@ class LitModule(L.LightningModule):
         self.test_dataset = test_dataset
         self.eval_split_name = split_name
 
+    ##############################################################################################################
+    #                                            TRAIN, VAL
+    ##############################################################################################################
+
+    def forward(self, batch):
+        """
+        Runs a forward pass through the underlying GNN model.
+
+        Args:
+            batch: Data
+                PyG batch.
+        return: torch.Tensor
+            Model prediction.
+        """
+        return self.model(batch)
+
     def _collect_train_batch_metrics_noroll(self, pred, target, batch):
         """
         Collects only the training metrics that are actually needed during training.
+        This is only the whole loss for now.
 
         Args:
             pred: torch.Tensor
                 Model prediction with shape `(num_nodes, 4)`.
             target: torch.Tensor
                 Ground-truth tensor with shape `(num_nodes, 4)`.
-            return: dict
-                Dictionary with the minimal training metrics.
+        return: dict
+            Dictionary with the minimal training metrics.
         """
         metrics = {}
         if self.exp_mises:
@@ -271,32 +289,9 @@ class LitModule(L.LightningModule):
                                                 self.time_discretizer)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
         if "volume" in self.residual_list:
-            pass
+            # FIXME: implement volume loss
+            raise NotImplementedError("Volume loss is not implemented.")
         metrics["train/loss"] = total_loss
-        return metrics
-
-    def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
-        """
-        Collects the richer evaluation metrics used for test.
-
-        Args:
-            pred: torch.Tensor
-                Model prediction with shape `(num_nodes, 4)`.
-            target: torch.Tensor
-                Ground-truth tensor with shape `(num_nodes, 4)`.
-            prefix: str
-                Metric namespace prefix, for example `val`, `test`, or `validation`.
-            return: dict
-                Dictionary with evaluation metrics.
-        """
-        pred_acc = pred[:, 0:3].contiguous()
-        target_acc = target[:, 0:3].contiguous()
-        pred_stress = pred[:, 3].contiguous()
-        target_stress = target[:, 3].contiguous()
-
-        metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-                   f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
-                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
         return metrics
 
     def _collect_val_batch_metrics_noroll(self, pred, target, prefix):
@@ -328,6 +323,7 @@ class LitModule(L.LightningModule):
     def _log_metrics(self, metrics, prog_bar_keys, batch_size, sync_dist_keys):
         """
         Logs metrics one by one so only selected keys are synchronized across ranks.
+        Used by all steps: validation_step, train_step, test_step to log the final metrics collected for that epoch.
 
         Args:
             metrics: dict
@@ -358,18 +354,51 @@ class LitModule(L.LightningModule):
                 Graph batch.
             batch_idx: int
                 Batch index.
-            return: torch.Tensor
-                Training loss.
+        return: torch.Tensor
+            Training loss.
         """
         pred = self(batch)
         target = batch.y
+        # Metrics collected: only train loss (for now)
         metrics = self._collect_train_batch_metrics_noroll(pred, target, batch)
+        # Log metrics collected
         self._log_metrics(metrics, prog_bar_keys=["train/loss"], batch_size=batch.num_graphs,
                           sync_dist_keys=["train/loss"])
         # on_train_epoch_end
         # 1. Steps the custom LR scheduler using the epoch loss
         # 2. Halts training early if the scheduler signals stop.
         return metrics["train/loss"]
+
+    def on_train_epoch_end(self):
+        """
+        1. Logs current epoch to W&B for x-axis alignment
+        2. Steps the custom LR scheduler using the epoch loss
+        3. Halts training early if the scheduler signals stop.
+        """
+        # Logs epoch
+        if self._has_wandb_logger() and self.trainer.is_global_zero:
+            self.logger.experiment.log({"epoch": self.current_epoch + 1})
+        # If there is no scheduler don't do nothing
+        if self.scheduler is None:
+            return
+        # Collects metrics for scheduler monitoring
+        monitor_name = "val/overall_relative_mae" if self.enable_val else "train/loss"
+        monitor_metric = self.trainer.callback_metrics.get(monitor_name)
+        if monitor_metric is None: # additional check
+            monitor_metric = self.trainer.callback_metrics["train/loss"]
+        monitor_metric_value = float(monitor_metric.detach().item())
+        # Scheduler step
+        self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
+        # Logs current learning rate value
+        current_lr = float(self.optimizer.param_groups[0]["lr"])
+        self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())
+        # Checks if it has to stop
+        if self.scheduler.stop:
+            print("\n\n\n\n" + "=" * 60)
+            print(f"Stopping training early because scheduler indicated it should stop at epoch {self.current_epoch}.")
+            print("\n\n\n\n" + "=" * 60)
+            self.trainer.should_stop = True
+
 
     def validation_step(self, batch, batch_idx):
         """
@@ -387,27 +416,6 @@ class LitModule(L.LightningModule):
         self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], batch_size=batch.num_graphs,
                           sync_dist_keys=list(metrics.keys()))
 
-    def test_step(self, batch, batch_idx):
-        """
-        Computes and logs metrics for one batch during final evaluation, using the W&B final-eval prefix.
-        Syncs everything: we don't care about performance in testing phase.
-
-        Args:
-            batch: Data
-                Graph batch.
-            batch_idx: int
-                Batch index.
-        """
-        pred = self(batch)
-        target = batch.y
-        wb_prefix = self._wandb_final_eval_metric_prefix()
-        metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
-        self._log_metrics(metrics,
-            [f"{wb_prefix}/overall_relative_mae"],
-            batch_size=batch.num_graphs,
-            sync_dist_keys=list(metrics.keys()))
-        # on_test_epoch_end logs ROLLOUT metrics
-
     def predict_step(self, batch, batch_idx):
         """
         Returns raw model predictions for a batch during Lightning's predict loop.
@@ -422,51 +430,159 @@ class LitModule(L.LightningModule):
         """
         return self(batch)
 
-    def on_train_epoch_end(self):
+    def on_validation_epoch_end(self):
         """
-        1. Logs current epoch to W&B for x-axis alignment
-        2. Steps the custom LR scheduler using the epoch loss
-        3. Halts training early if the scheduler signals stop.
+        IF AND ONLY IF self.enable_rollout_val == True NOTE: right now it's not ran since it's False
+        Runs a full rollout on every trajectory of the validation split (rank 0 only), averages the positional error
+        across trajectories, and logs it.
+        This metric is for reporting only and is not used by checkpoint callbacks.
         """
-        if self._has_wandb_logger() and self.trainer.is_global_zero:
-            self.logger.experiment.log({"epoch": self.current_epoch + 1})
-
-        if self.scheduler is None:
+        if self.trainer.sanity_checking:
             return
-
-        monitor_name = "val/overall_relative_mae" if self.enable_val else "train/loss"
-        monitor_metric = self.trainer.callback_metrics.get(monitor_name)
-        if monitor_metric is None: # additional check
-            monitor_metric = self.trainer.callback_metrics["train/loss"]
-        monitor_metric_value = float(monitor_metric.detach().item())
-        self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
-
-        current_lr = float(self.optimizer.param_groups[0]["lr"])
-        self.log("train/lr", current_lr, prog_bar=True, logger=self._has_wandb_logger())
-
-        if self.scheduler.stop:
-            print("\n\n\n\n" + "=" * 60)
-            print(f"Stopping training early because scheduler indicated it should stop at epoch {self.current_epoch}.")
-            print("\n\n\n\n" + "=" * 60)
-            self.trainer.should_stop = True
+        # This flag is for distributed training: ensure rollout is not done in parallel (would be the default ddp
+        # strategy by lightning)
+        if not self.trainer.is_global_zero:
+            return
+        if not self.enable_rollout_val or self.validation_dataset is None:
+            return
+        # 1. Collect all (for each traj) final rollout MAE error on position (averaged among all nodes)
+        all_final_roll_err_pos = []
+        for traj_idx in range(self.validation_dataset.num_trajectories):
+            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
+            _, _, final_roll_err_pos = self._run_rollout(traj_loader)
+            all_final_roll_err_pos.append(final_roll_err_pos)
+        # 2. Compute average among all trajectories
+        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+        self.rollout_all_step_error = avg_final_roll_err_pos
+        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
+        # Rank zero only
+        self.log("val/final_roll_err_pos", avg_final_roll_err_pos_tensor, prog_bar=True,
+                 logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
     def _get_trajectory_loader(self, dataset, traj_idx):
         """
         Creates a DataLoader for a single trajectory by slicing the dataset.
+        Used for on_validation_epoch_end IFF self.enable_rollout_val == True, and by on_test_epoch_end by default
 
         Args:
             dataset: InMemoryTimeStepDataset
                 Dataset with trajectory_boundaries.
             traj_idx: int
                 Index of the trajectory to extract.
-            return: DataLoader
-                DataLoader yielding graphs for the single trajectory in order.
+        return: DataLoader
+            DataLoader yielding graphs for the single trajectory in order.
         """
         start, end = dataset.trajectory_boundaries[traj_idx]
         subset = Subset(dataset, range(start, end))
-        return DataLoader(subset, batch_size=1, shuffle=False,
-                          num_workers=self.rollout_num_workers,
-                          pin_memory=self.pin_memory)
+        dataloader_traj = DataLoader(subset, batch_size=self.rollout_batch_size, shuffle=False,
+                                     num_workers=self.rollout_num_workers, pin_memory=self.pin_memory)
+        return dataloader_traj
+
+
+    #################################################################################################################
+    #                                    TEST = FINAL EVALUATION (TEST AND VAL SPLITS)
+    #################################################################################################################
+
+    def test_step(self, batch, batch_idx):
+        """
+        Computes and logs metrics for one batch during final evaluation, using the W&B final-eval prefix.
+        Syncs everything: we don't care about performance in testing phase.
+
+        Args:
+            batch: Data
+                Graph batch.
+            batch_idx: int
+                Batch index.
+        """
+        pred = self(batch)
+        target = batch.y
+        # Helper to get prefix
+        wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
+        # collects not rollout metrics overall_relative_mae, acc_all_rel_mae, stress_rel_mae
+        metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
+        # logs
+        self._log_metrics(metrics, prog_bar_keys=[f"{wb_prefix}/overall_relative_mae"], batch_size=batch.num_graphs,
+                          sync_dist_keys=list(metrics.keys()))
+        # on_test_epoch_end logs ROLLOUT metrics
+
+    def on_test_epoch_end(self):
+        """
+        Runs a full rollout on every trajectory of the active test/validation split (rank 0 only),
+        averages the positional error, and optionally generates in-depth plots for selected
+        trajectories plus overall summary plots, all logged via a single _log_all_wandb_media call.
+        """
+        if not self.trainer.is_global_zero:
+            return
+
+        # 1. Compute per-trajectory no-rollout metrics (one-step inference)
+        # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
+        per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
+        # 2. Run rollout for every trajectory, collect results, and then log
+        all_true_rollouts, all_pred_rollouts, all_final_roll_err_pos = {}, {}, []
+        num_trajectories = self.test_dataset.num_trajectories
+        # FIXME: add pbar
+        for traj_idx in range(num_trajectories):
+            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
+            true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(traj_loader)
+            all_true_rollouts[traj_idx] = true_rollout
+            all_pred_rollouts[traj_idx] = pred_rollout
+            all_final_roll_err_pos.append(final_roll_err_pos)
+        # --- Average rollout error across all trajectories
+        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
+        self.rollout_all_step_error = avg_final_roll_err_pos
+        # --- Log to wandb rollout info (position only) (media will be logged later)
+        # FIXME: log also volume
+        wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
+        self.log(name=f"{wb_prefix}/final_roll_err_pos", value=avg_final_roll_err_pos_tensor,
+                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        if not self.log_test_media: # If not logging, skip the rest
+            return
+        # 3. Compute final volumes from rollout
+        final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
+        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
+                    else self.selected_validation_trajectories)
+        # 4. Generate overall/summary plots (across all trajectories)
+        overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
+        overall_output_dir.mkdir(parents=True, exist_ok=True)
+        overall_plot_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                          final_volumes_true, final_volumes_pred, overall_output_dir,
+                                          self.eval_split_name, selected)
+        # 5. Generate in-depth plots for selected trajectories only
+        per_traj_paths = {}
+        for traj_idx in selected:
+            if traj_idx >= num_trajectories:
+                print(f"\tWarning: selected traj{traj_idx} out of range (only {num_trajectories} trajectories).")
+                continue
+            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
+                                                                       all_pred_rollouts[traj_idx], traj_idx)
+        # 6. Single wandb logging call
+        log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
+                            self._has_wandb_logger())
+
+    def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
+        """
+        Collects the evaluation metrics not rollout (input, target) during test.
+
+        Args:
+            pred: torch.Tensor
+                Model prediction with shape `(num_nodes, 4)`.
+            target: torch.Tensor
+                Ground-truth tensor with shape `(num_nodes, 4)`.
+            prefix: str
+                Metric namespace prefix, for example `val`, `test`, or `validation`.
+        return: dict
+            Dictionary with evaluation metrics.
+        """
+        # FIXME: hardcoded pred
+        pred_acc = pred[:, 0:3].contiguous()
+        target_acc = target[:, 0:3].contiguous()
+        pred_stress = pred[:, 3].contiguous()
+        target_stress = target[:, 3].contiguous()
+        metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                   f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
+                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
+        return metrics
 
     def _run_rollout(self, traj_loader):
         """
@@ -493,17 +609,16 @@ class LitModule(L.LightningModule):
 
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
-        Runs one-step (non-autoregressive) inference on every trajectory and returns
-        per-trajectory relative MAE for acceleration and stress.
+        Runs one-step (non-autoregressive) inference on every trajectory and returns per-trajectory relative MAE
+        for acceleration and stress.
 
         Args:
             dataset: InMemoryTimeStepDataset
                 Dataset with trajectory_boundaries.
-            return: (list[float], list[float])
-                Per-trajectory acceleration relative MAE and stress relative MAE.
+        return: (list[float], list[float])
+            Per-trajectory acceleration relative MAE and stress relative MAE.
         """
-        per_traj_acc_rel_mae = []
-        per_traj_stress_rel_mae = []
+        per_traj_acc_rel_mae, per_traj_stress_rel_mae = [], []
         self.eval()
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
@@ -536,8 +651,8 @@ class LitModule(L.LightningModule):
                 Predicted rollout graphs.
             traj_idx: int
                 Index of the trajectory.
-            return: dict
-                Nested dict with keys "images" and "videos" from in_depth.
+        return: dict
+            Nested dict with keys "images" and "videos" from in_depth.
         """
         traj_split_name = f"traj{traj_idx}, {self.eval_split_name}"
         filename_prefix = f"traj{traj_idx}_{self.eval_split_name}"
@@ -545,205 +660,3 @@ class LitModule(L.LightningModule):
         paths = in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
                                self.plot_diagnostics_advanced)
         return paths
-
-    def on_validation_epoch_end(self):
-        """
-        Runs a full rollout on every trajectory of the validation split (rank 0 only),
-        averages the positional error across trajectories, and logs it.
-        This metric is for reporting only and is not used by checkpoint callbacks.
-        """
-        if self.trainer.sanity_checking:
-            return
-        # This flag is for distributed training: ensure rollout is not done in parallel (would be the default ddp
-        # strategy by lightning)
-        if not self.trainer.is_global_zero:
-            return
-        if not self.enable_rollout_val or self.validation_dataset is None:
-            return
-        all_final_roll_err_pos = []
-        for traj_idx in range(self.validation_dataset.num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
-            _, _, final_roll_err_pos = self._run_rollout(traj_loader)
-            all_final_roll_err_pos.append(final_roll_err_pos)
-        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        self.log("val/final_roll_err_pos",
-                 torch.tensor(avg_final_roll_err_pos, device=self.device),
-                 prog_bar=True,
-                 logger=self._has_wandb_logger(),
-                 sync_dist=False,
-                 rank_zero_only=True)
-
-    def on_test_epoch_end(self):
-        """
-        Runs a full rollout on every trajectory of the active test/validation split (rank 0 only),
-        averages the positional error, and optionally generates in-depth plots for selected
-        trajectories plus overall summary plots, all logged via a single _log_all_wandb_media call.
-        """
-        if not self.trainer.is_global_zero:
-            return
-
-        # 1. Run rollout for every trajectory, collect results
-        all_true_rollouts = {}
-        all_pred_rollouts = {}
-        all_final_roll_err_pos = []
-        num_trajectories = self.test_dataset.num_trajectories
-
-        # FIXME: add pbar
-        for traj_idx in range(num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
-            true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(traj_loader)
-            all_true_rollouts[traj_idx] = true_rollout
-            all_pred_rollouts[traj_idx] = pred_rollout
-            all_final_roll_err_pos.append(final_roll_err_pos)
-
-        # 2. Average and log rollout error across all trajectories
-        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        wb_prefix = self._wandb_final_eval_metric_prefix()
-        self.log(f"{wb_prefix}/final_roll_err_pos",
-                 torch.tensor(avg_final_roll_err_pos, device=self.device),
-                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
-
-        if not self.log_test_media:
-            return
-
-        # 3. Compute per-trajectory no-rollout metrics (one-step inference)
-        # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
-        per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
-        # 4. Compute final volumes from rollout
-        final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
-
-        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
-                    else self.selected_validation_trajectories)
-
-        # 5. Generate overall/summary plots (across all trajectories)
-        overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
-        overall_output_dir.mkdir(parents=True, exist_ok=True)
-        overall_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                                     final_volumes_true, final_volumes_pred, overall_output_dir,
-                                     self.eval_split_name, selected)
-
-        # 6. Generate in-depth plots for selected trajectories only
-        per_traj_paths = {}
-        # FIXME: add pbar
-        for traj_idx in selected:
-            if traj_idx >= num_trajectories:
-                print(f"\tWarning: selected traj{traj_idx} out of range (only {num_trajectories} trajectories).")
-                continue
-            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
-                                                                       all_pred_rollouts[traj_idx], traj_idx)
-
-        # 7. Single wandb logging call
-        self._log_all_wandb_media(overall_paths, per_traj_paths)
-
-    # =============================================================================================================
-    #                                   BOILERPLATE WANDB CODE
-    # ==============================================================================================================
-
-    def _wandb_final_eval_metric_prefix(self):
-        """
-        W&B key prefix for final evaluation scalars (trainer.test on val or test split).
-
-        Args:
-            return: str
-                final_validation, final_test, or eval_split_name if unknown.
-        """
-        if self.eval_split_name == "validation":
-            return "final_validation"
-        if self.eval_split_name == "test":
-            return "final_test"
-        return self.eval_split_name
-
-    def _log_all_wandb_media(self, overall_plot_paths, per_traj_in_depth_paths):
-        """
-        Single function that logs all media to W&B. Logs overall/summary plots first,
-        then per-trajectory in-depth plots for selected trajectories.
-
-        Args:
-            overall_plot_paths: dict
-                Nested dict {"images": {name: Path}, "videos": {name: Path}} from overall_plot.
-            per_traj_in_depth_paths: dict[int, dict]
-                Mapping of traj_idx to nested dicts {"images": {...}, "videos": {...}} from in_depth.
-        """
-        if not self._has_wandb_logger():
-            return
-        experiment = self.logger.experiment
-
-        # Naming
-        if self.eval_split_name == "validation":
-            overall_root, traj_root = "final_validation", "final_validation_traj"
-        elif self.eval_split_name == "test":
-            overall_root, traj_root = "final_test", "final_test_traj"
-        else:
-            overall_root, traj_root = self.eval_split_name, f"{self.eval_split_name}_traj"
-
-        wandb_logs = {}
-        # 1. Log overall/summary plots
-        for name, path in overall_plot_paths.get("images", {}).items():
-            if Path(path).exists():
-                wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Image(str(path))
-        for name, path in overall_plot_paths.get("videos", {}).items():
-            if Path(path).exists():
-                wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Video(str(path), fps=4, format="gif")
-
-        # 2. Log per-trajectory in-depth plots (one W&B folder per trajectory index)
-        for traj_idx, traj_paths in per_traj_in_depth_paths.items():
-            traj_prefix = f"{traj_root}/{traj_idx}"
-            for name, path in traj_paths.get("images", {}).items():
-                if Path(path).exists():
-                    wandb_logs[f"{traj_prefix}/{name}"] = wandb.Image(str(path))
-            for name, path in traj_paths.get("videos", {}).items():
-                if Path(path).exists():
-                    wandb_logs[f"{traj_prefix}/{name}"] = wandb.Video(str(path), fps=4, format="gif")
-
-        experiment.log(wandb_logs, commit=False)
-
-    def _has_wandb_logger(self):
-        """
-        Check if we have a valid WandbLogger attached.
-        """
-        return isinstance(self.logger, WandbLogger)
-
-    def _define_wandb_metrics(self):
-        """
-        Define all W&B metrics with epoch as the x-axis and appropriate summaries.
-        Should be called once at the start of training, only on rank 0.
-        """
-        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
-            return
-        experiment = self.logger.experiment
-        experiment.define_metric("epoch")
-        experiment.define_metric("*", step_metric="epoch")
-        # Training metrics
-        experiment.define_metric("train/loss", summary="min")
-        experiment.define_metric("train/supervised_loss", summary="min")
-        experiment.define_metric("train/curvature_loss", summary="min")
-        experiment.define_metric("train/acc_all_loss", summary="min")
-        experiment.define_metric("train/stress_loss", summary="min")
-        experiment.define_metric("train/acc_all_rel_mae", summary="min")
-        experiment.define_metric("train/acc_x_rel_mae", summary="min")
-        experiment.define_metric("train/acc_y_rel_mae", summary="min")
-        experiment.define_metric("train/acc_z_rel_mae", summary="min")
-        experiment.define_metric("train/stress_rel_mae", summary="min")
-        experiment.define_metric("train/lr", summary="last")
-
-        # Validation metrics
-        experiment.define_metric("val/loss", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/overall_relative_mae", summary="min")
-        experiment.define_metric("val/acc_all_loss", summary="min")
-        experiment.define_metric("val/stress_loss", summary="min")
-        experiment.define_metric("val/acc_all_rel_mae", summary="min")
-        experiment.define_metric("val/acc_x_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/acc_y_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/acc_z_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
-        experiment.define_metric("val/stress_rel_mae", summary="min")
-        experiment.define_metric("val/final_roll_err_pos", summary="min")
-
-        # Final evaluation metrics (trainer.test on val or test)
-        for prefix in ["final_test", "final_validation"]:
-            experiment.define_metric(f"{prefix}/loss", summary="min")
-            experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
-            experiment.define_metric(f"{prefix}/acc_all_rel_mae", summary="min")
-            experiment.define_metric(f"{prefix}/stress_rel_mae", summary="min")
-            experiment.define_metric(f"{prefix}/final_roll_err_pos", summary="min")

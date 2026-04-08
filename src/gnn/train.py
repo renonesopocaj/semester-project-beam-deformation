@@ -111,11 +111,11 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     validation_dataloader = None
     print("Train dataset:")
     # device = "cpu" hardcoded for performance reason
-    if train_cfg.noise_scale > 0:
-        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale}, gamma={train_cfg.noise_gamma}")
+    if train_cfg.noise_scale_train > 0:
+        print(f"\tNoise injection enabled: scale={train_cfg.noise_scale_train}, gamma={train_cfg.noise_gamma}")
         train_dataset = InMemoryNoisedDataset(
             sample_dir=train_cfg.train_dir, device="cpu",
-            noise_scale=train_cfg.noise_scale, gamma=train_cfg.noise_gamma,
+            noise_scale=train_cfg.noise_scale_train, gamma=train_cfg.noise_gamma,
             dt=dt, node_stats=node_stats, edge_stats=edge_stats, target_stats=target_stats,
             base_seed=train_cfg.noise_seed, preprocess_cfg=preprocess_cfg,
             noise_also_prev=train_cfg.noise_also_prev,

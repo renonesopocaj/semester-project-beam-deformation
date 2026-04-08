@@ -99,7 +99,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             noise_also_prev: bool
                 Whether to also inject noise on the previous-step position x(t-1).
             noise_prev_scale: float
-                Scale of noise on x(t-1), typically much smaller than noise_scale.
+                Scale of noise on x(t-1), typically much smaller than noise_scale_train.
         """
         super().__init__(sample_dir, device)
         if preprocess_cfg.time_discretization_method != "second_order_central":
@@ -124,7 +124,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     def __getitem__(self, idx):
         """
         Returns a noised copy of the sample at idx.
-        - A fresh eps ~ N(0, noise_scale^2) is drawn every call, so every epoch produces different perturbations.
+        - A fresh eps ~ N(0, noise_scale_train^2) is drawn every call, so every epoch produces different perturbations.
         - One call = one epoch, so this is correct
 
 
