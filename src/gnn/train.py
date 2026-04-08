@@ -37,6 +37,23 @@ plt.ioff()
 THETA_MAX_MARGIN = 1e-6
 
 
+def resolve_trainer_precision(accelerator, configured_precision):
+    """
+    Maps YAML precision to a value safe for the chosen Lightning accelerator.
+
+    Args:
+        accelerator: str
+            Lightning accelerator, e.g. "cpu" or "gpu".
+        configured_precision: str
+            Value from train config (e.g. bf16-mixed, 16-mixed, 32-true).
+        return: str
+            Precision string passed to L.Trainer; mixed modes downgrade to 32-true on CPU.
+    """
+    if accelerator == "cpu" and configured_precision in ("16-mixed", "bf16-mixed"):
+        return "32-true"
+    return configured_precision
+
+
 def maybe_compile_model(model, train_cfg):
     """
     Optionally wraps the model with torch.compile and enables graph-break logs.
@@ -192,6 +209,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # ======================= Lightning Trainer ===================
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+    trainer_precision = resolve_trainer_precision(accelerator, train_cfg.precision)
     # profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
     if train_cfg.profiling:
         profiler = SimpleProfiler(dirpath=str(lightning_module.model_dir / "profiles"), filename="simple_profiler")
@@ -204,6 +222,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 enable_checkpointing=len(callbacks) > 0,
                                 limit_train_batches=5, limit_val_batches=5, limit_test_batches=5,
                                 accelerator=accelerator, devices=train_cfg.devices,
+                                precision=trainer_precision,
                                 profiler=profiler)
     elif train_cfg.training_type == "slurm":
         if not torch.cuda.is_available():
@@ -215,7 +234,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator,
                                  devices=train_cfg.devices, num_nodes=1,
-                                 # strategy="ddp", 
+                                 # strategy="ddp",
+                                precision=trainer_precision,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
@@ -224,6 +244,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator,
                                 devices=train_cfg.devices,
+                                precision=trainer_precision,
                                 profiler=profiler)
     else:
         raise NotImplementedError("Default")
