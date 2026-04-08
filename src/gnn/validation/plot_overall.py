@@ -155,6 +155,26 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
         linewidth=0,  # No border stroke on bars.
         edgecolor="none",  # Explicitly disable bar outlines for flat fill look.
     )
+    y_bottom, y_top = ax.get_ylim()  # Current vertical range from bar heights (before label margin).
+    y_span = y_top - y_bottom  # Use span to add a small strip under bars for trajectory index text.
+    margin_frac = 0.12  # Fraction of y-span reserved below y_bottom for rotated labels (no bar overlap).
+    ax.set_ylim(y_bottom - margin_frac * y_span, y_top)  # Extend downward so labels sit between axis and bars.
+    label_y = y_bottom - 0.02 * y_span  # Slightly below original baseline; anchors rotated digits in the margin.
+    # Font shrinks when many bars so adjacent columns’ trajectory numbers do not overlap horizontally.
+    traj_label_font = max(3, min(6, int(180 / max(n, 1))))
+    for rank in range(n):
+        traj_idx = int(order[rank])  # Original trajectory index for this sorted column.
+        ax.text(
+            rank + 0.5 * _BAR_WIDTH,  # Horizontal center of bar (edge-aligned width-_BAR_WIDTH bar).
+            label_y,
+            str(traj_idx),
+            rotation=90,
+            va="top",
+            ha="center",
+            fontsize=traj_label_font,
+            color="0.35",
+            clip_on=False,
+        )
     ax.set_xlim(0, n)  # Clip x view to bar region [0, n].
     ax.set_xticks([])  # Hide per-bar tick labels (too many trajectories); caption explains order instead.
     ax.set_xlabel(f"Trajectory index (sorted by {x_sort_caption})")  # Explains x is sort order not raw index.
