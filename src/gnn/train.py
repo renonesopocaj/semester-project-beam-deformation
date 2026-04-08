@@ -40,6 +40,8 @@ THETA_MAX_MARGIN = 1e-6
 def maybe_compile_model(model, train_cfg):
     """
     Optionally wraps the model with torch.compile and enables graph-break logs.
+    On CUDA, uses mode reduce-overhead (Inductor CUDA graphs / lower launch overhead);
+    on CPU, uses mode default.
 
     Args:
         model: torch.nn.Module
@@ -54,7 +56,8 @@ def maybe_compile_model(model, train_cfg):
     # Enable verbose Dynamo diagnostics so graph breaks are reported with details.
     torch._dynamo.config.verbose = True
     torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
-    return torch.compile(model, fullgraph=True)
+    compile_mode = "reduce-overhead" if torch.cuda.is_available() else "default"
+    return torch.compile(model, mode=compile_mode, fullgraph=True)
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
