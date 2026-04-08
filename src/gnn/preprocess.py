@@ -21,6 +21,8 @@ Train:
 """
 
 
+import shutil
+
 import torch
 import json
 import hydra
@@ -580,13 +582,25 @@ def main(cfg):
     _layout_device = torch.device(cfg_obj.device)
     _node_ch, _edge_ch, _, _ = probe_feature_layout(cfg_obj, _layout_device)
     print(f"\tDerived from build_features: node_channels={_node_ch}, edge_channels={_edge_ch}")
+    extra_info_dest = processed_dataset_dir / "extra_info"
     with open_dict(cfg):
         cfg.node_channels = _node_ch
         cfg.edge_channels = _edge_ch
         cfg.train_dir = save_dir_train.as_posix()
         cfg.test_dir = save_dir_test.as_posix()
         cfg.val_dir = save_dir_val.as_posix()
+        cfg.extra_info_dir = extra_info_dest.as_posix()
     OmegaConf.save(cfg, processed_dataset_dir / "config.yaml")
+
+    # Copy extra_info JSONs into the processed dataset
+    if cfg_obj.extra_info_dir is not None:
+        raw_extra = Path(cfg_obj.extra_info_dir)
+        extra_info_dest.mkdir(parents=True, exist_ok=True)
+        for fname in ("selected_trajectories.json", "test_ood_features.json"):
+            src = raw_extra / fname
+            if src.exists():
+                shutil.copy2(src, extra_info_dest / fname)
+                print(f"\tCopied {fname} -> {extra_info_dest / fname}")
 
     # Load selected trajectory info for longer rollouts
     selected_trajs = load_selected_trajectories(cfg_obj.extra_info_dir)
