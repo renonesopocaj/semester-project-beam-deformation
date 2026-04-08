@@ -46,6 +46,23 @@ def _load_split(split_name, train_cfg):
     return dataset, dataloader
 
 
+def _resolve_in_depth(in_depth_cfg, num_trajectories):
+    """
+    Resolves the in_depth config value to a concrete list of trajectory indices.
+
+    Args:
+        in_depth_cfg: str or list
+            "all" or a list of int trajectory indices.
+        num_trajectories: int
+            Total number of trajectories in the dataset.
+        return: list[int]
+            Resolved list of trajectory indices.
+    """
+    if in_depth_cfg == "all":
+        return list(range(num_trajectories))
+    return list(in_depth_cfg)
+
+
 def main():
     with open("conf/validate/validate.yaml", "r") as fh:
         cfg = yaml.safe_load(fh)
@@ -53,7 +70,18 @@ def main():
     training_id = cfg["training_id"]
     model_root = Path(cfg.get("model_root", "saved_models"))
     checkpoint_name = cfg.get("checkpoint_name", "best")
-    splits = cfg.get("splits", ["validation", "test"])
+    in_depth_test = cfg.get("in_depth_test")
+    in_depth_val = cfg.get("in_depth_val")
+
+    # Determine which splits to evaluate based on non-null fields
+    splits_to_run = []
+    if in_depth_val is not None:
+        splits_to_run.append(("validation", in_depth_val))
+    if in_depth_test is not None:
+        splits_to_run.append(("test", in_depth_test))
+    if not splits_to_run:
+        print("No splits configured. Set in_depth_test or in_depth_val in conf/validate/validate.yaml.")
+        return
 
     model_dir = model_root / training_id
     checkpoint_path = model_dir / "checkpoints" / f"{checkpoint_name}.ckpt"
@@ -91,6 +119,8 @@ def main():
     # Write standalone eval outputs to a separate subdirectory
     lightning_module.model_evaluation_dir = model_dir / "standalone_evaluation"
     lightning_module.model_evaluation_dir.mkdir(parents=True, exist_ok=True)
+    # Standalone eval always produces plots
+    lightning_module.log_test_media = True
 
     # Load stats and register StatsModule submodules (must happen before ckpt_path loading)
     node_stats, edge_stats, target_stats = load_stats(train_cfg.train_dir)
@@ -103,15 +133,20 @@ def main():
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
     eval_trainer = L.Trainer(logger=False, accelerator=accelerator, devices=1)
 
-    for split in splits:
-        if split not in ("validation", "test"):
-            print(f"Skipping unknown split: {split}")
-            continue
+    for split_name, in_depth_cfg in splits_to_run:
         print("\n" + "=" * 60)
-        print(f"Evaluating split: {split}")
+        print(f"Evaluating split: {split_name}")
         print("=" * 60 + "\n")
-        dataset, dataloader = _load_split(split, train_cfg)
-        lightning_module.set_test_context(test_dataset=dataset, split_name=split)
+        dataset, dataloader = _load_split(split_name, train_cfg)
+
+        # Resolve "all" to the full trajectory range now that we know num_trajectories
+        selected = _resolve_in_depth(in_depth_cfg, dataset.num_trajectories)
+        if split_name == "test":
+            lightning_module.selected_test_trajectories = selected
+        else:
+            lightning_module.selected_validation_trajectories = selected
+
+        lightning_module.set_test_context(test_dataset=dataset, split_name=split_name)
         eval_trainer.test(model=lightning_module, dataloaders=dataloader,
                           ckpt_path=str(checkpoint_path))
 
