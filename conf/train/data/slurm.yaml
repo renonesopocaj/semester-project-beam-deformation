@@ -1,0 +1,7 @@
+dataset_dir: "scratch/senoner/izar/dataset/processed/single_direction_beam/z_isotr_log/large"
+train_dir: ${data.dataset_dir}/train
+val_dir: ${data.dataset_dir}/val
+test_dir: ${data.dataset_dir}/test
+stats_path: ${data.dataset_dir}/train/stats/stats.json
+preprocess_config_path: ${data.dataset_dir}/config.yaml
+extra_info_dir: ${data.dataset_dir}/extra_info
