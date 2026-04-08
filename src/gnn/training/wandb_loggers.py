@@ -22,7 +22,8 @@ def wandb_final_eval_metric_prefix(eval_split_name):
         return "final_test"
     return eval_split_name
 
-def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_name, experiment, has_wandb_logger):
+def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_name, experiment,
+                        has_wandb_logger, epoch_number):
     """
     Single function that logs all media to W&B.
     1. Logs overall/summary plots first,
@@ -39,6 +40,8 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
             name of the split
         experiment: ????
             run object
+        epoch_number: int
+            Epoch index used as W&B step for media logging.
     """
     # if not self._has_wandb_logger():
     if not has_wandb_logger:
@@ -68,7 +71,10 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
         for name, path in traj_paths.get("videos", {}).items():
             if Path(path).exists():
                 wandb_logs[f"{traj_prefix}/{name}"] = wandb.Video(str(path), fps=4, format="gif")
-    experiment.log(wandb_logs, commit=False)
+    if len(wandb_logs) == 0:
+        return
+    wandb_logs["epoch"] = epoch_number
+    experiment.log(wandb_logs, step=epoch_number, commit=True)
 
 def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
     """
