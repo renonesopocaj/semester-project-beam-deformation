@@ -158,8 +158,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     lightning_module.set_rollout_context(validation_dataset=validation_dataset, node_stats=node_stats,
                                          edge_stats=edge_stats, target_stats=target_stats, dt=dt)
     # Save configs via hydra
-    OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml")
-    OmegaConf.save(preprocess_dict, lightning_module.model_dir / "preprocess.yaml")
+    OmegaConf.save(train_dict, lightning_module.model_dir / "train.yaml", resolve=True)
+    OmegaConf.save(preprocess_dict, lightning_module.model_dir / "preprocess.yaml", resolve=True)
 
     # =================== Wandb logger ===================
     if train_cfg.use_wandb:
