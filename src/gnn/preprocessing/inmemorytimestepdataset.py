@@ -10,11 +10,8 @@ Two versions:
 
 from torch_geometric.data import Dataset, Data
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
-from src.gnn.preprocessing.normalizer import (
-    build_affine_normalizer_tensors,
-    apply_affine_normalization,
-    apply_affine_denormalization,
-)
+from src.gnn.preprocessing.normalizer import (build_affine_normalizer_tensors, apply_affine_normalization,
+                                              apply_affine_denormalization)
 import multiprocessing
 import os
 import torch

@@ -1,8 +1,8 @@
 num_workers: 0
-batch_size: 64
+batch_size: 128
 # Lightning: 32-true (CPU / no AMP), bf16-mixed or 16-mixed on CUDA Tensor Core GPUs
 precision: 32-true
-torch_compile: False
+torch_compile: True
 profiling: False # disabled because it worsens computational efficiency
 pin_memory: True
 rollout_batch_size: 1

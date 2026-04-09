@@ -37,30 +37,6 @@ plt.ioff()
 THETA_MAX_MARGIN = 1e-6
 
 
-def slurm_trainer_devices_and_strategy(requested_devices):
-    """
-    Picks Trainer devices and strategy for SLURM GPU jobs. When torchrun (or similar) has
-    already started multiple ranks (WORLD_SIZE > 1), each rank uses one GPU with ddp.
-    Otherwise, a single Python process requesting multiple GPUs uses ddp_spawn.
-
-    Args:
-        requested_devices: int
-            GPU count from train config (e.g. 2 for two_gpu).
-    return: tuple
-        (trainer_devices, strategy) where strategy is a Lightning strategy string, or None to omit.
-    """
-    world_raw = os.environ.get("WORLD_SIZE")
-    if world_raw is None:
-        world_n = 1
-    else:
-        world_n = int(world_raw)
-    if world_n > 1:
-        return 1, "ddp"
-    if requested_devices > 1:
-        return requested_devices, "ddp_spawn"
-    return 1, None
-
-
 def resolve_trainer_precision(accelerator, configured_precision):
     """
     Maps YAML precision to a value safe for the chosen Lightning accelerator.
@@ -255,32 +231,15 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     elif train_cfg.training_type == "slurm":
         if not torch.cuda.is_available():
             raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
-        slurm_devices, slurm_strategy = slurm_trainer_devices_and_strategy(train_cfg.devices)
-        cuda_vis = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        world_size_env = os.environ.get("WORLD_SIZE", "")
-        print(
-            f"Lightning SLURM Trainer setup: train_cfg.devices={train_cfg.devices!r} "
-            f"(type={type(train_cfg.devices).__name__}), torch.cuda.device_count()={torch.cuda.device_count()}, "
-            f"CUDA_VISIBLE_DEVICES={cuda_vis!r}, WORLD_SIZE={world_size_env!r}, "
-            f"Trainer(devices={slurm_devices}, strategy={slurm_strategy!r})"
-        )
-        slurm_trainer_kwargs = dict(
-            max_epochs=train_cfg.total_epochs,
-            logger=logger,
-            callbacks=callbacks,
-            default_root_dir=str(lightning_module.model_dir),
-            check_val_every_n_epoch=train_cfg.validation_interval,
-            log_every_n_steps=1,
-            enable_checkpointing=len(callbacks) > 0,
-            accelerator=accelerator,
-            devices=slurm_devices,
-            num_nodes=1,
-            precision=trainer_precision,
-            profiler=profiler,
-        )
-        if slurm_strategy is not None:
-            slurm_trainer_kwargs["strategy"] = slurm_strategy
-        fit_trainer = L.Trainer(**slurm_trainer_kwargs)
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0,
+                                accelerator=accelerator,
+                                devices=train_cfg.devices, num_nodes=1,
+                                strategy="ddp",
+                                precision=trainer_precision,
+                                profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
