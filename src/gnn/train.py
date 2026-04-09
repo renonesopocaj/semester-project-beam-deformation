@@ -188,7 +188,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
                                   num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
                                   pin_memory=train_cfg.pin_memory,
-                                  drop_last=train_cfg.torch_compile)
+                                  #drop_last=train_cfg.torch_compile
+                                  )
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
