@@ -1,23 +1,7 @@
 """
 preprocess.py
 
-Preprocess simulation data into graph format. Note one file = one trajectory.
-One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
-Saves redundant features as pyg attributes to perform rollout more easily without having to use tensor slices.
-Validation/test:
-    1. load files and stats
-    2. for each file:
-        2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
-        2.b. normalize with stats loaded in 1
-    3. for each file: save
-
-Train:
-    1. load files
-    2. for each file:
-        2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
-             and add noise
-        2.b. compute normalization stuff (mean + stddev)
-    3. for each file: save
+Preprocess simulation data into graph format. Note one file = one trajectory. Main access point.
 """
 
 

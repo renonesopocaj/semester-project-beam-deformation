@@ -1,6 +1,11 @@
 """
 normalizer.py
-Contains Normalizer class and its subclasses.
+
+Contains Normalizer class and its subclasses. Implements 4 normalizers:
+- Robust (Median, IQR) both isotropic and not
+- Z (Gaussian) both isotropic and not
+- None: doesn't change anything, only computes statistics via Z processing FIXME: probably can cancel the compute_statas
+        since it has only to not do nothing
 """
 
 from abc import ABC, abstractmethod
@@ -31,10 +36,11 @@ def build_affine_normalizer_tensors(stats_mean, stats_std, normalizer_method):
         bias = torch.zeros_like(stats_mean)
         inv_scale = torch.ones_like(stats_std)
         return scale, bias, inv_scale
-    inv_scale = stats_std + EPS
-    scale = 1.0 / inv_scale
-    bias = -stats_mean * scale
-    return scale, bias, inv_scale
+    else:
+        inv_scale = stats_std + EPS
+        scale = 1.0 / inv_scale
+        bias = -stats_mean * scale
+        return scale, bias, inv_scale
 
 
 def apply_affine_normalization(tensor, scale, bias):
@@ -73,37 +79,35 @@ def apply_affine_denormalization(tensor, stats_mean, inv_scale, normalizer_metho
     method = str(normalizer_method).lower()
     if method == "none":
         return tensor
-    return tensor * inv_scale + stats_mean
+    else:
+        return tensor * inv_scale + stats_mean
 
-class NormalizerFactory:
+def create_normalizer(normalize_method, isotropic):
+    """
+    Factory pattern, creates and returns proper Normalizer object
 
-    @staticmethod
-    def create_normalizer(normalize_method, isotropic):
-        """
-        Factory pattern, creates and returns proper Normalizer object
+    Args:
+        normalize_method: str
+            string that indicates normalizer method, e.g. "z" | "robust"
+        isotropic: bool
+            true iff you want isotropic norm on features that have 3 coordinates
 
-        Args:
-            normalize_method: str
-                string that indicates normalizer method, e.g. "z" | "robust"
-            isotropic: bool
-                true iff you want isotropic norm on features that have 3 coordinates
-
-        :return Normalizer
-        """
-        if normalize_method == "z":
-            if isotropic is True:
-                return ZIsotropicNormalizer()
-            else:
-                return ZAnisotropicZNormalizer()
-        elif normalize_method == "robust":
-            if isotropic is True:
-                return RobustIsotropicNormalizer()
-            else:
-                return RobustAnisotropicNormalizer()
-        elif normalize_method.lower() == "none":
-            return NoNormalizer()
+    :return Normalizer
+    """
+    if normalize_method == "z":
+        if isotropic is True:
+            return ZIsotropicNormalizer()
         else:
-            raise NotImplementedError(f"Unknown normalizer method: {normalize_method}")
+            return ZAnisotropicZNormalizer()
+    elif normalize_method == "robust":
+        if isotropic is True:
+            return RobustIsotropicNormalizer()
+        else:
+            return RobustAnisotropicNormalizer()
+    elif normalize_method.lower() == "none":
+        return NoNormalizer()
+    else:
+        raise NotImplementedError(f"Unknown normalizer method: {normalize_method}")
 
 class Normalizer(ABC):
     # stats are saved for every feature, so everyhting is very modular and I can forget about everything

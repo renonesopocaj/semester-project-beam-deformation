@@ -104,7 +104,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     noise_feature_update_mode: str
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
+                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode, noise_per_epoch):
         """
         Args:
             sample_dir: str
@@ -170,6 +170,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         self._build_node_features_scripted, self._build_edge_features_scripted = make_scripted_feature_builders(
             self.preprocess_cfg)
         self._noise_epoch = multiprocessing.Value('i', 0)
+        self.noise_per_epoch = noise_per_epoch
 
     def set_noise_epoch(self, epoch):
         """
@@ -196,8 +197,12 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         """
         data = self.data[idx]
         epoch_part = int(self._noise_epoch.value) * _NOISE_EPOCH_SEED_STRIDE
-        seed_t = self.base_seed + epoch_part + 2 * int(idx)
-        seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
+        if self.noise_per_epoch:
+            seed_t = self.base_seed + epoch_part + 2 * int(idx)
+            seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
+        else:
+            seed_t = self.base_seed + 2 * int(idx)
+            seed_tm1 = self.base_seed + 2 * int(idx) + 1
         noise_generator_t = torch.Generator(device=data.x_pos_t.device)
         noise_generator_t.manual_seed(_fold_torch_seed(seed_t))
         noise_added_t = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
@@ -208,7 +213,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         # rebuild node/edge features and normalize them with precomputed train statistics. The train statistics are
         # thus not affected by noise.
         x_noised = data.x_pos_t + noise_added_t
-        # NOTE: eventually, noise also previous, but much less in scale
+        # NOTE: eventually, noise also previous time step x[t-1], but much less in scale
         x_pos_tm1_prev = data.x_pos_tm1_prev.clone()
         noise_added_prev_tm1 = None
         if self.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:

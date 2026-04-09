@@ -178,6 +178,7 @@ class TrainYaml:
         self.noise_also_prev = flattened_cfg["noise_also_prev"]
         self.noise_prev_scale_train = flattened_cfg["noise_prev_scale_train"]
         self.noise_feature_update_mode = flattened_cfg["noise_feature_update_mode"]
+        self.noise_per_epoch = flattened_cfg["noise_per_epoch"]
         # Exponentiate
         self.exp_mises = flattened_cfg["exp_mises"]
         self.stress_weight = flattened_cfg["stress_weight"]
