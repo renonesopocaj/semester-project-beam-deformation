@@ -7,6 +7,7 @@ Losses:
 - huber
 Residuals:
 - angle_residual
+- volume TODO
 """
 
 import torch
@@ -83,8 +84,8 @@ def compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn):
             Stats container with mean and std tensors of shape (4,) or compatible.
         loss_fn: callable
             Regression loss such as mse, mae, or huber.
-        return: torch.Tensor
-            Stress loss in physical stress space.
+    return: torch.Tensor
+        Stress loss in physical stress space.
     """
     pred_log_norm = pred[:, 3:4]
     target_log_norm = target[:, 3:4]
@@ -117,8 +118,8 @@ def compute_total_loss_exp_mises(pred, target, target_stats, loss_fn, stress_wei
             Regression loss.
         stress_weight: float
             Weight applied to stress loss.
-        return: torch.Tensor
-            Combined loss.
+    return: torch.Tensor
+        Combined loss.
     """
     acc_loss = loss_fn(pred[:, 0:3], target[:, 0:3])
     stress_loss = compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn)

@@ -5,5 +5,7 @@ enable_wandb_watch: False # disabled because it worsens computational efficiency
 enable_rollout_val: False
 log_test_media: True
 plot_diagnostics_advanced: False
+# These two fields decide for which trajectories the validation and test is detailed, i.e. full rollout with the plots,
+# because it overrides the trajectories specified by the fem generation which are just the longer ones (400 time steps)
 selected_validation_trajectories: null
 selected_test_trajectories: null

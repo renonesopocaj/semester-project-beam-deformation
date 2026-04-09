@@ -10,4 +10,4 @@ enable_edge_velocity: false
 enable_force_edge: false
 enable_stretch_edge: false
 # Rotation (edge)
-enable_rotation_angle: true
+enable_rotation_angle: false

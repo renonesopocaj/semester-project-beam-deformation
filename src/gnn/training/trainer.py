@@ -341,7 +341,7 @@ class LitModule(L.LightningModule):
                                                 self.time_discretizer)
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
         if "volume" in self.residual_list:
-            # FIXME: implement volume loss
+            # TODO: implement volume loss
             raise NotImplementedError("Volume loss is not implemented.")
         metrics["train/loss"] = total_loss
         return metrics

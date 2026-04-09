@@ -11,42 +11,7 @@ import matplotlib.pyplot as plt
 import os
 from collections import defaultdict
 import dolfin as df
-
-def _compute_von_mises_3d(stress_9):
-    """
-    Compute the 3D von Mises stress from flattened 3x3 stress tensors.
-
-    Args:
-        stress_9: np.ndarray
-            Array of shape (num_nodes, 9) containing flattened stress tensors
-            in row-major order:
-            [sxx, sxy, sxz, syx, syy, syz, szx, szy, szz].
-        return: np.ndarray
-            Array of shape (num_nodes,) containing the von Mises stress.
-    """
-    # Extract tensor components.
-    sxx = stress_9[:, 0]
-    sxy = stress_9[:, 1]
-    sxz = stress_9[:, 2]
-    syx = stress_9[:, 3]
-    syy = stress_9[:, 4]
-    syz = stress_9[:, 5]
-    szx = stress_9[:, 6]
-    szy = stress_9[:, 7]
-    szz = stress_9[:, 8]
-
-    # Standard 3D von Mises stress formula.
-    # Note that syx, szx, szy are read for completeness but not needed explicitly
-    # because symmetry is assumed in the compact formula below.
-    vm = 0.5 * (
-        (sxx - syy) ** 2
-        + (syy - szz) ** 2
-        + (szz - sxx) ** 2
-        + 6.0 * (sxy**2 + syz**2 + sxz**2)
-    )
-
-    return np.sqrt(vm)
-
+from src.gnn.preprocessing.build_features import compute_von_mises_3d
 
 def find_boundary_triangles(tetra_connectivity):
     """
@@ -133,7 +98,7 @@ def make_beam_gif(lst_graphs, L, W, D, out_gif, fps, verbose):
     vm_min, vm_max = float("inf"), 0.0
     for g in lst_graphs:
         stress_9 = g.y_sig_t.cpu().numpy()
-        vm = _compute_von_mises_3d(stress_9)
+        vm = compute_von_mises_3d(stress_9)
         vm_min = min(vm_min, np.min(vm))
         vm_max = max(vm_max, np.max(vm))
 
@@ -144,7 +109,7 @@ def make_beam_gif(lst_graphs, L, W, D, out_gif, fps, verbose):
         # Extract node coordinates and stress values for the current frame.
         coords = graph.x.cpu().numpy()
         stress_9 = graph.y_sig_t.cpu().numpy()
-        vm = _compute_von_mises_3d(stress_9)
+        vm = compute_von_mises_3d(stress_9)
 
         # Build one polygon per boundary triangle and assign one scalar value
         # per face as the average nodal von Mises stress.

@@ -13,6 +13,7 @@ from pathlib import Path
 import hydra
 import lightning as L
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
+from lightning.pytorch.strategies import DDPStrategy
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
@@ -35,43 +36,6 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
-
-
-def slurm_trainer_devices_and_strategy(requested_devices):
-    """
-    Picks Trainer devices and strategy for SLURM GPU jobs.
-
-    When the job is launched with torchrun (WORLD_SIZE > 1), Lightning's TorchElastic
-    environment requires Trainer(devices * num_nodes) to match the process group world
-    size on that launch (see Lightning docs: TorchRun / GPU intermediate). Use the same
-    device count as in config (must match nproc_per_node on a single node).
-
-    When a single Python process should drive all local GPUs, use ddp_spawn.
-
-    Args:
-        requested_devices: int
-            GPU count from train config (e.g. 2 for two_gpu).
-    return: tuple
-        (trainer_devices, strategy) where strategy is a Lightning strategy string, or None to omit.
-    """
-    world_raw = os.environ.get("WORLD_SIZE")
-    if world_raw is None:
-        world_n = 1
-    else:
-        world_n = int(world_raw)
-    if world_n > 1:
-        local_raw = os.environ.get("LOCAL_WORLD_SIZE")
-        local_n = int(local_raw) if local_raw is not None else world_n
-        if requested_devices != local_n:
-            raise ValueError(
-                f"Per-node process count ({local_n}, from LOCAL_WORLD_SIZE or WORLD_SIZE) "
-                f"must match train devices={requested_devices}. Align Hydra `devices=` with "
-                f"`torchrun --nproc_per_node` (and multi-node `num_nodes` if you extend this path)."
-            )
-        return requested_devices, "ddp"
-    if requested_devices > 1:
-        return requested_devices, "ddp_spawn"
-    return 1, None
 
 
 def resolve_trainer_precision(accelerator, configured_precision):
@@ -272,32 +236,16 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     elif train_cfg.training_type == "slurm":
         if not torch.cuda.is_available():
             raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
-        slurm_devices, slurm_strategy = slurm_trainer_devices_and_strategy(train_cfg.devices)
-        cuda_vis = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        world_size_env = os.environ.get("WORLD_SIZE", "")
-        print(
-            f"Lightning SLURM Trainer setup: train_cfg.devices={train_cfg.devices!r} "
-            f"(type={type(train_cfg.devices).__name__}), torch.cuda.device_count()={torch.cuda.device_count()}, "
-            f"CUDA_VISIBLE_DEVICES={cuda_vis!r}, WORLD_SIZE={world_size_env!r}, "
-            f"Trainer(devices={slurm_devices}, strategy={slurm_strategy!r})"
-        )
-        slurm_trainer_kwargs = dict(
-            max_epochs=train_cfg.total_epochs,
-            logger=logger,
-            callbacks=callbacks,
-            default_root_dir=str(lightning_module.model_dir),
-            check_val_every_n_epoch=train_cfg.validation_interval,
-            log_every_n_steps=1,
-            enable_checkpointing=len(callbacks) > 0,
-            accelerator=accelerator,
-            devices=slurm_devices,
-            num_nodes=1,
-            precision=trainer_precision,
-            profiler=profiler,
-        )
-        if slurm_strategy is not None:
-            slurm_trainer_kwargs["strategy"] = slurm_strategy
-        fit_trainer = L.Trainer(**slurm_trainer_kwargs)
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0,
+                                accelerator=accelerator,
+                                devices=train_cfg.devices, num_nodes=1,
+                                strategy="ddp",
+                                # strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
+                                precision=trainer_precision,
+                                profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
                                 callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
@@ -324,6 +272,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
 def main(cfg):
+    # Print train cfg
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     train_cfg = TrainYaml(cfg)
@@ -331,6 +280,9 @@ def main(cfg):
 
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         preprocess_dict = yaml.safe_load(file)
+
+    # Print preprocess cfg
+    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(preprocess_dict, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     preprocess_cfg = PreprocessYaml(preprocess_dict)
     # Resolve extra_info_dir: prefer train config, fall back to preprocess config
