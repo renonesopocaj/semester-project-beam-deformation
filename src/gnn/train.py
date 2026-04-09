@@ -13,6 +13,7 @@ from pathlib import Path
 import hydra
 import lightning as L
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
+from lightning.pytorch.strategies import DDPStrategy
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
@@ -237,7 +238,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator,
                                 devices=train_cfg.devices, num_nodes=1,
-                                strategy="ddp",
+                                # strategy="ddp",
+                                strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
                                 precision=trainer_precision,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
