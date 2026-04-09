@@ -148,9 +148,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
     # recommend CPU tensors plus pin_memory=True for faster transfer instead.
+    # With torch.compile, drop the last partial batch so every step sees identical batched tensor shapes (avoids
+    # CUDA-graph / inductor issues on the smaller last batch under DDP).
     train_dataloader = DataLoader(train_dataset, batch_size=train_cfg.batch_size, shuffle=True,
                                   num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
-                                  pin_memory=train_cfg.pin_memory)
+                                  pin_memory=train_cfg.pin_memory,
+                                  #drop_last=train_cfg.torch_compile
+                                  )
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
