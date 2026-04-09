@@ -39,9 +39,14 @@ THETA_MAX_MARGIN = 1e-6
 
 def slurm_trainer_devices_and_strategy(requested_devices):
     """
-    Picks Trainer devices and strategy for SLURM GPU jobs. When torchrun (or similar) has
-    already started multiple ranks (WORLD_SIZE > 1), each rank uses one GPU with ddp.
-    Otherwise, a single Python process requesting multiple GPUs uses ddp_spawn.
+    Picks Trainer devices and strategy for SLURM GPU jobs.
+
+    When the job is launched with torchrun (WORLD_SIZE > 1), Lightning's TorchElastic
+    environment requires Trainer(devices * num_nodes) to match the process group world
+    size on that launch (see Lightning docs: TorchRun / GPU intermediate). Use the same
+    device count as in config (must match nproc_per_node on a single node).
+
+    When a single Python process should drive all local GPUs, use ddp_spawn.
 
     Args:
         requested_devices: int
@@ -55,7 +60,15 @@ def slurm_trainer_devices_and_strategy(requested_devices):
     else:
         world_n = int(world_raw)
     if world_n > 1:
-        return 1, "ddp"
+        local_raw = os.environ.get("LOCAL_WORLD_SIZE")
+        local_n = int(local_raw) if local_raw is not None else world_n
+        if requested_devices != local_n:
+            raise ValueError(
+                f"Per-node process count ({local_n}, from LOCAL_WORLD_SIZE or WORLD_SIZE) "
+                f"must match train devices={requested_devices}. Align Hydra `devices=` with "
+                f"`torchrun --nproc_per_node` (and multi-node `num_nodes` if you extend this path)."
+            )
+        return requested_devices, "ddp"
     if requested_devices > 1:
         return requested_devices, "ddp_spawn"
     return 1, None
