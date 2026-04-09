@@ -2,7 +2,7 @@
 #SBATCH --job-name=semester-project
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
@@ -24,11 +24,12 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 
 mkdir -p saved_models
-python -m src.gnn.train computational=in_memory \
+srun python -m src.gnn.train computational=in_memory_slurm_1gpu \
   computational.torch_compile=True \
   lr_scheduler=plateau \
   training=slurm \
   training.total_epochs=100 \
-  training.loss_type="mae" \
-  model=meshgraphnet_message \
-  data=slurm
+  model=mgn_deep \
+  devices=one_gpu \
+  data=slurm \
+  data.dataset_dir="/scratch/izar/senoner/dataset/processed/rotated_beam/z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot/large" \
