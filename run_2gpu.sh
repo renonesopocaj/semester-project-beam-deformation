@@ -24,7 +24,10 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 
 mkdir -p saved_models
-python -m src.gnn.train computational=in_memory_slurm_2gpu_bf16 computational.torch_compile=True \
+# Two ranks (matches devices=two_gpu): explicit torchrun avoids Lightning staying at world_size 1.
+torchrun --standalone --nproc_per_node=2 -m src.gnn.train \
+  computational=in_memory_slurm_2gpu_bf16 \
+  computational.torch_compile=True \
   lr_scheduler=plateau \
   training=slurm \
   training.total_epochs=100 \
