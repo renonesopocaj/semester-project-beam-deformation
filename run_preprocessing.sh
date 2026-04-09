@@ -25,4 +25,4 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 
 mkdir -p saved_models
-python -m src.gnn.preprocess --multirun features=all,no_abs_pos,no_edge_vel,no_force_edge,no_node_norms,no_past_pos,no_rotation_angle,no_stretch_edge paths=slurm_rotated_beam,slurm_single_direction_beam
+python -m src.gnn.preprocess --multirun features=old paths=slurm_rotated_beam,slurm_single_direction_beam

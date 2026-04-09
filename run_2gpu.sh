@@ -2,8 +2,8 @@
 #SBATCH --job-name=semester-project
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=40
+#SBATCH --ntasks-per-node=2
+#SBATCH --cpus-per-task=19 # max 39 per node
 #SBATCH --gres=gpu:2
 #SBATCH --time=0-12:00:00
 #SBATCH --output=slurm-%x-%j.out
@@ -25,13 +25,13 @@ conda activate semesterproject
 
 mkdir -p saved_models
 # Two ranks (matches devices=two_gpu): explicit torchrun avoids Lightning staying at world_size 1.
-torchrun --standalone --nproc_per_node=2 -m src.gnn.train \
-  computational=in_memory_slurm_2gpu_bf16 \
+srun python -m src.gnn.train \
+  computational=in_memory_slurm_2gpu \
   computational.torch_compile=True \
   lr_scheduler=plateau \
   training=slurm \
   training.total_epochs=100 \
-  model=mgn_message_mid \
+  model=mgn_small \
   devices=two_gpu \
   data=slurm \
-  data.dataset_dir="/scratch/izar/senoner/dataset/processed/rotated_beam/z_isotr_centr_log_noabs_xtm1_normnode_edgevel_edgeforce_stretch_rot/large"
+  data.dataset_dir="/scratch/izar/senoner/dataset/processed/single_direction_beam/z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot/large"
