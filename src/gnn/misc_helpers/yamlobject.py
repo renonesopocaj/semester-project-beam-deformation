@@ -182,6 +182,7 @@ class TrainYaml:
         # Exponentiate
         self.exp_mises = flattened_cfg["exp_mises"]
         self.stress_weight = flattened_cfg["stress_weight"]
+        self.protect_from_oom = flattened_cfg["protect_from_oom"]
 
 def _to_dict_flatten(data):
     """

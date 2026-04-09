@@ -22,10 +22,8 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 import dolfin as df
-
 import warnings
 from ffc.quadrature.deprecation import QuadratureRepresentationDeprecationWarning
-import dolfin as df
 warnings.filterwarnings("ignore", category=QuadratureRepresentationDeprecationWarning)
 # df.set_log_level(df.LogLevel.ERROR)  # optional; does not control this warning
 
@@ -938,7 +936,7 @@ def _build_zero_force_test_combo(cfg):
     t = cfg["train"]
     L_mid = (float(t["lengths"]["start"]) + float(t["lengths"]["stop"])) / 2.0
     W_mid = (float(t["widths"]["start"]) + float(t["widths"]["stop"])) / 2.0
-    return ((0.0, 0.0, 0.0), L_mid, W_mid)
+    return (0.0, 0.0, 0.0), L_mid, W_mid
 
 
 # ---------------------------------------------------------------------------
@@ -1166,7 +1164,7 @@ def run_simulations(config_path, verbose, skip_existing, modes):
                            output_root=output_root,
                            verbose=verbose,
                            first_trajectory_debug=(idx == 0),
-                           linear_solver=defaults.get("linear_solver", "krylov"))
+                           linear_solver=defaults["linear_solver"])
 
 
 if __name__ == "__main__":

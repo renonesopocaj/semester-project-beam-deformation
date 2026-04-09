@@ -265,3 +265,29 @@ def extract_mesh_bc_nodemask(bc, V):
     # Return as a column tensor for graph node features.
     node_scalar = torch.tensor(is_fixed, dtype=torch.float).reshape(-1, 1)
     return node_scalar
+
+def extract_node_masses(V, rho, dx_lump):
+    """
+    Extract lumped node masses.
+    Because the mass matrix is assembled with vertex quadrature (dx_lump), it is already diagonal -- get_diagonal
+    returns the true row-sum lumped masses.
+    Saved but unused in the ML pipeline.
+
+    Args:
+        V: dolfin.FunctionSpace
+            Vector function space for displacement.
+        rho: dolfin.Constant
+            Material density.
+        dx_lump: dolfin.Measure
+            Vertex-quadrature measure that produces a diagonal mass matrix.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) containing lumped mass values
+        for x, y, z displacement components at each mesh vertex.
+    """
+    du = df.TrialFunction(V)
+    u_ = df.TestFunction(V)
+    M = df.assemble(rho * df.inner(du, u_) * dx_lump)
+    diag = df.Vector()
+    M.init_vector(diag, 0)
+    M.get_diagonal(diag)
+    return dof_vector_to_vertex_array(diag, V)
