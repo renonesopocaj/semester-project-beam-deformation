@@ -39,8 +39,8 @@ def compute_final_volumes(all_true_rollouts, all_pred_rollouts):
             Mapping of trajectory index to ground-truth rollout graphs.
         all_pred_rollouts: dict[int, list]
             Mapping of trajectory index to predicted rollout graphs.
-        return: (list[float], list[float])
-            Per-trajectory final true volume and final predicted volume.
+    return: (list[float], list[float])
+        Per-trajectory final true volume and final predicted volume.
     """
     true_volumes, pred_volumes = [], []
     # for all trajectories

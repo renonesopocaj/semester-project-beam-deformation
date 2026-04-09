@@ -238,8 +238,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 enable_checkpointing=len(callbacks) > 0,
                                 accelerator=accelerator,
                                 devices=train_cfg.devices, num_nodes=1,
-                                # strategy="ddp",
-                                strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
+                                strategy="ddp",
+                                # strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
                                 precision=trainer_precision,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
@@ -268,6 +268,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
 def main(cfg):
+    # Print train cfg
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     train_cfg = TrainYaml(cfg)
@@ -275,6 +276,9 @@ def main(cfg):
 
     with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
         preprocess_dict = yaml.safe_load(file)
+
+    # Print preprocess cfg
+    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(preprocess_dict, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
     preprocess_cfg = PreprocessYaml(preprocess_dict)
     # Resolve extra_info_dir: prefer train config, fall back to preprocess config

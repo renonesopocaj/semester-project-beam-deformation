@@ -79,7 +79,6 @@ def _save_lr_curve(epochs, lr_values, output_path):
             Learning rate per epoch.
         output_path: Path
             Destination image path.
-        return: None
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     _draw_lr_curve(ax, epochs, lr_values)
