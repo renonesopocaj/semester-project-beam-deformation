@@ -11,6 +11,8 @@ are test samples that have only one feature (between force_x, force_y, force_z, 
 and then some that have 2, some 3, and so on. Every test sample has at least one feature out of distribution.
 
 A test sample with beam always still for example (0,0,0) is explicitly added in test
+Selected longer validation/test trajectories keep the same dt and the same number of forced timesteps as the
+default trajectories; only the passive tail is extended.
 """
 
 import json
@@ -1117,7 +1119,9 @@ def run_simulations(config_path, verbose, skip_existing, modes):
     # Save extra_info (selected trajectories + test_ood_features)
     _save_extra_info(output_root, selected_trajs, ood_by_traj)
 
-    # Read selected trajectory overrides
+    # Read selected trajectory overrides.
+    # Longer selected trajectories keep the same dt as the default runs, so they also keep the same
+    # traction-ramp cutoff measured in timestep count before the force drops to zero.
     selected_total_time = selected_trajs.get("selected_total_time", defaults["total_time"])
     selected_num_steps = selected_trajs.get("num_steps", defaults["num_steps"])
 

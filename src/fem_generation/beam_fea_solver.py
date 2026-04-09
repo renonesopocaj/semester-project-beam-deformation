@@ -24,6 +24,8 @@ from src.fem_generation.visualization_fea import plot_check, make_beam_gif
 
 # Use a non-interactive backend so plots can be generated in headless environments.
 matplotlib.use("agg")
+# Canonical trajectory duration used to keep the traction ramp active for the same number of timesteps
+# on the selected longer rollouts.
 CONSTANT_FOR_CUTOFF_TIME = 4.0
 
 def extract_node_masses(V, rho, dx_lump):
@@ -364,7 +366,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         initial_force_z: float
             Peak z-component of the ramped external traction.
         cutoff_time_factor: float
-            Fraction of the total time during which the force ramps up.
+            Dimensionless ramp factor interpreted against the canonical 4-second trajectory so selected
+            longer rollouts keep the same number of forced timesteps as the default runs.
         total_time: float
             Final simulation time.
         num_steps: int
@@ -461,12 +464,19 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     dt = df.Constant(T / Nsteps)
 
     # External traction parameters.
+    # The ramp cutoff stays tied to the canonical 4-second trajectory so selected longer rollouts
+    # keep the same timestep count under forcing before the load drops to zero.
     p0_x, p0_y, p0_z = initial_force_x, initial_force_y, initial_force_z
     cutoff_Tc = CONSTANT_FOR_CUTOFF_TIME * cutoff_time_factor
 
     # Define a time-dependent traction that ramps linearly up to tc and then vanishes.
     p = df.Expression(("t <= tc ? p0x * t / tc : 0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),
                       t=0, tc=cutoff_Tc, p0x=p0_x, p0y=p0_y, p0z=p0_z, degree=0)
+
+    def _assemble_stored_graph_force(eval_time):
+        p.t = float(eval_time)
+        f_ext_vec = df.assemble(Wext(u_, p, dss))
+        return dof_vector_to_vertex_array(f_ext_vec, V)
 
     # Build acceleration and velocity update expressions symbolically.
     a_new = update_a(du, u_old, v_old, a_old, dt, beta, use_ufl=True)
@@ -519,15 +529,17 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Save undeformed coordinates once.
     initial_coordinates = mesh.coordinates()
 
-    # Record t = 0 state (all zeros: beam is at rest).
+    # Record t = 0 state. Positions and kinematics are at rest, while the stored actuator is already aligned
+    # with the transition t0 -> t1 so preprocessing can pair graph[t] with target[t] without shifting again.
     nverts = mesh.num_vertices()
+    first_stored_force = _assemble_stored_graph_force(time[1] if Nsteps > 0 else time[0])
     graph_t0 = Data(
         x=torch.tensor(initial_coordinates, dtype=torch.float),
         edge_index=bidir_edge_index,
         x_vel_t=torch.zeros((nverts, 3), dtype=torch.float),
         y_acc_t=torch.zeros((nverts, 3), dtype=torch.float),
         y_sig_t=torch.zeros((nverts, 9), dtype=torch.float),
-        x_node_force=torch.zeros((nverts, 3), dtype=torch.float),
+        x_node_force=torch.tensor(first_stored_force, dtype=torch.float),
         x_bc=node_scalar_bc_mask,
         y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
         x_element_connectivity=mesh_connectivity,
@@ -537,7 +549,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     if first_trajectory_debug:
         print("=== DEBUG t=0 ===")
-        print(f"  avg force: {np.zeros(3)}")
+        print(f"  avg stored input force: {np.mean(first_stored_force, axis=0)}")
         print(f"  avg acc:   {np.zeros(3)}")
         print(f"  avg vel:   {np.zeros(3)}")
 
@@ -563,13 +575,11 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         stress_nodewise = project(sig, V_stress_nodes,
                                   solver_type="cg", preconditioner_type="jacobi")
 
-        # Correct nodal force extraction:
-        # Set p.t to t_{n+1}, then assemble the external-work linear form to get the
-        # true FE-consistent nodal force vector  f_ext = int N^T p dS.
-        p.t = t_now
-        f_ext_vec = df.assemble(Wext(u_, p, dss))
-        f_ext_nodal = dof_vector_to_vertex_array(f_ext_vec, V)
-        node_force_t = torch.tensor(f_ext_nodal, dtype=torch.float)
+        # Store on graph[t_{n+1}] the actuator that will be used for the next transition t_{n+1} -> t_{n+2}.
+        # This keeps the raw graph force aligned with the target that preprocessing/train pair with that graph.
+        stored_force_time = time[min(i + 2, Nsteps)]
+        stored_force_nodal = _assemble_stored_graph_force(stored_force_time)
+        node_force_t = torch.tensor(stored_force_nodal, dtype=torch.float)
 
         # Evaluate displacement and build deformed coordinates.
         disp_evaluated = evaluate_u_at_vertices(u, mesh)
@@ -602,7 +612,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
         if first_trajectory_debug and i < 2:
             print(f"=== DEBUG t={i + 1} (time={t_now:.4f}) ===")
-            print(f"  avg force: {np.mean(f_ext_nodal, axis=0)}")
+            print(f"  avg stored input force: {np.mean(stored_force_nodal, axis=0)}")
             print(f"  avg acc:   {np.mean(acc_values, axis=0)}")
             print(f"  avg vel:   {np.mean(vel_values, axis=0)}")
 

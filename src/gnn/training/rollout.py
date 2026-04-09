@@ -14,7 +14,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
     2. Semi-implicit Euler integration: obtain v_predict_tp1, x_predict_tp1 --> enforce bcs on fixed nodes
-    3. Build the whole predicted graph, but enforce ground-truth node force (which acts as actuator)
+    3. Build the whole predicted graph, but enforce ground-truth node force (which acts as actuator).
+       The current graph already stores the actuator aligned with the transition being predicted, and
+       `node_force_next` keeps the same convention for the following rollout step.
     4. Add edges
 
     Args:
@@ -154,8 +156,8 @@ def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, res
     # Obtain BCs (cannot change so always ground truth)
     boundary_condition = ground_truth_graph.x[:, 0] # NOTE: hardcoded 0 for bc feature idx, but ok by convention
     categorical_node_features = boundary_condition.unsqueeze(1)
-    # Obtain next-step node force (acts as an actuator, so always take from ground truth) and build next time step graph
-    # (valued node features) with it, but the rest is predicted.
+    # Obtain next-step node force (acts as an actuator, so always take from ground truth). The stored
+    # `node_force_next` is already aligned with the transition from the predicted state at t+1 to t+2.
     ground_truth_force_tp1 = ground_truth_graph.node_force_next
     valued_node_features_tp1, _ = node_feature_builder(x_predict_tp1, v_predict_tp1, x_t, rest_pos,
                                                        ground_truth_force_tp1)

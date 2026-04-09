@@ -86,6 +86,10 @@ class Preprocessor(ABC):
         """
         Preprocess simulation data into graph format. Note one file = one trajectory
         One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
+        Raw FEM graphs store `x_node_force` already aligned with the transition target:
+        graph[t] contains the actuator used for the step t -> t+1. Preprocessing therefore intentionally
+        pairs `all_node_force[t]` with target acceleration `a[t]` without any extra temporal shift.
+        Selected longer trajectories keep the same dt as the default runs, so the same global dt is reused here.
         Validation: 1. load files and stats
                     2. for each file:
                         2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
@@ -143,7 +147,7 @@ class Preprocessor(ABC):
             v_next = v[1:]  # (T-1, N, 3)
             x_next = x[1:]  # (T-1, N, 3)
             # rest_pos_x = x[0]  # Rest (first) mesh position (N, 3)
-            # x_node_force is the force (scalar) in every point (x,y,z) of the graph at time t
+            # Raw FEM graphs already align x_node_force with the target transition t -> t+1.
             all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)  # (T, N, 3)
             # .x_bc contains 0,1 value with 1 = fixed, 0 = free
             boundary_condition = graphs_list_batch[0].x_bc

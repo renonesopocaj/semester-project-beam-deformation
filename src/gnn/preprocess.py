@@ -18,6 +18,9 @@ Train:
              and add noise
         2.b. compute normalization stuff (mean + stddev)
     3. for each file: save
+
+Selected longer validation/test trajectories keep the same dt as the default trajectories, so preprocessing
+uses the same global dt for both the standard and longer rollouts.
 """
 
 
