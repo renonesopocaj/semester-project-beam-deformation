@@ -108,9 +108,10 @@ class _NoisedMixin:
     _build_node_features_scripted: Any
     _build_edge_features_scripted: Any
     _noise_epoch: Any  # multiprocessing.Value
+    noise_per_epoch: bool
 
     def _init_noise(self, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                    preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
+                    preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode, noise_per_epoch):
         """
         Initialize all noise-injection state. Must be called from subclass __init__ after the
         data-source __init__ has completed.
@@ -137,6 +138,9 @@ class _NoisedMixin:
                 Scale of noise on x(t-1), typically much smaller than noise_scale_train.
             noise_feature_update_mode: str
                 Feature update mode for noisy samples: "exact" or "taylor".
+            noise_per_epoch: bool
+                If True, noise RNG seeds include the epoch from set_noise_epoch so draws change each epoch.
+                If False, seeds depend only on sample index (stable across epochs).
         """
         if preprocess_cfg.time_discretization_method != "second_order_central":
             raise ValueError(
@@ -174,6 +178,7 @@ class _NoisedMixin:
         self._build_node_features_scripted, self._build_edge_features_scripted = make_scripted_feature_builders(
             self.preprocess_cfg)
         self._noise_epoch = multiprocessing.Value('i', 0)
+        self.noise_per_epoch = bool(noise_per_epoch)
 
     def _get_raw(self, idx):
         """
@@ -210,8 +215,12 @@ class _NoisedMixin:
         """
         data = self._get_raw(idx)
         epoch_part = int(self._noise_epoch.value) * _NOISE_EPOCH_SEED_STRIDE
-        seed_t = self.base_seed + epoch_part + 2 * int(idx)
-        seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
+        if self.noise_per_epoch:
+            seed_t = self.base_seed + epoch_part + 2 * int(idx)
+            seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
+        else:
+            seed_t = self.base_seed + 2 * int(idx)
+            seed_tm1 = self.base_seed + 2 * int(idx) + 1
         noise_generator_t = torch.Generator(device=data.x_pos_t.device)
         noise_generator_t.manual_seed(_fold_torch_seed(seed_t))
         noise_added_t = self.noise_scale * torch.randn(data.x_pos_t.shape, dtype=data.x_pos_t.dtype,
@@ -222,7 +231,7 @@ class _NoisedMixin:
         # rebuild node/edge features and normalize them with precomputed train statistics. The train statistics are
         # thus not affected by noise.
         x_noised = data.x_pos_t + noise_added_t
-        # NOTE: eventually, noise also previous, but much less in scale
+        # NOTE: eventually, noise also previous time step x[t-1], but much less in scale
         x_pos_tm1_prev = data.x_pos_tm1_prev.clone()
         noise_added_prev_tm1 = None
         if self.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
@@ -333,9 +342,9 @@ class _NoisedMixin:
 class InMemoryNoisedDataset(_NoisedMixin, InMemoryTimeStepDataset):
     """
     Wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
-    at every __getitem__ call. Noise RNG seeds depend on (training epoch, sample index) so each
-    epoch uses a different draw at the same noise scales; call set_noise_epoch from the trainer
-    at the start of each training epoch (see LitModule.on_train_epoch_start).
+    at every __getitem__ call. When noise_per_epoch is True, RNG seeds depend on (epoch, sample index)
+    so each epoch uses a different draw; call set_noise_epoch from the trainer each epoch
+    (see LitModule.on_train_epoch_start). When noise_per_epoch is False, seeds depend only on sample index.
 
     Noise affects:
       - Node features: fully recomputed from noised position/velocity via build_valued_node_features
@@ -348,7 +357,7 @@ class InMemoryNoisedDataset(_NoisedMixin, InMemoryTimeStepDataset):
     """
 
     def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
+                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode, noise_per_epoch):
         """
         Args:
             sample_dir: str
@@ -376,10 +385,12 @@ class InMemoryNoisedDataset(_NoisedMixin, InMemoryTimeStepDataset):
                 Scale of noise on x(t-1), typically much smaller than noise_scale_train.
             noise_feature_update_mode: str
                 Feature update mode for noisy samples: "exact" or "taylor".
+            noise_per_epoch: bool
+                If True, noise seeds vary each epoch; if False, fixed per sample index.
         """
         InMemoryTimeStepDataset.__init__(self, sample_dir, device)
         self._init_noise(noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                         preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode)
+                         preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode, noise_per_epoch)
 
     def _get_raw(self, idx):
         """

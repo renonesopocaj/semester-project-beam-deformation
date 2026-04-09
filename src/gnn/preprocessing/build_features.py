@@ -1,6 +1,9 @@
 """
 build_features.py
+
 Builds features for the GNN and physical quantities.
+- Computes von mises stress from stress tensor
+- Build edge and node features computed from the input ones using also jit compiling to make it faster
 """
 
 import torch

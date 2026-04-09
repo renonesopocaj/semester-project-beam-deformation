@@ -1,3 +1,16 @@
+"""
+eda_preprocessor.py
+
+Class that defines how to preprocess data to then perform eda and plot distributions
+The del command are there to avoid out of memory errors.
+This script does the following:
+1. Preprocess the data and save it in a format that is easy to use for EDA.
+2. Plot the distributions of the features.
+3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
+- For train the normalized distributions are computed via train stats, for val and test also with train stats.
+- All the possible normalization are done.
+"""
+
 import gc
 import json
 import math
@@ -13,7 +26,7 @@ from tqdm import tqdm
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
 from src.gnn.preprocessing.preprocessor import sort_filenames_by_traj_params
 from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
-from src.gnn.preprocessing.normalizer import NormalizerFactory
+from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.validation.plot_rollout import make_ground_truth_gif
 
@@ -166,7 +179,7 @@ class EdaPreprocessor:
             selected_limit: int
                 Timestep limit for selected trajectories.
         """
-        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        self.normalizer = create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
         self.time_discretizer = create_time_discretizer(cfg.time_discretization_method)
         self.selected_indices = set(selected_indices)
         self.selected_limit = int(selected_limit)

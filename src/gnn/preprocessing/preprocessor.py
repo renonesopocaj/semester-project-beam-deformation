@@ -1,12 +1,34 @@
-import shutil
-from typing import Any
+"""
+preprocessor.py
 
+Offline preprocessing of data. Noise injection is done online, not offline, due to having to change it each epoch.
+A lot of redundancy in Data(...) which are the PyG-formatted graphs, because it lets us do rollout and other stuff
+later in training without having to slice tensors and "remembering" which feature is where.
+One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
+Note one file = one trajectory.
+
+Validation/test:
+    1. load files and stats
+    2. for each file:
+        2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
+        2.b. normalize with stats loaded in 1
+    3. for each file: save
+
+Train:
+    1. load files
+    2. for each file:
+        2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
+             and add noise
+        2.b. compute normalization stuff (mean + stddev)
+    3. for each file: save
+"""
+
+from typing import Any
 import torch
 import json
-import hydra
 from src.gnn.mesh_numerical_helpers.time_discretizer import TimeDiscretizer, create_time_discretizer
 from src.gnn.preprocessing.build_features import (compute_von_mises_3d, make_scripted_feature_builders)
-from src.gnn.preprocessing.normalizer import Normalizer, NormalizerFactory
+from src.gnn.preprocessing.normalizer import Normalizer, create_normalizer
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
 from torch_geometric.data import Data, Batch
@@ -64,7 +86,7 @@ class Preprocessor(ABC):
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
         self.theta_max = 0.0
         self.time_discretizer = create_time_discretizer(cfg.time_discretization_method)
-        self.normalizer = NormalizerFactory.create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
+        self.normalizer = create_normalizer(cfg.normalizer_method, cfg.isotropic_normalizer)
         self.selected_indices = set(selected_indices)
         self.selected_limit = int(selected_limit)
         self.split_idx_node = None

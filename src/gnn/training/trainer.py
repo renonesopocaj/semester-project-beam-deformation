@@ -1,6 +1,8 @@
 """
 trainer.py
+
 Implements a LightningModule subclass to train models.
+Does the following:
 """
 
 from pathlib import Path
@@ -15,7 +17,7 @@ from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae
-from src.gnn.preprocessing.normalizer import NormalizerFactory
+from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
@@ -103,7 +105,7 @@ class LitModule(L.LightningModule):
         # used normalizers
         self.normalizer_method = preprocess_cfg.normalizer_method
         self.isotropic_normalizer = preprocess_cfg.isotropic_normalizer
-        self.used_dataset_normalizer = NormalizerFactory.create_normalizer(self.normalizer_method,
+        self.used_dataset_normalizer = create_normalizer(self.normalizer_method,
                                                                            self.isotropic_normalizer)
         self.model_dir = Path(model_root) / self.training_id
         self.model_dir.mkdir(parents=True, exist_ok=True)

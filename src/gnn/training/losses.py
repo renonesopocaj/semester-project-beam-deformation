@@ -1,13 +1,9 @@
 """
 losses.py
+
 Contains loss functions and residuals.
-Losses:
-- mse
-- mae
-- huber
-Residuals:
-- angle_residual
-- volume TODO
+Losses: mae, huber, mse
+Residuals: angle_residual, volume TODO, energy???
 """
 
 import torch

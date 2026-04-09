@@ -1,5 +1,6 @@
 """
 eda.py
+
 Main file to run in order to do Exploratory Data Analysis.
 - The del command are there to avoid out of memory errors.
 This script does the following:
@@ -7,7 +8,6 @@ This script does the following:
 2. Plot the distributions of the features.
 3. Plot uniformly sampled trajectories (10%, i.e. for 1000 samples 100)
 - For train the normalized distributions are computed via train stats, for val and test also with train stats.
-- To avoid code repetition, the preprocessing reuses the same feature builders used in preprocess.py.
 - All the possible normalization are done.
 """
 

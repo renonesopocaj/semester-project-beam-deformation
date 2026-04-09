@@ -139,7 +139,7 @@ class LazyNoisedDataset(_NoisedMixin, LazyTimeStepDataset):
 
     def __init__(self, sample_dir, device, cache_size, noise_scale, gamma, dt, node_stats, edge_stats,
                  target_stats, base_seed, preprocess_cfg, noise_also_prev, noise_prev_scale,
-                 noise_feature_update_mode):
+                 noise_feature_update_mode, noise_per_epoch):
         """
         Args:
             sample_dir: str
@@ -169,10 +169,12 @@ class LazyNoisedDataset(_NoisedMixin, LazyTimeStepDataset):
                 Scale of noise on x(t-1), typically much smaller than noise_scale_train.
             noise_feature_update_mode: str
                 Feature update mode for noisy samples: "exact" or "taylor".
+            noise_per_epoch: bool
+                If True, noise seeds vary each epoch; if False, fixed per sample index.
         """
         LazyTimeStepDataset.__init__(self, sample_dir, device, cache_size)
         self._init_noise(noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                         preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode)
+                         preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode, noise_per_epoch)
 
     def _get_raw(self, idx):
         """

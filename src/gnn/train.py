@@ -142,7 +142,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             base_seed=train_cfg.noise_seed, preprocess_cfg=preprocess_cfg,
             noise_also_prev=train_cfg.noise_also_prev,
             noise_prev_scale=train_cfg.noise_prev_scale_train,
-            noise_feature_update_mode=train_cfg.noise_feature_update_mode)
+            noise_feature_update_mode=train_cfg.noise_feature_update_mode,
+            noise_per_epoch=train_cfg.noise_per_epoch)
     else:
         train_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
