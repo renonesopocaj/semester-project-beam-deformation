@@ -8,6 +8,7 @@ Two versions:
     at every __getitem__ call, with RNG seeds varying by training epoch (see set_noise_epoch).
 """
 
+from typing import Any
 from torch_geometric.data import Dataset, Data
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
 from src.gnn.preprocessing.normalizer import (build_affine_normalizer_tensors, apply_affine_normalization,
@@ -68,12 +69,11 @@ class InMemoryTimeStepDataset(Dataset):
         return len(self.data)
 
 
-class InMemoryNoisedDataset(InMemoryTimeStepDataset):
+class _NoisedMixin:
     """
-    Wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
-    at every __getitem__ call. Noise RNG seeds depend on (training epoch, sample index) so each
-    epoch uses a different draw at the same noise scales; call set_noise_epoch from the trainer
-    at the start of each training epoch (see LitModule.on_train_epoch_start).
+    Mixin providing per-epoch Gaussian noise injection for position-based graph datasets.
+    Requires the concrete class to implement _get_raw(idx) returning an un-noised Data object.
+    Call _init_noise from the subclass __init__ after the data-source __init__ has run.
 
     Noise affects:
       - Node features: fully recomputed from noised position/velocity via build_valued_node_features
@@ -94,6 +94,10 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     target_stats_mean_acc: torch.Tensor
     target_stats_std_acc: torch.Tensor
     base_seed: int
+    preprocess_cfg: Any
+    noise_also_prev: bool
+    noise_prev_scale: float
+    noise_feature_update_mode: str
     node_norm_scale: torch.Tensor
     node_norm_bias: torch.Tensor
     node_denorm_scale: torch.Tensor
@@ -101,16 +105,17 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
     edge_norm_bias: torch.Tensor
     edge_denorm_scale: torch.Tensor
     target_acc_norm_scale: torch.Tensor
-    noise_feature_update_mode: str
+    _build_node_features_scripted: Any
+    _build_edge_features_scripted: Any
+    _noise_epoch: Any  # multiprocessing.Value
 
-    def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
-                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
+    def _init_noise(self, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
+                    preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
         """
+        Initialize all noise-injection state. Must be called from subclass __init__ after the
+        data-source __init__ has completed.
+
         Args:
-            sample_dir: str
-                Directory containing preprocessed graph_*.pt files.
-            device: str or torch.device
-                Device to load data onto.
             noise_scale: float
                 Standard deviation of Gaussian noise added to positions.
             gamma: float
@@ -124,7 +129,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             target_stats: Stats
                 Target normalization statistics.
             base_seed: int
-                Base seed mixed with training epoch and sample index for noise RNG (see set_noise_epoch).
+                Base seed mixed with epoch and sample index for noise RNG.
             preprocess_cfg: PreprocessYaml
             noise_also_prev: bool
                 Whether to also inject noise on the previous-step position x(t-1).
@@ -133,7 +138,6 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             noise_feature_update_mode: str
                 Feature update mode for noisy samples: "exact" or "taylor".
         """
-        super().__init__(sample_dir, device)
         if preprocess_cfg.time_discretization_method != "second_order_central":
             raise ValueError(
                 f"Noise injection only supports second_order_central time discretization, "
@@ -171,6 +175,16 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
             self.preprocess_cfg)
         self._noise_epoch = multiprocessing.Value('i', 0)
 
+    def _get_raw(self, idx):
+        """
+        Return the raw (un-noised) Data object at flat index idx. Must be implemented by subclasses.
+
+        Args:
+            idx: int
+        return: Data
+        """
+        raise NotImplementedError("_get_raw must be implemented by subclasses of _NoisedMixin")
+
     def set_noise_epoch(self, epoch):
         """
         Set training epoch used to derive noise seeds so each epoch draws different noise at the same scales.
@@ -194,7 +208,7 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
         return: Data
             PyG Data with noised input features, recomputed edge features, and corrected acceleration target.
         """
-        data = self.data[idx]
+        data = self._get_raw(idx)
         epoch_part = int(self._noise_epoch.value) * _NOISE_EPOCH_SEED_STRIDE
         seed_t = self.base_seed + epoch_part + 2 * int(idx)
         seed_tm1 = self.base_seed + epoch_part + 2 * int(idx) + 1
@@ -314,3 +328,65 @@ class InMemoryNoisedDataset(InMemoryTimeStepDataset):
                                                           create_graph=False,
                                                           strict=False)
         return node_attr_base_raw + node_delta_raw, edge_attr_base_raw + edge_delta_raw
+
+
+class InMemoryNoisedDataset(_NoisedMixin, InMemoryTimeStepDataset):
+    """
+    Wraps InMemoryTimeStepDataset to inject per-node Gaussian noise on position x(t)
+    at every __getitem__ call. Noise RNG seeds depend on (training epoch, sample index) so each
+    epoch uses a different draw at the same noise scales; call set_noise_epoch from the trainer
+    at the start of each training epoch (see LitModule.on_train_epoch_start).
+
+    Noise affects:
+      - Node features: fully recomputed from noised position/velocity via build_valued_node_features
+      - Edge features: recomputed from noised positions via build_edge_features
+      - Target acceleration: corrected via a_tilde = a_star - (1 + gamma) * eps / dt^2
+      - x_pos_t and x_vel_t: propagated as noised (for curvature loss coherence)
+
+    Unchanged:
+      - x(t-1) (ground truth), x(t+1) (target), rest position, von Mises stress, node_force, x_bc
+    """
+
+    def __init__(self, sample_dir, device, noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
+                 preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode):
+        """
+        Args:
+            sample_dir: str
+                Directory containing preprocessed graph_*.pt files.
+            device: str or torch.device
+                Device to load data onto.
+            noise_scale: float
+                Standard deviation of Gaussian noise added to positions.
+            gamma: float
+                Damping coefficient for acceleration correction.
+            dt: float
+                Simulation time step size.
+            node_stats: Stats
+                Node feature normalization statistics.
+            edge_stats: Stats
+                Edge feature normalization statistics.
+            target_stats: Stats
+                Target normalization statistics.
+            base_seed: int
+                Base seed mixed with training epoch and sample index for noise RNG (see set_noise_epoch).
+            preprocess_cfg: PreprocessYaml
+            noise_also_prev: bool
+                Whether to also inject noise on the previous-step position x(t-1).
+            noise_prev_scale: float
+                Scale of noise on x(t-1), typically much smaller than noise_scale_train.
+            noise_feature_update_mode: str
+                Feature update mode for noisy samples: "exact" or "taylor".
+        """
+        InMemoryTimeStepDataset.__init__(self, sample_dir, device)
+        self._init_noise(noise_scale, gamma, dt, node_stats, edge_stats, target_stats, base_seed,
+                         preprocess_cfg, noise_also_prev, noise_prev_scale, noise_feature_update_mode)
+
+    def _get_raw(self, idx):
+        """
+        Return the raw in-memory Data at flat index idx.
+
+        Args:
+            idx: int
+        return: Data
+        """
+        return self.data[idx]
