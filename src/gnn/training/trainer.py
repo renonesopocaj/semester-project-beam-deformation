@@ -158,7 +158,7 @@ class LitModule(L.LightningModule):
         if not self.trainer.is_global_zero:
             return
         nbytes = module_param_and_buffer_storage_bytes(self.model)
-        print(f"\tLitModule.model at fit start (params+buffers): {human_readable_storage(nbytes)} ({nbytes} bytes)")
+        print(f"LitModule.model at fit start (params+buffers): {human_readable_storage(nbytes)} ({nbytes} bytes)")
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS

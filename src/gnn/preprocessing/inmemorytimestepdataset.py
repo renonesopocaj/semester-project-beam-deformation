@@ -60,8 +60,8 @@ class InMemoryTimeStepDataset(Dataset):
         print(f"\tLoaded the dataset with {len(self.data)} samples ({self.num_trajectories} trajectories)")
         if len(self.data) > 0:
             g0_bytes = pyg_data_tensor_storage_bytes(self.data[0])
-            print(f"\tOne stored timestep graph (CPU, pre-__getitem__ noise) tensor storage: "
-                  f"{human_readable_storage(g0_bytes)} ({g0_bytes} bytes)")
+            print(f"\tOne stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: "
+                  f"{human_readable_storage(g0_bytes)} ({g0_bytes} bytes)\n\n\n")
 
     @property
     def num_trajectories(self):

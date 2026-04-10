@@ -169,9 +169,10 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     peek_batch = next(iter(train_dataloader))
     peek_batch_bytes = pyg_data_tensor_storage_bytes(peek_batch)
     peek_num_graphs = int(peek_batch.num_graphs)
-    print(f"\tOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
+
+    print(f"\n\nOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
           f"({peek_batch_bytes} bytes), num_graphs={peek_num_graphs}, config batch_size={train_cfg.batch_size}")
-    print("\t  (Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)")
+    print("(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)\n\n")
     del peek_batch
     if train_cfg.enable_val:
         print("Validation dataset:")
@@ -189,10 +190,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     #torch.manual_seed(cfg.seed)
     model_eager = create_model(train_cfg, preprocess_cfg, device)
     eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
-    print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} ({eager_model_bytes} bytes)")
+    print("\n\nModel info:")
+    print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} "
+          f"({eager_model_bytes} bytes)")
     model = maybe_compile_model(model_eager, train_cfg, train_cfg.protect_from_oom)
     wrapped_model_bytes = module_param_and_buffer_storage_bytes(model)
-    print(f"\tModel params+buffers after torch.compile: {human_readable_storage(wrapped_model_bytes)} ({wrapped_model_bytes} bytes) "
+    print(f"\tModel params+buffers after torch.compile: {human_readable_storage(wrapped_model_bytes)} "
+          f"({wrapped_model_bytes} bytes) "
           "(same tensor storage; torch.compile may still increase peak VRAM for kernels/caching.)")
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
