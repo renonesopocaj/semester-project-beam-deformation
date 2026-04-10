@@ -10,6 +10,7 @@ Two versions:
 
 from typing import Any
 from torch_geometric.data import Dataset, Data
+from src.gnn.misc_helpers.misc import human_readable_storage, pyg_data_tensor_storage_bytes
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
 from src.gnn.preprocessing.normalizer import (build_affine_normalizer_tensors, apply_affine_normalization,
                                               apply_affine_denormalization)
@@ -57,6 +58,10 @@ class InMemoryTimeStepDataset(Dataset):
             self.trajectory_boundaries.append((start, len(self.data)))
 
         print(f"\tLoaded the dataset with {len(self.data)} samples ({self.num_trajectories} trajectories)")
+        if len(self.data) > 0:
+            g0_bytes = pyg_data_tensor_storage_bytes(self.data[0])
+            print(f"\tOne stored timestep graph (CPU, pre-__getitem__ noise) tensor storage: "
+                  f"{human_readable_storage(g0_bytes)} ({g0_bytes} bytes)")
 
     @property
     def num_trajectories(self):

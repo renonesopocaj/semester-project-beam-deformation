@@ -16,7 +16,7 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
-from src.gnn.misc_helpers.misc import compute_mean_relative_mae
+from src.gnn.misc_helpers.misc import compute_mean_relative_mae, human_readable_storage, module_param_and_buffer_storage_bytes
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
@@ -150,6 +150,16 @@ class LitModule(L.LightningModule):
                 f"Expected 'exact' or 'taylor'."
             )
 
+    def on_fit_start(self):
+        """
+        Logs model parameter+buffer storage at fit start (rank 0 only).
+
+        return: None
+        """
+        if not self.trainer.is_global_zero:
+            return
+        nbytes = module_param_and_buffer_storage_bytes(self.model)
+        print(f"\tLitModule.model at fit start (params+buffers): {human_readable_storage(nbytes)} ({nbytes} bytes)")
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS

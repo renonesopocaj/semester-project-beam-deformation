@@ -25,6 +25,7 @@ from torch_geometric.loader import DataLoader
 
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
+from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.preprocess import load_selected_trajectories
@@ -155,6 +156,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                   pin_memory=train_cfg.pin_memory,
                                   #drop_last=train_cfg.torch_compile
                                   )
+    peek_batch = next(iter(train_dataloader))
+    peek_batch_bytes = pyg_data_tensor_storage_bytes(peek_batch)
+    peek_num_graphs = int(peek_batch.num_graphs)
+    print(f"\tOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
+          f"({peek_batch_bytes} bytes), num_graphs={peek_num_graphs}, config batch_size={train_cfg.batch_size}")
+    print("\t  (Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)")
+    del peek_batch
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
@@ -169,8 +177,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
-    model = create_model(train_cfg, preprocess_cfg, device)
-    model = maybe_compile_model(model, train_cfg)
+    model_eager = create_model(train_cfg, preprocess_cfg, device)
+    eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
+    print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} ({eager_model_bytes} bytes)")
+    model = maybe_compile_model(model_eager, train_cfg)
+    wrapped_model_bytes = module_param_and_buffer_storage_bytes(model)
+    print(f"\tModel params+buffers after torch.compile: {human_readable_storage(wrapped_model_bytes)} ({wrapped_model_bytes} bytes) "
+          "(same tensor storage; torch.compile may still increase peak VRAM for kernels/caching.)")
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
