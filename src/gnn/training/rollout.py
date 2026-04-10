@@ -112,7 +112,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                      edge_index=graph_ground_truth.edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
                                      rest_pos=rest_pos,
-                                     # note: saved but not previous step stress is not used for next step prediction
+                                     # note: saved but previous step stress is not used for next step prediction
                                      von_mises=von_mises_true,
                                      ))
             pred_rollout.append(Data(x_pos_t=x_predict_tp1,
@@ -121,7 +121,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                      edge_index=graph_ground_truth.edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
                                      rest_pos=rest_pos,
-                                     # note: saved but not previous step stress is not used for next step prediction
+                                     # note: saved but previous step stress is not used for next step prediction
                                      von_mises=von_mises_t_pred
                                      ))
     return true_rollout, pred_rollout

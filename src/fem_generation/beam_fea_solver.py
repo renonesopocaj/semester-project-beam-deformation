@@ -1,7 +1,8 @@
 """
 beam_fea_solver.py
 Implementation of a 3D beam finite element solver using FEniCS.
-Note the idea is that one dataset has forces only in the y direction, while the "rotated" in various directions.
+One dataset (single direction beam) has forces only in the y direction, while the "rotated" in various directions,
+excluding the x direction which is "compression against the wall".
 """
 
 import argparse
@@ -15,7 +16,7 @@ from fenics import project
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from ufl import lhs, rhs
-from src.fem_generation.fem2torch_helpers import (extract_edges, evaluate_u_at_vertices,
+from src.fem_generation.fem2torch_helpers import (extract_edges, evaluate_u_at_vertices, extract_node_masses,
                                                   evaluate_velocity_at_vertices,
                                                   evaluate_acceleration_at_vertices,
                                                   evaluate_stress_at_vertices_fast,
@@ -26,51 +27,11 @@ from src.fem_generation.visualization_fea import plot_check, make_beam_gif
 matplotlib.use("agg")
 CONSTANT_FOR_CUTOFF_TIME = 4.0
 
-def extract_node_masses(V, rho, dx_lump):
-    """
-    Extract lumped node masses.  Because the mass matrix is assembled with
-    vertex quadrature (dx_lump), it is already diagonal -- get_diagonal
-    returns the true row-sum lumped masses.
+################################################################################################
+#                                   DOLFIN/FORMS/PDE UTILITIES
+#################################################################################################
 
-    Args:
-        V: dolfin.FunctionSpace
-            Vector function space for displacement.
-        rho: dolfin.Constant
-            Material density.
-        dx_lump: dolfin.Measure
-            Vertex-quadrature measure that produces a diagonal mass matrix.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) containing lumped mass values
-            for x, y, z displacement components at each mesh vertex.
-    """
-    du = df.TrialFunction(V)
-    u_ = df.TestFunction(V)
-    M = df.assemble(rho * df.inner(du, u_) * dx_lump)
-    diag = df.Vector()
-    M.init_vector(diag, 0)
-    M.get_diagonal(diag)
-    return dof_vector_to_vertex_array(diag, V)
-
-def save_graphs(lst_graph_tstep, save_path, verbose):
-    """
-    Save a list of graph snapshots as a PyTorch DataLoader object.
-
-    Args:
-        lst_graph_tstep: list
-            List of torch_geometric.data.Data objects, one per time step.
-        save_path: str
-            Output path for the serialized .pt file.
-        return: None
-            Saves the graph data to disk.
-    """
-    # Wrap graphs in a DataLoader so downstream code can load them directly.
-    gph_dataloader = DataLoader(lst_graph_tstep, batch_size=1, shuffle=False)
-    torch.save(gph_dataloader, save_path)
-    if verbose:
-        print(f"saved graphs(dataloader) to {save_path}")
-
-
-def sigma(r, mu, lmbda):
+def _sigma(r, mu, lmbda):
     """
     Compute linear elastic Cauchy stress from displacement field.
 
@@ -81,13 +42,13 @@ def sigma(r, mu, lmbda):
             First Lamé parameter in shear form.
         lmbda: dolfin.Constant
             Second Lamé parameter.
-        return: ufl expression
-            Stress tensor expression.
+    return: ufl expression
+        Stress tensor expression.
     """
     return 2.0 * mu * df.sym(df.grad(r)) + lmbda * df.tr(df.sym(df.grad(r))) * df.Identity(len(r))
 
 
-def m(uA, uB, rho, dx_lump):
+def _m(uA, uB, rho, dx_lump):
     """
     Mass bilinear form using lumped (vertex-quadrature) integration.
 
@@ -100,13 +61,13 @@ def m(uA, uB, rho, dx_lump):
             Material density.
         dx_lump: dolfin.Measure
             Vertex-quadrature measure that makes the mass matrix diagonal.
-        return: ufl form
-            Lumped mass form rho * <uA, uB>.
+    return: ufl form
+        Lumped mass form rho * <uA, uB>.
     """
     return rho * df.inner(uA, uB) * dx_lump
 
 
-def k(uA, uB, mu, lmbda):
+def _k(uA, uB, mu, lmbda):
     """
     Stiffness bilinear form.
 
@@ -119,13 +80,13 @@ def k(uA, uB, mu, lmbda):
             First Lamé parameter in shear form.
         lmbda: dolfin.Constant
             Second Lamé parameter.
-        return: ufl form
-            Elastic stiffness form.
+    return: ufl form
+        Elastic stiffness form.
     """
-    return df.inner(sigma(uA, mu, lmbda), df.sym(df.grad(uB))) * df.dx
+    return df.inner(_sigma(uA, mu, lmbda), df.sym(df.grad(uB))) * df.dx
 
 
-def c(uA, uB, eta_m, eta_k, rho, mu, lmbda, dx_lump):
+def _c(uA, uB, eta_m, eta_k, rho, mu, lmbda, dx_lump):
     """
     Rayleigh damping bilinear form.  The mass-proportional part uses
     the lumped mass measure so that damping is consistent with the
@@ -148,13 +109,13 @@ def c(uA, uB, eta_m, eta_k, rho, mu, lmbda, dx_lump):
             Second Lamé parameter.
         dx_lump: dolfin.Measure
             Vertex-quadrature measure for the lumped mass part.
-        return: ufl form
-            Damping form eta_m * M_lump + eta_k * K.
+    return: ufl form
+        Damping form eta_m * M_lump + eta_k * K.
     """
-    return eta_m * m(uA, uB, rho, dx_lump) + eta_k * k(uA, uB, mu, lmbda)
+    return eta_m * _m(uA, uB, rho, dx_lump) + eta_k * _k(uA, uB, mu, lmbda)
 
 
-def Wext(uA, p, dss):
+def _Wext(uA, p, dss):
     """
     External virtual work of the applied traction.
 
@@ -165,13 +126,13 @@ def Wext(uA, p, dss):
             Applied traction.
         dss: dolfin.Measure
             Boundary measure with marked right boundary.
-        return: ufl form
-            Surface traction work on the marked right boundary.
+    return: ufl form
+        Surface traction work on the marked right boundary.
     """
     return df.dot(uA, p) * dss(3)
 
 
-def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, use_ufl):
+def _update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, use_ufl):
     """
     Compute the new acceleration from displacement update.
 
@@ -190,8 +151,8 @@ def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, use_ufl):
             Generalized-alpha / Newmark beta parameter.
         use_ufl: bool
             Whether to use symbolic FEniCS constants or plain Python floats.
-        return: object
-            Updated acceleration expression or array.
+    return: object
+        Updated acceleration expression or array.
     """
     if use_ufl:
         dt_ = dt
@@ -203,7 +164,7 @@ def update_a(uNEW, uOLD, vOLD, aOLD, dt, beta, use_ufl):
     return (uNEW - uOLD - dt_ * vOLD) / (beta_ * dt_**2) - (1 - 2 * beta_) / (2 * beta_) * aOLD
 
 
-def update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, use_ufl):
+def _update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, use_ufl):
     """
     Compute the new velocity from acceleration update.
 
@@ -235,7 +196,7 @@ def update_v(aNEW, uOLD, vOLD, aOLD, dt, gamma, use_ufl):
     return vOLD + dt_ * ((1 - gamma_) * aOLD + gamma_ * aNEW)
 
 
-def update_fields(uNEW, uOLD, vOLD, aOLD, dt, beta, gamma):
+def _update_fields(uNEW, uOLD, vOLD, aOLD, dt, beta, gamma):
     """
     Update the state vectors in place after solving for the new displacement.
 
@@ -254,16 +215,14 @@ def update_fields(uNEW, uOLD, vOLD, aOLD, dt, beta, gamma):
             Generalized-alpha / Newmark beta parameter.
         gamma: dolfin.Constant
             Generalized-alpha / Newmark gamma parameter.
-        return: None
-            Updates the old state variables in place.
     """
     # Extract underlying vectors.
     u_vec, u0_vec = uNEW.vector(), uOLD.vector()
     v0_vec, a0_vec = vOLD.vector(), aOLD.vector()
 
     # Update acceleration and velocity in algebraic form.
-    a_vec = update_a(u_vec, u0_vec, v0_vec, a0_vec, dt, beta, use_ufl=False)
-    v_vec = update_v(a_vec, u0_vec, v0_vec, a0_vec, dt, gamma, use_ufl=False)
+    a_vec = _update_a(u_vec, u0_vec, v0_vec, a0_vec, dt, beta, use_ufl=False)
+    v_vec = _update_v(a_vec, u0_vec, v0_vec, a0_vec, dt, gamma, use_ufl=False)
 
     # Copy updated values into the FEniCS functions.
     vOLD.vector()[:] = v_vec
@@ -271,7 +230,7 @@ def update_fields(uNEW, uOLD, vOLD, aOLD, dt, beta, gamma):
     uOLD.vector()[:] = uNEW.vector()
 
 
-def avg(xOLD, xNEW, alpha):
+def _avg(xOLD, xNEW, alpha):
     """
     Weighted average used in generalized-alpha time integration.
 
@@ -282,13 +241,13 @@ def avg(xOLD, xNEW, alpha):
             New value.
         alpha: object
             Weight parameter.
-        return: object
-            Weighted average alpha * old + (1 - alpha) * new.
+    return: object
+        Weighted average alpha * old + (1 - alpha) * new.
     """
     return alpha * xOLD + (1 - alpha) * xNEW
 
 
-def local_project(v, V_, uOut):
+def _local_project(v, V_, uOut):
     """
     Perform a local projection onto a target function space.
 
@@ -299,9 +258,9 @@ def local_project(v, V_, uOut):
             Target function space.
         uOut: dolfin.Function or None
             Optional output function to reuse.
-        return: dolfin.Function or None
-            Returns a new projected function if uOut is None, otherwise
-            writes into uOut and returns None.
+    return: dolfin.Function | None
+        Returns a new projected function if uOut is None, otherwise
+        writes into uOut and returns None.
     """
     dv_ = df.TrialFunction(V_)
     vT_ = df.TestFunction(V_)
@@ -321,6 +280,140 @@ def local_project(v, V_, uOut):
     loc_solver.solve_local_rhs(uOut)
     return
 
+def _assemble_weak_form(a_old, a_new, alpha_m, u_, rho, dx_lump, v_old, v_new, alpha_f, eta_m, eta_k,
+                        mu, lmbda, u_old, du, p, dss, bc):
+    # Residual of the semi-discrete dynamic system (mass and damping use lumped dx_lump).
+    res = (_m(_avg(a_old, a_new, alpha_m), u_, rho, dx_lump)
+           + _c(_avg(v_old, v_new, alpha_f), u_, eta_m, eta_k, rho, mu, lmbda, dx_lump)
+           + _k(_avg(u_old, du, alpha_f), u_, mu, lmbda)
+           - _Wext(u_, p, dss))
+    # Extract left-hand and right-hand side for linear solve at each time step.
+    a_form = lhs(res)
+    L_form = rhs(res)
+    # Assemble system matrix once.
+    K, res_assembled = df.assemble_system(a_form, L_form, bc)
+    return K, res_assembled, L_form
+
+################################################################################################
+#                                   OTHER UTILITIES (SAVING DEF)
+#################################################################################################
+
+def _save_graphs(lst_graph_tstep, save_path, verbose):
+    """
+    Save a list of graph snapshots as a PyTorch DataLoader object.
+
+    Args:
+        lst_graph_tstep: list
+            List of torch_geometric.data.Data objects, one per time step.
+        save_path: str
+            Output path for the serialized .pt file.
+    """
+    # Wrap graphs in a DataLoader so downstream code can load them directly.
+    gph_dataloader = DataLoader(lst_graph_tstep, batch_size=1, shuffle=False)
+    torch.save(gph_dataloader, save_path)
+    if verbose:
+        print(f"saved graphs(dataloader) to {save_path}")
+
+def _save_graphs_and_plot(L, W, D, NL, NW, ND, density, initial_force_x, initial_force_y, initial_force_z,
+                          cutoff_time_factor, total_time, eta_m_val, eta_k_val, E, nu, num_steps, mode, output_root,
+                          time, u_tip, energies, lst_graph_tstep):
+
+    # Create a descriptive name encoding the main simulation parameters.
+    simulation_name = (f"L{L}_W{W}_D{D}_NL{NL}_NW{NW}_ND{ND}_"
+                       f"E{E}_nu{nu}_rho{density}_"
+                       f"em{eta_m_val}_ek{eta_k_val}"
+                       f"_Pix{initial_force_x}_Piy{initial_force_y}_Piz{initial_force_z}_"
+                       f"T{total_time}_Tc{cutoff_time_factor * total_time}_Nsteps{num_steps}")
+
+    # Define output folders.
+    save_path = output_root
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    save_path_graph = os.path.join(save_path, mode, "graphs")
+    save_path_plot_check = os.path.join(save_path, mode, "plot_check")
+    os.makedirs(save_path_graph, exist_ok=True)
+    os.makedirs(save_path_plot_check, exist_ok=True)
+
+    # Build output file paths.
+    plot_file_path = os.path.join(save_path_plot_check, f"plot_{simulation_name}.png")
+    graph_file_path = os.path.join(save_path_graph, f"graphs{simulation_name}.pt")
+
+    # Save diagnostics and graph dataset.
+    plot_check(time, u_tip, energies, plot_file_path, verbose=False)
+    _save_graphs(lst_graph_tstep, graph_file_path, verbose=False)
+
+    return save_path_graph, simulation_name
+
+
+def _set_linear_solver(linear_solver, K):
+    if linear_solver == "mumps":
+        solver = df.LUSolver(K, "mumps")
+        solver.parameters["symmetric"] = True
+    elif linear_solver == "krylov":
+        solver = df.KrylovSolver("cg", "amg")
+        solver.parameters["absolute_tolerance"] = 1e-7
+        solver.parameters["relative_tolerance"] = 1e-5
+        solver.parameters["maximum_iterations"] = 1000
+        solver.set_operator(K)
+    else:
+        raise ValueError("linear_solver must be 'mumps' or 'krylov', got %r" % (linear_solver,))
+    return solver
+
+def _define_boundaries_bcs(mesh, V, L):
+    # Define clamped boundary at x = 0.
+    def left(x, on_boundary):
+        return df.near(x[0], 0.0) and on_boundary
+
+    # Define loaded boundary at x = L.
+    def right(x, on_boundary):
+        return df.near(x[0], L) and on_boundary
+
+    # Mark boundaries to identify the loaded surface.
+    boundary_subdomains = df.MeshFunction("size_t", mesh, mesh.topology().dim() - 1)
+    boundary_subdomains.set_all(0)
+    force_boundary = df.AutoSubDomain(right)
+    force_boundary.mark(boundary_subdomains, 3)
+    dss = df.ds(subdomain_data=boundary_subdomains)
+    # Apply clamped boundary condition on the left side.
+    zero = df.Constant((0.0, 0.0, 0.0))
+    bc = df.DirichletBC(V, zero, left)
+    # Build a vertex-wise binary mask indicating constrained nodes.
+    node_scalar_bc_mask = extract_mesh_bc_nodemask(bc, V)
+
+    return dss, bc, node_scalar_bc_mask
+
+def _define_traction_p(initial_force_x, initial_force_y, initial_force_z, cutoff_time_factor):
+    p0_x, p0_y, p0_z = initial_force_x, initial_force_y, initial_force_z
+    cutoff_Tc = CONSTANT_FOR_CUTOFF_TIME * cutoff_time_factor
+    # Define a time-dependent traction that ramps linearly up to tc and then vanishes.
+    p = df.Expression(("t <= tc ? p0x * t / tc : 0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),
+                      t=0, tc=cutoff_Tc, p0x=p0_x, p0y=p0_y, p0z=p0_z, degree=0)
+    return p
+
+def _define_newmark_params(newmark_params):
+    alpha_m_val, alpha_f_val = newmark_params
+    alpha_m = df.Constant(alpha_m_val)
+    alpha_f = df.Constant(alpha_f_val)
+    gamma = df.Constant(0.5 + alpha_f - alpha_m)
+    beta = df.Constant((gamma + 0.5) ** 2 / 4.0)
+    return alpha_m, alpha_f, gamma, beta
+
+def _define_material_params(elastic_params, density, damping_params):
+    E, nu = elastic_params
+    mu = df.Constant(E / (2.0 * (1.0 + nu)))
+    lmbda = df.Constant(E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu)))
+    # Material density
+    rho = df.Constant(density)
+    # Rayleigh damping coefficients.
+    eta_m_val, eta_k_val = damping_params
+    eta_m = df.Constant(eta_m_val)
+    eta_k = df.Constant(eta_k_val)
+    return E, nu, mu, lmbda, rho, eta_m_val, eta_k_val, eta_m, eta_k
+
+################################################################################################
+#                                   MAIN SCRIPT
+#################################################################################################
 
 def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params, newmark_params, initial_force_x,
                    initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode, output_root,
@@ -328,13 +421,6 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     """
     Run a transient 3D beam finite element simulation and convert each time step
     into a graph object suitable for graph learning workflows.
-    =0.0
-    =1.0
-    =0.0
-    =1 / 5
-    =4.0
-    =50,
-
 
     Args:
         L: float
@@ -371,11 +457,6 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
             Number of time steps.
         mode: str
             Subfolder name used to store outputs.
-        return: (list, str, str)
-            A tuple containing:
-            - list of graph snapshots for all time steps
-            - directory where graph data is stored
-            - simulation name string used in output filenames
         verbose: bool
             enable verbose printing
         output_root: str
@@ -384,47 +465,36 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
             when True, print average force / acc / vel at t=0, t=1, t=2
         linear_solver: str
             "mumps" for direct LU (MUMPS), "krylov" for CG + AMG.
+    return: (list, str, str)
+        A tuple containing:
+        - list of graph snapshots for all time steps
+        - directory where graph data is stored
+        - simulation name string used in output filenames
     """
+    ###################################################################################################
+    #                                INITIALIZATION
+    ###############################################################################################################
+
     # Enable FEniCS form compiler optimizations.
     df.parameters["form_compiler"]["cpp_optimize"] = True
     df.parameters["form_compiler"]["optimize"] = True
 
     # Unpack elastic parameters and compute Lamé constants.
-    E, nu = elastic_params
-    mu = df.Constant(E / (2.0 * (1.0 + nu)))
-    lmbda = df.Constant(E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu)))
-    # Material density
-    rho = df.Constant(density)
-    # Rayleigh damping coefficients.
-    eta_m_val, eta_k_val = damping_params
-    eta_m = df.Constant(eta_m_val)
-    eta_k = df.Constant(eta_k_val)
+    E, nu, mu, lmbda, rho, eta_m_val, eta_k_val, eta_m, eta_k = _define_material_params(elastic_params, density,
+                                                                                        damping_params)
 
     # Generalized-alpha / Newmark-like integration parameters.
-    alpha_m_val, alpha_f_val = newmark_params
-    alpha_m = df.Constant(alpha_m_val)
-    alpha_f = df.Constant(alpha_f_val)
-    gamma = df.Constant(0.5 + alpha_f - alpha_m)
-    beta = df.Constant((gamma + 0.5) ** 2 / 4.0)
+    alpha_m, alpha_f, gamma, beta = _define_newmark_params(newmark_params)
 
     # Build a structured 3D box mesh for the beam geometry.
     mesh = df.BoxMesh(df.Point(0.0, 0.0, 0.0), df.Point(L, W, D), NL, NW, ND)
-
-    # Define clamped boundary at x = 0.
-    def left(x, on_boundary):
-        return df.near(x[0], 0.0) and on_boundary
-
-    # Define loaded boundary at x = L.
-    def right(x, on_boundary):
-        return df.near(x[0], L) and on_boundary
-
     # Displacement space and stress space.
     V = df.VectorFunctionSpace(mesh, "CG", 1)
     Vsig = df.TensorFunctionSpace(mesh, "DG", 0)
 
     # Lumped-mass quadrature rule (vertex scheme for CG-1).
     # This makes the mass matrix diagonal so that the per-node equation
-    #   M_i * a_i  =  f_ext_i  -  f_int_i  -  f_damp_i
+    #            M_i * a_i  =  f_ext_i  -  f_int_i  -  f_damp_i
     # holds exactly for every node i.
     dx_lump = df.dx(scheme="vertex", metadata={"degree": 1, "representation": "quadrature"})
 
@@ -434,68 +504,35 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Trial and test functions.
     du = df.TrialFunction(V)
     u_ = df.TestFunction(V)
-
     # Unknown displacement and previous time-step state variables.
     u = df.Function(V, name="Displacement")
     u_old = df.Function(V)
     v_old = df.Function(V)
     a_old = df.Function(V)
 
-    # Mark boundaries to identify the loaded surface.
-    boundary_subdomains = df.MeshFunction("size_t", mesh, mesh.topology().dim() - 1)
-    boundary_subdomains.set_all(0)
-    force_boundary = df.AutoSubDomain(right)
-    force_boundary.mark(boundary_subdomains, 3)
-    dss = df.ds(subdomain_data=boundary_subdomains)
+    dss, bc, node_scalar_bc_mask = _define_boundaries_bcs(mesh, V, L)
 
-    # Apply clamped boundary condition on the left side.
-    zero = df.Constant((0.0, 0.0, 0.0))
-    bc = df.DirichletBC(V, zero, left)
-
-    # Build a vertex-wise binary mask indicating constrained nodes.
-    node_scalar_bc_mask = extract_mesh_bc_nodemask(bc, V)
-
-    # Time discretization.
+    # Time discretization parameters
     T = total_time
     Nsteps = num_steps
     dt = df.Constant(T / Nsteps)
 
     # External traction parameters.
-    p0_x, p0_y, p0_z = initial_force_x, initial_force_y, initial_force_z
-    cutoff_Tc = CONSTANT_FOR_CUTOFF_TIME * cutoff_time_factor
+    p = _define_traction_p(initial_force_x, initial_force_y, initial_force_z, cutoff_time_factor)
 
-    # Define a time-dependent traction that ramps linearly up to tc and then vanishes.
-    p = df.Expression(("t <= tc ? p0x * t / tc : 0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),
-                      t=0, tc=cutoff_Tc, p0x=p0_x, p0y=p0_y, p0z=p0_z, degree=0)
+    # Build acceleration and velocity update expressions symbolically: this is useful to then put it in the
+    # weak form residual
+    a_new = _update_a(du, u_old, v_old, a_old, dt, beta, use_ufl=True)
+    v_new = _update_v(a_new, u_old, v_old, a_old, dt, gamma, use_ufl=True)
 
-    # Build acceleration and velocity update expressions symbolically.
-    a_new = update_a(du, u_old, v_old, a_old, dt, beta, use_ufl=True)
-    v_new = update_v(a_new, u_old, v_old, a_old, dt, gamma, use_ufl=True)
+    ##############################################################################################################
+    #                                   ASSEMBLE AND ALLOCATE
+    ###############################################################################################################
 
-    # Residual of the semi-discrete dynamic system (mass and damping use lumped dx_lump).
-    res = (m(avg(a_old, a_new, alpha_m), u_, rho, dx_lump)
-           + c(avg(v_old, v_new, alpha_f), u_, eta_m, eta_k, rho, mu, lmbda, dx_lump)
-           + k(avg(u_old, du, alpha_f), u_, mu, lmbda)
-           - Wext(u_, p, dss))
-
-    # Extract left-hand and right-hand side for linear solve at each time step.
-    a_form = lhs(res)
-    L_form = rhs(res)
-
-    # Assemble system matrix once.
-    K, res_assembled = df.assemble_system(a_form, L_form, bc)
-
-    if linear_solver == "mumps":
-        solver = df.LUSolver(K, "mumps")
-        solver.parameters["symmetric"] = True
-    elif linear_solver == "krylov":
-        solver = df.KrylovSolver("cg", "amg")
-        solver.parameters["absolute_tolerance"] = 1e-7
-        solver.parameters["relative_tolerance"] = 1e-5
-        solver.parameters["maximum_iterations"] = 1000
-        solver.set_operator(K)
-    else:
-        raise ValueError("linear_solver must be 'mumps' or 'krylov', got %r" % (linear_solver,))
+    K, res_assembled, L_form = _assemble_weak_form(a_old, a_new, alpha_m, u_, rho, dx_lump, v_old, v_new, alpha_f,
+                                                   eta_m, eta_k, mu, lmbda, u_old, du, p, dss, bc)
+    # Set linear solver options
+    solver = _set_linear_solver(linear_solver, K)
 
     # Allocate time and diagnostic arrays.
     time = np.linspace(0, T, Nsteps + 1)
@@ -503,21 +540,18 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     energies = np.zeros((Nsteps + 1, 4))
     E_damp = 0
     sig = df.Function(Vsig, name="sigma")
-
     # Compute lumped masses once because they do not change in time.
+    #  NOTE: not used nor here (except for saving) nor in ML pipeline
     lumped_masses_nodes = extract_node_masses(V, rho, dx_lump)
-
     # Corner points used for optional displacement tracking.
     corners = [(0.0, 0.0, 0.0), (0.0, W, 0.0), (0.0, 0.0, D), (0.0, W, D)]
-    u_corners = np.zeros((Nsteps + 1, len(corners))) # only assigned (later), never used
-
-    # Store one graph snapshot per time step.
-    lst_graph_tstep = []
-
+    u_corners = np.zeros((Nsteps + 1, len(corners)))  # only assigned (later), never used
     # Node-wise stress projection space.
     V_stress_nodes = df.TensorFunctionSpace(mesh, "CG", 1)
     # Save undeformed coordinates once.
     initial_coordinates = mesh.coordinates()
+    # Store one graph snapshot per time step.
+    lst_graph_tstep = []
 
     # Record t = 0 state (all zeros: beam is at rest).
     nverts = mesh.num_vertices()
@@ -535,11 +569,9 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     )
     lst_graph_tstep.append(graph_t0)
 
-    if first_trajectory_debug:
-        print("=== DEBUG t=0 ===")
-        print(f"  avg force: {np.zeros(3)}")
-        print(f"  avg acc:   {np.zeros(3)}")
-        print(f"  avg vel:   {np.zeros(3)}")
+    ##############################################################################################################
+    #                                           LOOP
+    ###############################################################################################################
 
     for i in range(Nsteps):
         dt_i = time[i + 1] - time[i]
@@ -556,18 +588,17 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         solver.solve(u.vector(), res_assembled)
 
         # Update state variables after the displacement solve.
-        update_fields(u, u_old, v_old, a_old, dt, beta, gamma)
+        _update_fields(u, u_old, v_old, a_old, dt, beta, gamma)
 
         # Project stress to a discontinuous space and then to node-compatible space.
-        local_project(sigma(u, mu, lmbda), Vsig, sig)
-        stress_nodewise = project(sig, V_stress_nodes,
-                                  solver_type="cg", preconditioner_type="jacobi")
+        _local_project(_sigma(u, mu, lmbda), Vsig, sig)
+        stress_nodewise = project(sig, V_stress_nodes, solver_type="cg", preconditioner_type="jacobi")
 
         # Correct nodal force extraction:
         # Set p.t to t_{n+1}, then assemble the external-work linear form to get the
         # true FE-consistent nodal force vector  f_ext = int N^T p dS.
         p.t = t_now
-        f_ext_vec = df.assemble(Wext(u_, p, dss))
+        f_ext_vec = df.assemble(_Wext(u_, p, dss))
         f_ext_nodal = dof_vector_to_vertex_array(f_ext_vec, V)
         node_force_t = torch.tensor(f_ext_nodal, dtype=torch.float)
 
@@ -601,10 +632,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         lst_graph_tstep.append(graph)
 
         if first_trajectory_debug and i < 2:
-            print(f"=== DEBUG t={i + 1} (time={t_now:.4f}) ===")
-            print(f"  avg force: {np.mean(f_ext_nodal, axis=0)}")
-            print(f"  avg acc:   {np.mean(acc_values, axis=0)}")
-            print(f"  avg vel:   {np.mean(vel_values, axis=0)}")
+            print(f"=== DEBUG t={i + 1} (time={t_now:.4f}) ===avg force: {np.mean(f_ext_nodal, axis=0)}"
+                  f"avg acc:   {np.mean(acc_values, axis=0)}avg vel:   {np.mean(vel_values, axis=0)}")
 
         # Track tip displacement only in serial (z-component at the tip).
         if df.MPI.comm_world.size == 1:
@@ -613,35 +642,19 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
                 u_corners[i + 1, j] = u(*cpt)[2]
 
         # Compute and accumulate energies.
-        E_elas = df.assemble(0.5 * k(u_old, u_old, mu, lmbda))
-        E_kin = df.assemble(0.5 * m(v_old, v_old, rho, dx_lump))
-        E_damp += dt_i * df.assemble(c(v_old, v_old, eta_m, eta_k, rho, mu, lmbda, dx_lump))
+        E_elas = df.assemble(0.5 * _k(u_old, u_old, mu, lmbda))
+        E_kin = df.assemble(0.5 * _m(v_old, v_old, rho, dx_lump))
+        E_damp += dt_i * df.assemble(_c(v_old, v_old, eta_m, eta_k, rho, mu, lmbda, dx_lump))
         E_tot = E_elas + E_kin + E_damp
         energies[i + 1, :] = np.array([E_elas, E_kin, E_damp, E_tot])
 
-    # Create a descriptive name encoding the main simulation parameters.
-    simulation_name = (f"L{L}_W{W}_D{D}_NL{NL}_NW{NW}_ND{ND}_"
-                       f"E{E}_nu{nu}_rho{density}_"
-                       f"em{eta_m_val}_ek{eta_k_val}"
-                       f"_Pix{initial_force_x}_Piy{initial_force_y}_Piz{initial_force_z}_"
-                       f"T{total_time}_Tc{cutoff_time_factor * total_time}_Nsteps{num_steps}")
+    ################################################################################################
+    #                                   SAVE AND RETURN
+    #################################################################################################
 
-    # Define output folders.
-    save_path = output_root
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-
-    save_path_graph = os.path.join(save_path, mode, "graphs")
-    save_path_plot_check = os.path.join(save_path, mode, "plot_check")
-    os.makedirs(save_path_graph, exist_ok=True)
-    os.makedirs(save_path_plot_check, exist_ok=True)
-
-    # Build output file paths.
-    plot_file_path = os.path.join(save_path_plot_check, f"plot_{simulation_name}.png")
-    graph_file_path = os.path.join(save_path_graph, f"graphs{simulation_name}.pt")
-
-    # Save diagnostics and graph dataset.
-    plot_check(time, u_tip, energies, plot_file_path, verbose=False)
-    save_graphs(lst_graph_tstep, graph_file_path, verbose=False)
+    save_path_graph, simulation_name = _save_graphs_and_plot(L, W, D, NL, NW, ND, density, initial_force_x,
+                                                             initial_force_y, initial_force_z, cutoff_time_factor,
+                                                             total_time, eta_m_val, eta_k_val, E, nu, num_steps, mode,
+                                                             output_root, time, u_tip, energies, lst_graph_tstep)
 
     return lst_graph_tstep, save_path_graph, simulation_name

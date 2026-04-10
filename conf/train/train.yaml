@@ -15,6 +15,7 @@ seed: 42
 use_wandb: true
 initial_lr: 1e-3
 optimizer: adam
+protect_from_oom: True # disables cuda reduce overhead which causes oom errors
 
 hydra:
   run:

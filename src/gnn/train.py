@@ -56,7 +56,7 @@ def resolve_trainer_precision(accelerator, configured_precision):
     return configured_precision
 
 
-def maybe_compile_model(model, train_cfg):
+def maybe_compile_model(model, train_cfg, protect_from_oom):
     """
     Optionally wraps the model with torch.compile and enables graph-break logs.
     On CUDA, uses mode reduce-overhead (Inductor CUDA graphs / lower launch overhead);
@@ -67,6 +67,8 @@ def maybe_compile_model(model, train_cfg):
             Instantiated model to compile.
         train_cfg: TrainYaml
             Training configuration containing the torch_compile flag.
+        protect_from_oom: bool
+            When True, compile without reduce-overhead mode on CUDA to lower peak VRAM.
         return: torch.nn.Module
             Original model if compilation is disabled, otherwise compiled model.
     """
@@ -75,8 +77,16 @@ def maybe_compile_model(model, train_cfg):
     # Enable verbose Dynamo diagnostics so graph breaks are reported with details.
     torch._dynamo.config.verbose = True
     torch._logging.set_logs(graph_breaks=True, dynamo=logging.INFO)
-    compile_mode = "reduce-overhead" if torch.cuda.is_available() else "default"
-    return torch.compile(model, mode=compile_mode, fullgraph=True)
+
+    if protect_from_oom:
+        # Important for your OOM case:
+        # torch._inductor.config.triton.cudagraphs = False
+        # Safer than "reduce-overhead" for memory.
+        compiled_model = torch.compile(model, fullgraph=True)
+    else:
+        compile_mode = "reduce-overhead" if torch.cuda.is_available() else "default"
+        compiled_model = torch.compile(model, mode=compile_mode, fullgraph=True)
+    return compiled_model
 
 def create_model(train_cfg, preprocess_cfg, device):
     if train_cfg.model_name == "MGN":
@@ -180,7 +190,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     model_eager = create_model(train_cfg, preprocess_cfg, device)
     eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
     print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} ({eager_model_bytes} bytes)")
-    model = maybe_compile_model(model_eager, train_cfg)
+    model = maybe_compile_model(model_eager, train_cfg, train_cfg.protect_from_oom)
     wrapped_model_bytes = module_param_and_buffer_storage_bytes(model)
     print(f"\tModel params+buffers after torch.compile: {human_readable_storage(wrapped_model_bytes)} ({wrapped_model_bytes} bytes) "
           "(same tensor storage; torch.compile may still increase peak VRAM for kernels/caching.)")
@@ -247,7 +257,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 accelerator=accelerator, devices=train_cfg.devices,
                                 precision=trainer_precision,
                                 profiler=profiler)
-    elif train_cfg.training_type == "slurm":
+    elif train_cfg.training_type == "slurm" and train_cfg.devices != 1:
         if not torch.cuda.is_available():
             raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
@@ -258,6 +268,17 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 devices=train_cfg.devices, num_nodes=1,
                                 strategy="ddp",
                                 # strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
+                                precision=trainer_precision,
+                                profiler=profiler) # device stuff
+    elif train_cfg.training_type == "slurm" and train_cfg.devices == 1:
+        if not torch.cuda.is_available():
+            raise RuntimeError("SLURM GPU training requested, but CUDA is not available.")
+        fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
+                                callbacks=callbacks, default_root_dir=str(lightning_module.model_dir),
+                                check_val_every_n_epoch=train_cfg.validation_interval, log_every_n_steps=1,
+                                enable_checkpointing=len(callbacks) > 0,
+                                accelerator=accelerator,
+                                devices=train_cfg.devices, num_nodes=1,
                                 precision=trainer_precision,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":

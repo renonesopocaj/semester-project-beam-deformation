@@ -44,7 +44,6 @@ class LitModule(L.LightningModule):
     # Normalizer
     normalizer_method: str
     isotropic_normalizer: bool
-    used_dataset_normalizer: NormalizerFactory
     # Exp mises
     exp_mises: bool
     stress_weight: float
