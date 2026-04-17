@@ -4,7 +4,7 @@ attention_gcl_equivariant.py
 
 from torch import nn
 import torch
-from src.gnn.models.clofnet.gcl.aggregators import unsorted_segment_mean, unsorted_segment_sum
+from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
 import math
 import torch.nn.functional as F
 
@@ -12,14 +12,11 @@ class AttentionEgnnGCLVelocity(nn.Module):
     """
     Attention-enhanced equivariant block used in alternative ClofNet variants.
 
-    This block is most closely related to the Graph Transformer Block (GTB) in
-    Appendix A.3.1:
+    This block is most closely related to the Graph Transformer Block (GTB) in Appendix A.3.1:
     - `edge_model` corresponds to the first message computation before attention.
-    - `fc_query`, `fc_key`, `fc_value`, the softmax weights and `node_model`
-      implement the spirit of Eq. (20)-(24).
-    - `coord2radial` plus `acc_model_inner` then apply ClofNet's complete-frame
-      vectorization idea from Eq. (2), Eq. (8) and Eq. (19) to produce an
-      equivariant coordinate or score update.
+    - `fc_query`, `fc_key`, `fc_value`, the softmax weights and `node_model` implement the spirit of Eq. (20)-(24).
+    - `coord2radial` plus `acc_model_inner` then apply ClofNet's complete-frame vectorization idea from
+     Eq. (2), Eq. (8) and Eq. (19) to produce an  equivariant coordinate or score update.
 
     Important implementation note:
     - The paper writes the GTB with single-head equations.

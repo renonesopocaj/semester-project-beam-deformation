@@ -1,21 +1,19 @@
-import logging
-import numpy as np
+"""
+clofnet_vel.py
+
+ClofNet variant that explicitly scalarizes velocities in the local frame.
+Paper correspondence:
+    This is the practical realization of the paper's notation
+        Scalarize(x_i, x_j, chi_i, chi_j, F_ij)
+    where chi_i is instantiated as the velocity vector v_i.
+Compared with ClofNet:
+    The frame coefficients now include both projected coordinates and projected velocities for source and target nodes.
+"""
+
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl.gcl_clofnet import ClofGCL
-from src.gnn.models.clofnet.gaussian_layer import GaussianLayer
-
-
-class ClofNetVelocityGaussian(nn.Module):
-    """
-    Velocity-aware ClofNet with Gaussian basis edge encoding instead of MLP or fourier.
-
-    Paper relation:
-        The core frame/scalarization/vectorization logic is still ClofNet.
-        Appendix A.3.1 Eq. (15) discusses Fourier or MLP embeddings for scalars; this class instead uses a Gaussian
-        radial basis expansion for the edge-type/distance pathway.
-    """
+class ClofNetVel(nn.Module):
 
     def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device="cpu", act_fn=nn.SiLU(), n_layers=4, coords_weight=1.0,
                  recurrent=True, norm_diff=True, tanh=False):
@@ -24,47 +22,51 @@ class ClofNetVelocityGaussian(nn.Module):
             in_node_nf: int
                 Input node feature dimension.
             in_edge_nf: int
-                Input edge feature dimension.
+                Input edge feature dimension. Kept for API symmetry even though
+                the fused edge dimensionality is fixed by the original code.
             hidden_nf: int
                 Hidden dimensionality.
             device: str or torch.device
                 Target device.
             act_fn: torch.nn.Module
-                Activation function.
+                Activation used inside MLPs.
             n_layers: int
                 Number of Clof_GCL blocks.
             coords_weight: float
-                Coordinate update scaling.
+                Coordinate update scaling inside Clof_GCL.
             recurrent: bool
-                Whether residual feature updates are enabled.
+                Whether feature residuals are enabled.
             norm_diff: bool
-                Whether frame directions are normalized.
+                Whether local-frame directions are normalized.
             tanh: bool
-                Whether coordinate coefficients are tanh-bounded.
+                Whether coordinate coefficients are bounded by tanh.
         """
-        super(ClofNetVelocityGaussian, self).__init__()
+        super(ClofNetVel, self).__init__()
         self.hidden_nf = hidden_nf
         self.device = device
         self.n_layers = n_layers
         self.embedding_node = nn.Linear(in_node_nf, self.hidden_nf)
 
-        self.gbf = GaussianLayer(K=self.hidden_nf // 2, edge_types=8)
+        # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j
+        # + 3 coeffs for v_i + 3 coeffs for v_j = 14.
+        # With the original code path's 2-dim edge_attr, the fused input is 16.
+        edge_embed_dim = 16
+        self.fuse_edge = nn.Sequential(
+            nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
+            nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn
+        )
 
-        # coff_feat is 14-dim here.
-        edge_embed_dim = 14
-        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_nf // 2),
-                                       act_fn,
-                                       nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2),
-                                       act_fn)
-
-        # Preserves the original behavior.
+        # Preserves the original behavior: the constructor argument is accepted,
+        # but the module stores True unconditionally.
         self.norm_diff = True
 
         for i in range(0, self.n_layers):
-            clof_gcl = ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
-                               edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent,
-                               coords_weight=coords_weight, norm_diff=norm_diff, tanh=tanh)
-            self.add_module("gcl_%d" % i, clof_gcl,)
+            self.add_module(
+                "gcl_%d" % i,
+                ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
+                        edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight,
+                        norm_diff=norm_diff, tanh=tanh),
+            )
 
         self.to(self.device)
         self.params = self.__str__()
@@ -83,7 +85,7 @@ class ClofNetVelocityGaussian(nn.Module):
 
     def coord2localframe(self, edge_index, coord):
         """
-        Construct the local complete frame exactly as in the other variants.
+        Same local complete frame construction as in ClofNet.
 
         Args:
             edge_index: tuple[torch.Tensor, torch.Tensor]
@@ -108,24 +110,15 @@ class ClofNetVelocityGaussian(nn.Module):
         coord_vertical = torch.cross(coord_diff, coord_cross, dim=1)
         return coord_diff.unsqueeze(1), coord_cross.unsqueeze(1), coord_vertical.unsqueeze(1)
 
-    def embed_edge(self, edge_types, dist):
-        """
-        Encode discrete edge types and distances with Gaussian bases.
-
-        Args:
-            edge_types: torch.Tensor
-                Edge-type indicator per edge.
-            dist: torch.Tensor
-                Scalar distance or distance-like attribute per edge.
-            return: torch.Tensor
-                Edge embedding of shape [E, hidden_nf // 2].
-        """
-        edge_types = edge_types * 0.5 + 0.5
-        return self.gbf(dist, edge_types.long())
-
     def scalarization(self, edges, x, vel):
         """
-        Scalarize positions and velocities in the complete local frame.
+        Scalarize both positions and velocities in the same local frame.
+
+        Paper correspondence:
+            This matches the practical multi-vector scalarization at the end of
+            Sec. 4, where the paper denotes generic extra vector features by
+            chi_i in
+                Scalarize(x_i, x_j, chi_i, chi_j, F_ij).
 
         Args:
             edges: tuple[torch.Tensor, torch.Tensor]
@@ -135,7 +128,7 @@ class ClofNetVelocityGaussian(nn.Module):
             vel: torch.Tensor
                 Velocities of shape [N, 3].
             return: torch.Tensor
-                Invariant feature tensor of shape [E, 14].
+                Invariant edge descriptor of shape [E, 14].
         """
         coord_diff, coord_cross, coord_vertical = self.coord2localframe(edges, x)
 
@@ -147,8 +140,11 @@ class ClofNetVelocityGaussian(nn.Module):
         v_i = vel[row]
         v_j = vel[col]
 
+        # Position coefficients.
         coff_i = torch.matmul(edge_basis, r_i.unsqueeze(-1)).squeeze(-1)
         coff_j = torch.matmul(edge_basis, r_j.unsqueeze(-1)).squeeze(-1)
+
+        # Velocity coefficients: this is the chi_i instantiation.
         vel_i = torch.matmul(edge_basis, v_i.unsqueeze(-1)).squeeze(-1)
         vel_j = torch.matmul(edge_basis, v_j.unsqueeze(-1)).squeeze(-1)
 
@@ -164,7 +160,7 @@ class ClofNetVelocityGaussian(nn.Module):
 
     def forward(self, h, x, edges, vel, edge_attr, node_attr=None, n_nodes=5):
         """
-        Forward pass for the Gaussian-basis velocity variant.
+        Forward pass for the velocity-aware ClofNet.
 
         Args:
             h: torch.Tensor
@@ -176,9 +172,7 @@ class ClofNetVelocityGaussian(nn.Module):
             vel: torch.Tensor
                 Velocities of shape [N, 3].
             edge_attr: torch.Tensor
-                Edge attributes. The original code assumes:
-                    edge_attr[:, 0] -> edge type
-                    edge_attr[:, 1] -> distance-like scalar
+                Edge attributes of shape [E, in_edge_nf].
             node_attr: torch.Tensor or None
                 Optional node attributes.
             n_nodes: int
@@ -193,16 +187,13 @@ class ClofNetVelocityGaussian(nn.Module):
         x_center = (x - centroid).reshape(-1, 3)
 
         coff_feat = self.scalarization(edges, x_center, vel)
-
-        # The scalarized geometric features and the Gaussian basis edge encoder
-        # are fused additively in the hidden edge space.
-        edge_embed = self.embed_edge(edge_attr[:, 0], edge_attr[:, 1])
-        edge_feat = self.fuse_edge(coff_feat)
-        edge_feat = edge_feat + edge_embed
+        edge_feat = torch.cat([edge_attr, coff_feat], dim=-1)
+        edge_feat = self.fuse_edge(edge_feat)
 
         for i in range(0, self.n_layers):
-            h, x_center, _ = self._modules["gcl_%d" % i](h, edges, x_center, vel, edge_attr=edge_feat,
-                                                         node_attr=node_attr)
+            h, x_center, _ = self._modules["gcl_%d" % i](
+                h, edges, x_center, vel, edge_attr=edge_feat, node_attr=node_attr
+            )
 
         x = x_center.reshape(-1, n_nodes, 3) + centroid
         x = x.reshape(-1, 3)

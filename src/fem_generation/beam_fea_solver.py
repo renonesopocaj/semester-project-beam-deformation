@@ -1,5 +1,6 @@
 """
 beam_fea_solver.py
+
 Implementation of a 3D beam finite element solver using FEniCS.
 One dataset (single direction beam) has forces only in the y direction, while the "rotated" in various directions,
 excluding the x direction which is "compression against the wall".
@@ -7,7 +8,6 @@ excluding the x direction which is "compression against the wall".
 
 import argparse
 import os
-
 import dolfin as df
 import matplotlib
 import numpy as np
@@ -21,7 +21,7 @@ from src.fem_generation.fem2torch_helpers import (extract_edges, evaluate_u_at_v
                                                   evaluate_acceleration_at_vertices,
                                                   evaluate_stress_at_vertices_fast,
                                                   dof_vector_to_vertex_array, extract_mesh_bc_nodemask)
-from src.fem_generation.visualization_fea import plot_check, make_beam_gif
+from src.fem_generation.visualization_fea import plot_check
 
 # Use a non-interactive backend so plots can be generated in headless environments.
 matplotlib.use("agg")

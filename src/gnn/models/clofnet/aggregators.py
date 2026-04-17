@@ -1,9 +1,9 @@
 """
-helpers_gcl.py
+aggregators.py
+Defines the function to aggregate, with sum or mean, all the messages
 """
 
 import torch
-from torch import nn
 
 def unsorted_segment_sum(data, segment_ids, num_segments):
     """

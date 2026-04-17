@@ -31,9 +31,7 @@ import torch.nn as nn
 def gaussian(x, mean, std):
     """
     Evaluate Gaussian basis functions with broadcasted parameters.
-
     The functional form is the standard normal-basis expansion:
-
         exp(-0.5 * ((x - mean) / std)^2) / (sqrt(2 pi) * std)
 
     Args:
@@ -43,8 +41,8 @@ def gaussian(x, mean, std):
             Gaussian means broadcastable to `x`.
         std: torch.Tensor
             Gaussian standard deviations broadcastable to `x`.
-        return: torch.Tensor
-            Gaussian basis values with the same broadcasted shape.
+    return: torch.Tensor
+        Gaussian basis values with the same broadcasted shape.
     """
     pi = 3.14159
     normalizer = (2 * pi) ** 0.5
@@ -64,22 +62,19 @@ class GaussianLayer(nn.Module):
       as typed scalar inputs.
 
     Each edge type learns an affine transform
-
-        x_typed = mul[type] * x + bias[type]
-
+                x_typed = mul[type] * x + bias[type]
     before the scalar is expanded into K Gaussian channels.
     """
 
-    def __init__(self, K=128, edge_types=1024):
+    def __init__(self, K, edge_types):
         """
+        K=128 edge_types=1024
         Args:
             K: int
                 Number of Gaussian basis channels.
             edge_types: int
                 Number of discrete edge types that receive independent affine
                 scale and bias parameters.
-            return: None
-                Initializes the learnable basis layer.
         """
         super().__init__()
         self.K = K
@@ -100,8 +95,8 @@ class GaussianLayer(nn.Module):
                 Scalar distances with shape [E] or [E, 1].
             edge_types: torch.Tensor
                 Integer edge type ids with shape [E].
-            return: torch.Tensor
-                Gaussian-expanded distance features with shape [E, K].
+        return: torch.Tensor
+            Gaussian-expanded distance features with shape [E, K].
         """
         mul = self.mul(edge_types)
         bias = self.bias(edge_types)
