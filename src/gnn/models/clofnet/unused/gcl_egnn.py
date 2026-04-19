@@ -94,20 +94,19 @@ class EgnnGCL(nn.Module):
         self.edge_mlp = nn.Sequential(nn.Linear(in_edge_mlp_dim, hidden_dim),
                                       act_fn,
                                       nn.Linear(hidden_dim, hidden_dim),
-                                      act_fn) # FIXME: why final activation here?
+                                      act_fn)
         self.node_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim),
                                       act_fn,
                                       nn.Linear(hidden_dim, output_node_dim))
 
         # Initialize layer
-        layer = nn.Linear(hidden_dim, out_basis_dim, bias=False) # FIXME: why no bias?
-        torch.nn.init.xavier_uniform_(layer.weight, gain=0.001) # FIXME: why this specific initialization?
+        layer = nn.Linear(hidden_dim, out_basis_dim, bias=False)
+        torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
         coord_mlp = [nn.Linear(hidden_dim, hidden_dim),
                      act_fn,
                      layer]
         if self.tanh:
             coord_mlp.append(nn.Tanh())
-            # FIXME: what is this doing?
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         self.coord_mlp = nn.Sequential(*coord_mlp)
         # Soft Attention MLP

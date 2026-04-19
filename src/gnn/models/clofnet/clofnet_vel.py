@@ -8,14 +8,23 @@ Paper correspondence:
     where chi_i is instantiated as the velocity vector v_i.
 Compared with ClofNet:
     The frame coefficients now include both projected coordinates and projected velocities for source and target nodes.
+
+The extra term
+    coord += coord_mlp_vel(h) * vel
+is not a paper equation. It is a repository-level dynamics addition.
 """
 
 import torch
 from torch import nn
+from src.gnn.models.clofnet.gcl_clofnet import ClofMPBlock
+import numpy as np
+import logging
+from src.gnn.models.clofnet.clof_helpers import coord2localframe, compute_angle_feat, forward_pass_generic
+
 
 class ClofNetVel(nn.Module):
 
-    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device="cpu", act_fn=nn.SiLU(), n_layers=4, coords_weight=1.0,
+    def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device, act_fn=nn.SiLU(), n_layers=4, coords_weight=1.0,
                  recurrent=True, norm_diff=True, tanh=False):
         """
         Args:
@@ -51,24 +60,18 @@ class ClofNetVel(nn.Module):
         # + 3 coeffs for v_i + 3 coeffs for v_j = 14.
         # With the original code path's 2-dim edge_attr, the fused input is 16.
         edge_embed_dim = 16
-        self.fuse_edge = nn.Sequential(
-            nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
-            nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn
-        )
+        self.fuse_edge = nn.Sequential(nn.Linear(edge_embed_dim, self.hidden_nf // 2), act_fn,
+                                       nn.Linear(self.hidden_nf // 2, self.hidden_nf // 2), act_fn)
 
         # Preserves the original behavior: the constructor argument is accepted,
         # but the module stores True unconditionally.
         self.norm_diff = True
-
         for i in range(0, self.n_layers):
-            self.add_module(
-                "gcl_%d" % i,
-                ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
-                        edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight,
-                        norm_diff=norm_diff, tanh=tanh),
-            )
+            self.add_module("gcl_%d" % i, ClofMPBlock(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf,
+                                                      hidden_dim=self.hidden_nf, edges_in_d=self.hidden_nf // 2,
+                                                      act_fn=act_fn, recurrent=recurrent, coords_weight=coords_weight,
+                                                      norm_diff=norm_diff, tanh=tanh))
 
-        self.to(self.device)
         self.params = self.__str__()
 
     def __str__(self):
@@ -83,31 +86,24 @@ class ClofNetVel(nn.Module):
         logging.info("Network Size {}".format(params))
         return str(params)
 
-    def coord2localframe(self, edge_index, coord):
+    def coord2localframe(self, edge_index, coord_xi):
         """
-        Same local complete frame construction as in ClofNet.
+        Construct the complete local frame per edge.
+        This is the code counterpart of paper Eq. (2):
+            a_ij = (x_i - x_j) / ||x_i - x_j||
+            b_ij = (x_i x x_j) / ||x_i x x_j||
+            c_ij = a_ij x b_ij
 
         Args:
             edge_index: tuple[torch.Tensor, torch.Tensor]
                 Edge list as (row, col).
-            coord: torch.Tensor
+            coord_xi: torch.Tensor
                 Coordinates of shape [N, 3].
-            return: (coord_diff, coord_cross, coord_vertical)
-                Edge-local basis tensors, each with shape [E, 1, 3].
+        return: (coord_diff, coord_cross, coord_vertical)
+            Edge-local basis tensors, each with shape [E, 1, 3].
         """
-        row, col = edge_index
-        coord_diff = coord[row] - coord[col]
-        radial = torch.sum(coord_diff ** 2, 1).unsqueeze(1)
-        coord_cross = torch.cross(coord[row], coord[col], dim=1)
-
-        if self.norm_diff:
-            norm = torch.sqrt(radial) + 1
-            coord_diff = coord_diff / norm
-
-            cross_norm = torch.sqrt(torch.sum(coord_cross ** 2, 1).unsqueeze(1)) + 1
-            coord_cross = coord_cross / cross_norm
-
-        coord_vertical = torch.cross(coord_diff, coord_cross, dim=1)
+        radial, coord_diff, coord_cross, coord_vertical = coord2localframe(edge_index, coord_xi, self.norm_diff,
+                                                                           crossdim1=True)
         return coord_diff.unsqueeze(1), coord_cross.unsqueeze(1), coord_vertical.unsqueeze(1)
 
     def scalarization(self, edges, x, vel):
@@ -127,40 +123,31 @@ class ClofNetVel(nn.Module):
                 Centered coordinates of shape [N, 3].
             vel: torch.Tensor
                 Velocities of shape [N, 3].
-            return: torch.Tensor
-                Invariant edge descriptor of shape [E, 14].
+        return: torch.Tensor
+            Invariant edge descriptor of shape [E, 14].
         """
+        EPS = 1e-5
         coord_diff, coord_cross, coord_vertical = self.coord2localframe(edges, x)
-
         row, col = edges
         edge_basis = torch.cat([coord_diff, coord_cross, coord_vertical], dim=1)
-
-        r_i = x[row]
-        r_j = x[col]
-        v_i = vel[row]
-        v_j = vel[col]
-
-        # Position coefficients.
+        r_i, r_j = x[row], x[col]
+        v_i, v_j = vel[row], vel[col]
+        # Position coefficients
         coff_i = torch.matmul(edge_basis, r_i.unsqueeze(-1)).squeeze(-1)
         coff_j = torch.matmul(edge_basis, r_j.unsqueeze(-1)).squeeze(-1)
-
-        # Velocity coefficients: this is the chi_i instantiation.
+        # Velocity coefficients: this is the chi_i instantiation
         vel_i = torch.matmul(edge_basis, v_i.unsqueeze(-1)).squeeze(-1)
         vel_j = torch.matmul(edge_basis, v_j.unsqueeze(-1)).squeeze(-1)
-
-        coff_mul = coff_i * coff_j
-        coff_i_norm = coff_i.norm(dim=-1, keepdim=True)
-        coff_j_norm = coff_j.norm(dim=-1, keepdim=True)
-        pseudo_cos = coff_mul.sum(dim=-1, keepdim=True) / (coff_i_norm + 1e-5) / (coff_j_norm + 1e-5)
-        pseudo_sin = torch.sqrt(torch.clamp(1 - pseudo_cos ** 2, min=0.0))
-        pseudo_angle = torch.cat([pseudo_sin, pseudo_cos], dim=-1)
-
+        # Obtain angles
+        pseudo_angle = compute_angle_feat(coff_i, coff_j, EPS)
+        # Concatenate everything
         coff_feat = torch.cat([pseudo_angle, coff_i, coff_j, vel_i, vel_j], dim=-1)
         return coff_feat
 
-    def forward(self, h, x, edges, vel, edge_attr, node_attr=None, n_nodes=5):
+    def forward(self, h, x, edges, vel, edge_attr, node_attr, n_nodes):
         """
         Forward pass for the velocity-aware ClofNet.
+        Default n_nodes=5, node_attr=None
 
         Args:
             h: torch.Tensor
@@ -173,28 +160,12 @@ class ClofNetVel(nn.Module):
                 Velocities of shape [N, 3].
             edge_attr: torch.Tensor
                 Edge attributes of shape [E, in_edge_nf].
-            node_attr: torch.Tensor or None
+            node_attr: torch.Tensor
                 Optional node attributes.
             n_nodes: int
                 Number of nodes per graph.
-            return: torch.Tensor
-                Updated coordinates of shape [N, 3].
+        return: torch.Tensor
+            Updated coordinates of shape [N, 3].
         """
-        h = self.embedding_node(h)
-
-        x = x.reshape(-1, n_nodes, 3)
-        centroid = torch.mean(x, dim=1, keepdim=True)
-        x_center = (x - centroid).reshape(-1, 3)
-
-        coff_feat = self.scalarization(edges, x_center, vel)
-        edge_feat = torch.cat([edge_attr, coff_feat], dim=-1)
-        edge_feat = self.fuse_edge(edge_feat)
-
-        for i in range(0, self.n_layers):
-            h, x_center, _ = self._modules["gcl_%d" % i](
-                h, edges, x_center, vel, edge_attr=edge_feat, node_attr=node_attr
-            )
-
-        x = x_center.reshape(-1, n_nodes, 3) + centroid
-        x = x.reshape(-1, 3)
+        x = forward_pass_generic(self, h, x, n_nodes, edges, edge_attr, vel, node_attr)
         return x

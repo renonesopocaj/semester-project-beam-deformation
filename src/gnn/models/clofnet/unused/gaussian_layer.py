@@ -11,15 +11,13 @@ This file contains two kinds of components:
 Paper mapping used below:
 - Eq. (13)-(15): feature embedding before message passing.
 - Eq. (20)-(24): Graph Transformer Block (GTB) attention refinement.
-- Eq. (2), Eq. (8), Eq. (19): complete-frame construction, vectorization and
-  coordinate update.
-- Appendix A.3.3: scalarization adds low extra cost compared with message
-  passing, so feature expansion around those scalars is practical.
+- Eq. (2), Eq. (8), Eq. (19): complete-frame construction, vectorization and coordinate update.
+- Appendix A.3.3: scalarization adds low extra cost compared with message passing, so feature expansion around those
+   scalars is practical.
 
-Some modules here are explicit implementation extensions rather than exact paper
-objects. In particular, `GaussianLayer` is a code-level alternative to the
-paper's "Fourier(s_ij) or MLP(s_ij)" embedding choice from Eq. (15), and the
-multi-head attention implementation below is a richer realization of the GTB
+Some modules here are explicit implementation extensions rather than exact paper objects. In particular,
+`GaussianLayer` is a code-level alternative to the paper's "Fourier(s_ij) or MLP(s_ij)" embedding choice
+from Eq. (15), and the multi-head attention implementation below is a richer realization of the GTB
 idea from Eq. (20)-(24).
 """
 

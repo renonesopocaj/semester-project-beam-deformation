@@ -1,15 +1,6 @@
 """
 attention_gcl_equivariant.py
-"""
 
-from torch import nn
-import torch
-from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
-import math
-import torch.nn.functional as F
-
-class AttentionEgnnGCLVelocity(nn.Module):
-    """
     Attention-enhanced equivariant block used in alternative ClofNet variants.
 
     This block is most closely related to the Graph Transformer Block (GTB) in Appendix A.3.1:
@@ -24,7 +15,15 @@ class AttentionEgnnGCLVelocity(nn.Module):
       node embeddings into an extra edge residual update before the coordinate
       aggregation. That is a faithful engineering extension, not a verbatim
       transcription of a printed equation.
-    """
+"""
+
+from torch import nn
+import torch
+from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
+import math
+import torch.nn.functional as F
+
+class AttentionEgnnGCLVelocity(nn.Module):
 
     def __init__(self, input_node_nf, input_edge_nf, output_nf, hidden_nf, nodes_att_dim=0,
                  act_fn=nn.Softplus(), recurrent=True, coords_weight=1.0, attention=False,

@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl_clofnet import ClofGCL
+from src.gnn.models.clofnet.gcl_clofnet import ClofMPBlock
 from src.gnn.models.clofnet.unused.gaussian_layer import GaussianLayer
 
 class ClofNetVelocityGaussian(nn.Module):
@@ -62,9 +62,9 @@ class ClofNetVelocityGaussian(nn.Module):
         self.norm_diff = True
 
         for i in range(0, self.n_layers):
-            clof_gcl = ClofGCL(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
-                               edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent,
-                               coords_weight=coords_weight, norm_diff=norm_diff, tanh=tanh)
+            clof_gcl = ClofMPBlock(input_dim_node=self.hidden_nf, output_node_dim=self.hidden_nf, hidden_dim=self.hidden_nf,
+                                   edges_in_d=self.hidden_nf // 2, act_fn=act_fn, recurrent=recurrent,
+                                   coords_weight=coords_weight, norm_diff=norm_diff, tanh=tanh)
             self.add_module("gcl_%d" % i, clof_gcl,)
 
         self.to(self.device)

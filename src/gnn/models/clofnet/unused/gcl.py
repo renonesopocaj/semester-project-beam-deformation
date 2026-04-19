@@ -161,16 +161,16 @@ class VanillaGCL(AbstractGCL):
         self.edge_mlp = nn.Sequential(nn.Linear(input_edge_nf + edges_in_nf, hidden_nf, bias=bias),
                                       act_fn,
                                       nn.Linear(hidden_nf, hidden_nf, bias=bias),
-                                      act_fn) # FIXME: why activation here?
+                                      act_fn)
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(input_nf, hidden_nf, bias=bias),
                                          act_fn,
                                          nn.Linear(hidden_nf, 1, bias=bias),
-                                         nn.Sigmoid()) # FIXME: why sigmoid here?
+                                         nn.Sigmoid())
 
         self.node_mlp = nn.Sequential(nn.Linear(hidden_nf + input_nf, hidden_nf, bias=bias),
                                       act_fn,
-                                      nn.Linear(hidden_nf, output_nf, bias=bias)) # FIXME: why no activation here?
+                                      nn.Linear(hidden_nf, output_nf, bias=bias))
 
     def edge_model_forward(self, source, target, edge_attr):
         """
