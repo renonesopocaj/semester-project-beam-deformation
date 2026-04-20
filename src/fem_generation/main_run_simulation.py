@@ -353,8 +353,7 @@ def _split_target_counts(cfg):
     Args:
         cfg: dict
             yaml config
-    return: tuple
-        (n_train, n_val, n_test)
+    return: (n_train, n_val, n_test)
     """
     val_fraction = float(cfg["val_fraction"])
     test_fraction = float(cfg["test_fraction"])
@@ -411,8 +410,7 @@ def _train_axis_values(cfg):
     Args:
         cfg: dict
             yaml config
-    return: tuple
-        (fx, fy, fz, lengths, widths)
+    return: (fx, fy, fz, lengths, widths)
     """
     # Read the train section once.
     t = cfg["train"]
@@ -458,8 +456,6 @@ def _validate_test_ood_ranges(cfg):
     Args:
         cfg: dict
             yaml config
-        return: None
-            raises ValueError if an OOD range overlaps the train range
     """
     # Read the relevant config sections.
     t = cfg["train"]

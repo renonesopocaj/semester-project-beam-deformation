@@ -120,5 +120,5 @@ class WandbRunExporter:
 
 
 if __name__ == "__main__":
-    exporter = WandbRunExporter("jacoposenoner/beam_deformation", "wandb_export")
+    exporter = WandbRunExporter("jacoposenoner/beam_deformation", "../wandb_export")
     exporter.export_all_runs()

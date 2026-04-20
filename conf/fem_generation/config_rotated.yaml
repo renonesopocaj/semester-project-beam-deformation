@@ -7,7 +7,7 @@ defaults:
   NW: 4
   ND: 4
   E: 1000.0
-  nu: 0.3
+  nu: 0.01 # NOTE: nu: 0.3 originally
   rho: 1.0
   eta_m: 0.01
   eta_k: 0.01

@@ -7,6 +7,7 @@ excluding the x direction which is "compression against the wall".
 """
 
 import argparse
+import math
 import os
 import dolfin as df
 import matplotlib
@@ -387,7 +388,7 @@ def _define_traction_p(initial_force_x, initial_force_y, initial_force_z, cutoff
     p0_x, p0_y, p0_z = initial_force_x, initial_force_y, initial_force_z
     cutoff_Tc = CONSTANT_FOR_CUTOFF_TIME * cutoff_time_factor
     # Define a time-dependent traction that ramps linearly up to tc and then vanishes.
-    p = df.Expression(("t <= tc ? p0x * t / tc : 0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),
+    p = df.Expression(("0.0", "t <= tc ? p0y * t / tc : 0", "t <= tc ? p0z * t / tc : 0"),
                       t=0, tc=cutoff_Tc, p0x=p0_x, p0y=p0_y, p0z=p0_z, degree=0)
     return p
 
@@ -419,8 +420,9 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
                    initial_force_y, initial_force_z, cutoff_time_factor, total_time, num_steps, mode, output_root,
                    verbose, first_trajectory_debug, linear_solver):
     """
-    Run a transient 3D beam finite element simulation and convert each time step
-    into a graph object suitable for graph learning workflows.
+    Run a transient 3D beam finite element simulation and convert each time step into a PyG graph object.
+    Return graph, name of simulation, and path name.
+
 
     Args:
         L: float
@@ -471,9 +473,13 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         - directory where graph data is stored
         - simulation name string used in output filenames
     """
-    ###################################################################################################
+    ###############################################################################################################
     #                                INITIALIZATION
     ###############################################################################################################
+
+    # We want zero force in x direction. This is the safest check to do it.
+    if not math.isclose(initial_force_x, 0.0, abs_tol=1e-6):
+        raise ValueError(f"initial_force_x must be 0, got {initial_force_x}")
 
     # Enable FEniCS form compiler optimizations.
     df.parameters["form_compiler"]["cpp_optimize"] = True
@@ -482,15 +488,13 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     # Unpack elastic parameters and compute Lamé constants.
     E, nu, mu, lmbda, rho, eta_m_val, eta_k_val, eta_m, eta_k = _define_material_params(elastic_params, density,
                                                                                         damping_params)
-
     # Generalized-alpha / Newmark-like integration parameters.
     alpha_m, alpha_f, gamma, beta = _define_newmark_params(newmark_params)
-
     # Build a structured 3D box mesh for the beam geometry.
     mesh = df.BoxMesh(df.Point(0.0, 0.0, 0.0), df.Point(L, W, D), NL, NW, ND)
     # Displacement space and stress space.
     V = df.VectorFunctionSpace(mesh, "CG", 1)
-    Vsig = df.TensorFunctionSpace(mesh, "DG", 0)
+    V_stress = df.TensorFunctionSpace(mesh, "DG", 0)
 
     # Lumped-mass quadrature rule (vertex scheme for CG-1).
     # This makes the mass matrix diagonal so that the per-node equation
@@ -506,10 +510,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     u_ = df.TestFunction(V)
     # Unknown displacement and previous time-step state variables.
     u = df.Function(V, name="Displacement")
-    u_old = df.Function(V)
-    v_old = df.Function(V)
-    a_old = df.Function(V)
-
+    u_old, v_old, a_old = df.Function(V), df.Function(V), df.Function(V)
     dss, bc, node_scalar_bc_mask = _define_boundaries_bcs(mesh, V, L)
 
     # Time discretization parameters
@@ -517,7 +518,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     Nsteps = num_steps
     dt = df.Constant(T / Nsteps)
 
-    # External traction parameters.
+    # Define external traction
     p = _define_traction_p(initial_force_x, initial_force_y, initial_force_z, cutoff_time_factor)
 
     # Build acceleration and velocity update expressions symbolically: this is useful to then put it in the
@@ -539,7 +540,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     u_tip = np.zeros((Nsteps + 1,))
     energies = np.zeros((Nsteps + 1, 4))
     E_damp = 0
-    sig = df.Function(Vsig, name="sigma")
+    sig = df.Function(V_stress, name="sigma")
     # Compute lumped masses once because they do not change in time.
     #  NOTE: not used nor here (except for saving) nor in ML pipeline
     lumped_masses_nodes = extract_node_masses(V, rho, dx_lump)
@@ -591,7 +592,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         _update_fields(u, u_old, v_old, a_old, dt, beta, gamma)
 
         # Project stress to a discontinuous space and then to node-compatible space.
-        _local_project(_sigma(u, mu, lmbda), Vsig, sig)
+        _local_project(_sigma(u, mu, lmbda), V_stress, sig)
         stress_nodewise = project(sig, V_stress_nodes, solver_type="cg", preconditioner_type="jacobi")
 
         # Correct nodal force extraction:
@@ -617,22 +618,20 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
         sig_t = torch.tensor(stress_array, dtype=torch.float)
 
         # Build one PyG graph snapshot for this time step.
-        graph = Data(
-            x=pos_t,
-            edge_index=bidir_edge_index,
-            x_vel_t=vel_t,
-            y_acc_t=acc_t,
-            y_sig_t=sig_t,
-            x_node_force=node_force_t,
-            x_bc=node_scalar_bc_mask,
-            y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
-            x_element_connectivity=mesh_connectivity,
-            time=torch.tensor([t_now], dtype=torch.float),
-        )
+        graph = Data(x=pos_t,
+                     edge_index=bidir_edge_index,
+                     x_vel_t=vel_t,
+                     y_acc_t=acc_t,
+                     y_sig_t=sig_t,
+                     x_node_force=node_force_t,
+                     x_bc=node_scalar_bc_mask,
+                     y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
+                     x_element_connectivity=mesh_connectivity,
+                     time=torch.tensor([t_now], dtype=torch.float))
         lst_graph_tstep.append(graph)
 
         if first_trajectory_debug and i < 2:
-            print(f"=== DEBUG t={i + 1} (time={t_now:.4f}) ===avg force: {np.mean(f_ext_nodal, axis=0)}"
+            print(f"\n=== DEBUG t={i + 1} (time={t_now:.4f}) ===\navg force: {np.mean(f_ext_nodal, axis=0)}"
                   f"avg acc:   {np.mean(acc_values, axis=0)}avg vel:   {np.mean(vel_values, axis=0)}")
 
         # Track tip displacement only in serial (z-component at the tip).
