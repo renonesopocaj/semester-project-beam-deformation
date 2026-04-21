@@ -90,6 +90,26 @@ def selected_limit_from_json(selected_trajs, default_limit):
     timestep_limit = int(selected_trajs.get("selected_num_steps", selected_trajs["num_steps"]))
     return timestep_limit
 
+def _copy_trajectory_params_json(raw_graphs_dir, processed_split_dir):
+    """
+    Copy trajectory_params.json from the raw split directory (parent of graphs/) into the processed split directory.
+
+    Args:
+        raw_graphs_dir: str or Path
+            Path to raw split graphs folder, e.g. .../test/graphs.
+        processed_split_dir: str or Path
+            Processed split output directory, e.g. .../large/test.
+    return: None
+        Copies file when source exists; otherwise no-op.
+    """
+    src = Path(raw_graphs_dir).parent / "trajectory_params.json"
+    if not src.exists():
+        return
+    dst = Path(processed_split_dir) / "trajectory_params.json"
+    shutil.copy2(src, dst)
+    print(f"\tCopied trajectory_params.json -> {dst}")
+
+
 def create_preprocessor(split, cfg, save_dir_train, selected_indices, selected_limit):
     """
     Args:
@@ -191,9 +211,11 @@ def main(cfg):
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
     print("\n" + "=" * 60 + "\nTest preprocessing"+ "\n" + "=" * 60)
     preprocessor_test.preprocess_data(cfg_obj, graphs_dir_test, save_dir_test)
+    _copy_trajectory_params_json(graphs_dir_test, save_dir_test)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
     print("\n" + "=" * 60 + "\nVal preprocessing"+ "\n" + "=" * 60)
     preprocessor_val.preprocess_data(cfg_obj, graphs_dir_val, save_dir_val)
+    _copy_trajectory_params_json(graphs_dir_val, save_dir_val)
     print("\n" + "=" * 60 + "\nPreprocessing complete!" + "\n" + "=" * 60)
 
 

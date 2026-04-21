@@ -7,7 +7,7 @@ then runs beam FEA simulations by calling fea_simulation()
 The idea is that
 1) validation has values in-distribution (i.e. in the range train), but different from train
 2) test has out-of-distribution values (outside the range of train), and I generate it in a way such that there
-are test samples that have only one feature (between force_x, force_y, force_z, lengths, width) out of distribution,
+are test samples that have only one feature (between force_x, force_y, force_z, lengths, widths, depths) out of distribution,
 and then some that have 2, some 3, and so on. Every test sample has at least one feature out of distribution.
 
 A test sample with beam always still for example (0,0,0) is explicitly added in test
@@ -44,8 +44,8 @@ def _train_count(cfg):
     return: int
         number of unique train combinations
     """
-    fx, fy, fz, lengths, widths = _train_axis_values(cfg)
-    return len(fx) * len(fy) * len(fz) * len(lengths) * len(widths)
+    fx, fy, fz, lengths, widths, depths = _train_axis_values(cfg)
+    return len(fx) * len(fy) * len(fz) * len(lengths) * len(widths) * len(depths)
 
 
 def _graph_filepath(params, dir_path):
@@ -75,6 +75,27 @@ def _graph_filepath(params, dir_path):
 
     # Return the final full filepath.
     return dir_path / f"{name}.pt"
+
+
+def _resolve_n_cells(spec, dim_value, axis_name):
+    """
+    Resolve BoxMesh cell count along one axis from a fixed int or a ratio dict.
+
+    Args:
+        spec: int or dict
+            fixed cell count, or dict with key "ratio" for max(1, round(dim_value * ratio))
+        dim_value: float
+            physical extent (L, W, or D) matching that axis
+        axis_name: str
+            label for error messages (e.g. "NL")
+    return: int
+        resolved cell count
+    """
+    if isinstance(spec, dict):
+        if "ratio" not in spec:
+            raise ValueError(f"defaults mesh spec for '{axis_name}' must be int or {{'ratio': float}}, got {spec!r}")
+        return max(1, int(round(float(dim_value) * float(spec["ratio"]))))
+    return int(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -306,17 +327,17 @@ def _list_ood_feature_names(combo, train_ranges):
     """
     List split-defining features whose values fall outside the train interval.
 
-    Names match cfg train / test_ood_ranges keys: force_x, force_y, force_z, lengths, widths.
+    Names match cfg train / test_ood_ranges keys: force_x, force_y, force_z, lengths, widths, depths.
 
     Args:
         combo: tuple
-            combo in the form ((fx, fy, fz), L, W)
+            combo in the form ((fx, fy, fz), L, W, D)
         train_ranges: dict
-            dict with keys fx, fy, fz, L, W mapping to (min, max)
+            dict with keys fx, fy, fz, L, W, D mapping to (min, max)
     return: list of str
         OOD feature names in axis order
     """
-    (fx, fy, fz), L, W = combo
+    (fx, fy, fz), L, W, D = combo
     names = []
     if not _in_range(fx, train_ranges["fx"][0], train_ranges["fx"][1], TOL):
         names.append("force_x")
@@ -328,16 +349,18 @@ def _list_ood_feature_names(combo, train_ranges):
         names.append("lengths")
     if not _in_range(W, train_ranges["W"][0], train_ranges["W"][1], TOL):
         names.append("widths")
+    if not _in_range(D, train_ranges["D"][0], train_ranges["D"][1], TOL):
+        names.append("depths")
     return names
 
 
 def _count_ood_features(combo, train_ranges):
     """
-    Count how many of the five split-defining features are outside the train interval.
+    Count how many of the six split-defining features are outside the train interval.
 
     Args:
         combo: tuple
-            combo in the form ((fx, fy, fz), L, W)
+            combo in the form ((fx, fy, fz), L, W, D)
         train_ranges: dict
             dict mapping feature name to (min, max)
     return: int
@@ -375,7 +398,7 @@ def _varying_axis_count(cfg):
         number of train axes that are not constant
     """
     t = cfg["train"]
-    axis_configs = [t["force_x"], t["force_y"], t["force_z"], t["lengths"], t["widths"]]
+    axis_configs = [t["force_x"], t["force_y"], t["force_z"], t["lengths"], t["widths"], t["depths"]]
     varying_axes = 0  # counter
     for axis_cfg in axis_configs:
         if not _is_constant_range(axis_cfg["start"], axis_cfg["stop"]):  # is not constant
@@ -410,20 +433,21 @@ def _train_axis_values(cfg):
     Args:
         cfg: dict
             yaml config
-    return: (fx, fy, fz, lengths, widths)
+    return: (fx, fy, fz, lengths, widths, depths)
     """
     # Read the train section once.
     t = cfg["train"]
 
-    # Build the five train axes.
+    # Build the six train axes.
     fx = _build_unique_axis_values(t["force_x"]["start"], t["force_x"]["stop"], t["force_x"]["n"], "force_x")
     fy = _build_unique_axis_values(t["force_y"]["start"], t["force_y"]["stop"], t["force_y"]["n"], "force_y")
     fz = _build_unique_axis_values(t["force_z"]["start"], t["force_z"]["stop"], t["force_z"]["n"], "force_z")
     lengths = _build_unique_axis_values(t["lengths"]["start"], t["lengths"]["stop"], t["lengths"]["n"], "lengths")
     widths = _build_unique_axis_values(t["widths"]["start"], t["widths"]["stop"], t["widths"]["n"], "widths")
+    depths = _build_unique_axis_values(t["depths"]["start"], t["depths"]["stop"], t["depths"]["n"], "depths")
 
-    # Return the five axes.
-    return fx, fy, fz, lengths, widths
+    # Return the six axes.
+    return fx, fy, fz, lengths, widths, depths
 
 
 def _train_ranges(cfg):
@@ -444,7 +468,8 @@ def _train_ranges(cfg):
             "fy": (t["force_y"]["start"], t["force_y"]["stop"]),
             "fz": (t["force_z"]["start"], t["force_z"]["stop"]),
             "L": (t["lengths"]["start"], t["lengths"]["stop"]),
-            "W": (t["widths"]["start"], t["widths"]["stop"])}
+            "W": (t["widths"]["start"], t["widths"]["stop"]),
+            "D": (t["depths"]["start"], t["depths"]["stop"])}
 
 
 def _validate_test_ood_ranges(cfg):
@@ -460,8 +485,8 @@ def _validate_test_ood_ranges(cfg):
     # Read the relevant config sections.
     t = cfg["train"]
     ood = cfg["test_ood_ranges"]
-    # Describe the five axes once.
-    axis_names = ["force_x", "force_y", "force_z", "lengths", "widths"]
+    # Describe the six axes once.
+    axis_names = ["force_x", "force_y", "force_z", "lengths", "widths", "depths"]
     # Validate one axis at a time.
     for axis_name in axis_names:
         axis_ood = ood[axis_name]
@@ -504,11 +529,11 @@ def build_train(cfg):
         cfg: dict
             yaml config
     return: list of tuple
-        cartesian product as list of tuples: ((fx, fy, fz), L, W)
+        cartesian product as list of tuples: ((fx, fy, fz), L, W, D)
     """
-    fx, fy, fz, lengths, widths = _train_axis_values(cfg)
+    fx, fy, fz, lengths, widths, depths = _train_axis_values(cfg)
     forces = list(product(fx, fy, fz))
-    return list(product(forces, lengths, widths))
+    return list(product(forces, lengths, widths, depths))
 
 
 def build_val(cfg):
@@ -526,11 +551,11 @@ def build_val(cfg):
         cfg: dict
             yaml config
     return: list of tuple
-        validation combos in the form ((fx, fy, fz), L, W)
+        validation combos in the form ((fx, fy, fz), L, W, D)
     """
     # Read the train section once.
     t = cfg["train"]
-    fx_tr, fy_tr, fz_tr, L_tr, W_tr = _train_axis_values(cfg)
+    fx_tr, fy_tr, fz_tr, L_tr, W_tr, D_tr = _train_axis_values(cfg)
     _, target_val_count, _ = _split_target_counts(cfg)
     # Count how many axes can actually create alternative in-range values.
     varying_axes = _varying_axis_count(cfg)
@@ -548,9 +573,10 @@ def build_val(cfg):
         fz = vals_excluding(t["force_z"]["start"], t["force_z"]["stop"], n_per_axis, fz_tr)
         lengths = vals_excluding(t["lengths"]["start"], t["lengths"]["stop"], n_per_axis, L_tr)
         widths = vals_excluding(t["widths"]["start"], t["widths"]["stop"], n_per_axis, W_tr)
+        depths = vals_excluding(t["depths"]["start"], t["depths"]["stop"], n_per_axis, D_tr)
         # Build the full candidate grid.
         forces = list(product(fx, fy, fz))
-        candidate_combos = list(product(forces, lengths, widths))
+        candidate_combos = list(product(forces, lengths, widths, depths))
         # As soon as there are enough candidates, pick a spread deterministic subset.
         if len(candidate_combos) >= target_val_count:
             return _select_evenly_spread(candidate_combos, target_val_count)
@@ -619,8 +645,8 @@ def _build_test_bucket_candidates(axis_value_groups, n_ood):
     # Prepare the output list for this bucket.
     bucket_combos = []
 
-    # The five split-defining axes are indexed in this order.
-    axis_indices = [0, 1, 2, 3, 4]
+    # The six split-defining axes are indexed in this order.
+    axis_indices = [0, 1, 2, 3, 4, 5]
 
     # Enumerate every mask saying which axes are OOD.
     for ood_axes in combinations(axis_indices, n_ood):
@@ -630,12 +656,13 @@ def _build_test_bucket_candidates(axis_value_groups, n_ood):
         fz_values = axis_value_groups[2]["ood"] if 2 in ood_axes else axis_value_groups[2]["id"]
         L_values = axis_value_groups[3]["ood"] if 3 in ood_axes else axis_value_groups[3]["id"]
         W_values = axis_value_groups[4]["ood"] if 4 in ood_axes else axis_value_groups[4]["id"]
+        D_values = axis_value_groups[5]["ood"] if 5 in ood_axes else axis_value_groups[5]["id"]
 
         # Build the force part for this mask.
         forces = list(product(fx_values, fy_values, fz_values))
 
         # Build all combos for this exact-OOD mask.
-        mask_combos = list(product(forces, L_values, W_values))
+        mask_combos = list(product(forces, L_values, W_values, D_values))
 
         # Append them to the current exact-k bucket.
         bucket_combos.extend(mask_combos)
@@ -734,7 +761,7 @@ def _extract_ood_below_above(axis_ood):
 def build_test(cfg):
     """
     Test:
-    build explicit exact-k-OOD buckets, with k in {1, 2, 3, 4, 5},
+    build explicit exact-k-OOD buckets, with k in {1, 2, 3, 4, 5, 6},
     then deterministically select the requested number of samples across those buckets.
 
     Important:
@@ -747,7 +774,7 @@ def build_test(cfg):
         cfg: dict
             yaml config
     return: list[tuple]
-        test combos in the form ((fx, fy, fz), L, W)
+        test combos in the form ((fx, fy, fz), L, W, D)
     """
     # Make sure the configured OOD intervals are really outside the train intervals.
     _validate_test_ood_ranges(cfg)
@@ -759,7 +786,7 @@ def build_test(cfg):
     ood = cfg["test_ood_ranges"]
 
     # Read the exact train-axis values.
-    fx_tr, fy_tr, fz_tr, L_tr, W_tr = _train_axis_values(cfg)
+    fx_tr, fy_tr, fz_tr, L_tr, W_tr, D_tr = _train_axis_values(cfg)
 
     # Read the target test size.
     _, _, target_test_count = _split_target_counts(cfg)
@@ -768,8 +795,8 @@ def build_test(cfg):
     if target_test_count == 0:
         return []
 
-    # Use five axes here because the exact-OOD buckets always refer to the five split-defining features.
-    base_count = _guess_count_values_per_axis(target_test_count, 5)
+    # Use six axes here because the exact-OOD buckets always refer to the six split-defining features.
+    base_count = _guess_count_values_per_axis(target_test_count, 6)
 
     # Start from scale 1.
     scale_factor = 1
@@ -780,6 +807,7 @@ def build_test(cfg):
     fz_below, fz_above = _extract_ood_below_above(ood["force_z"])
     L_below, L_above = _extract_ood_below_above(ood["lengths"])
     W_below, W_above = _extract_ood_below_above(ood["widths"])
+    D_below, D_above = _extract_ood_below_above(ood["depths"])
 
     # Keep increasing density until enough exact-k-OOD candidates exist.
     while True:
@@ -802,14 +830,17 @@ def build_test(cfg):
 
             _test_axis_values(t["widths"]["start"], t["widths"]["stop"],
                               W_below, W_above, n_axis, W_tr),
+
+            _test_axis_values(t["depths"]["start"], t["depths"]["stop"],
+                              D_below, D_above, n_axis, D_tr),
         ]
 
-        # Build the five exact-OOD buckets.
+        # Build the six exact-OOD buckets.
         bucket_candidates = []
         bucket_capacities = []
 
-        # Bucket 1 means exactly 1 OOD feature, ..., bucket 5 means exactly 5 OOD features.
-        for n_ood in range(1, 6):
+        # Bucket 1 means exactly 1 OOD feature, ..., bucket 6 means exactly 6 OOD features.
+        for n_ood in range(1, 7):
             # Build all candidates for this exact-k bucket.
             candidates = _build_test_bucket_candidates(axis_value_groups, n_ood)
 
@@ -840,11 +871,11 @@ def build_test(cfg):
                 test_combos.extend(selected)
 
             # Optional internal consistency check:
-            # every combo must have between 1 and 5 OOD features.
+            # every combo must have between 1 and 6 OOD features.
             train_ranges = _train_ranges(cfg)
             for combo in test_combos:
                 n_ood = _count_ood_features(combo, train_ranges)
-                if n_ood < 1 or n_ood > 5:
+                if n_ood < 1 or n_ood > 6:
                     raise RuntimeError("Internal error while building the test split.")
 
             # Return the final exact-size test split.
@@ -865,7 +896,7 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
 
     Args:
         combos: list of tuple
-            split combos in the form ((fx, fy, fz), L, W)
+            split combos in the form ((fx, fy, fz), L, W, D)
         defaults: dict
             default simulation parameters from the config
         split_dir: pathlib.Path
@@ -875,18 +906,22 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
     """
     graphs_dir = split_dir / "graphs"
     params_dict = {}
-    for idx, ((fx, fy, fz), L, W) in enumerate(combos):
+    for idx, ((fx, fy, fz), L, W, D) in enumerate(combos):
         p = dict(defaults)
         p["L"] = L
         p["W"] = W
+        p["D"] = D
+        p["NL"] = _resolve_n_cells(defaults["NL"], L, "NL")
+        p["NW"] = _resolve_n_cells(defaults["NW"], W, "NW")
+        p["ND"] = _resolve_n_cells(defaults["ND"], D, "ND")
         p["fx"] = fx
         p["fy"] = fy
         p["fz"] = fz
         filename = _graph_filepath(p, graphs_dir).name
-        ood_features = _list_ood_feature_names(((fx, fy, fz), L, W), train_ranges)
+        ood_features = _list_ood_feature_names(((fx, fy, fz), L, W, D), train_ranges)
         params_dict[filename] = {
             "traj_idx": idx, "fx": fx, "fy": fy, "fz": fz,
-            "L": L, "W": W, "ood_features": ood_features,
+            "L": L, "W": W, "D": D, "ood_features": ood_features,
         }
     split_dir.mkdir(parents=True, exist_ok=True)
     json_path = split_dir / "trajectory_params.json"
@@ -903,7 +938,7 @@ def _validate_no_zero_force(combos, split_name):
 
     Args:
         combos: list of tuple
-            combos in the form ((fx, fy, fz), L, W)
+            combos in the form ((fx, fy, fz), L, W, D)
         split_name: str
             name of the split, used in the error message
         return: None
@@ -921,18 +956,19 @@ def _validate_no_zero_force(combos, split_name):
 def _build_zero_force_test_combo(cfg):
     """
     Build one deterministic zero-force test combo using midpoints of the train
-    length and width ranges.
+    length, width, and depth ranges.
 
     Args:
         cfg: dict
             yaml config
     return: tuple
-        ((0.0, 0.0, 0.0), L_mid, W_mid)
+        ((0.0, 0.0, 0.0), L_mid, W_mid, D_mid)
     """
     t = cfg["train"]
     L_mid = (float(t["lengths"]["start"]) + float(t["lengths"]["stop"])) / 2.0
     W_mid = (float(t["widths"]["start"]) + float(t["widths"]["stop"])) / 2.0
-    return (0.0, 0.0, 0.0), L_mid, W_mid
+    D_mid = (float(t["depths"]["start"]) + float(t["depths"]["stop"])) / 2.0
+    return (0.0, 0.0, 0.0), L_mid, W_mid, D_mid
 
 
 # ---------------------------------------------------------------------------
@@ -1123,7 +1159,7 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
         print("\n" + "=" * 60 + f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})" + "=" * 60)
 
-        for idx, ((fx, fy, fz), L, W) in tqdm(enumerate(combos), total=len(combos)):
+        for idx, ((fx, fy, fz), L, W, D) in tqdm(enumerate(combos), total=len(combos)):
             is_selected = idx in mode_selected_indices
             sim_total_time = selected_total_time if is_selected else defaults["total_time"]
             sim_num_steps = selected_num_steps if is_selected else defaults["num_steps"]
@@ -1131,6 +1167,10 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             p = dict(defaults)
             p["L"] = L
             p["W"] = W
+            p["D"] = D
+            p["NL"] = _resolve_n_cells(defaults["NL"], L, "NL")
+            p["NW"] = _resolve_n_cells(defaults["NW"], W, "NW")
+            p["ND"] = _resolve_n_cells(defaults["ND"], D, "ND")
             p["fx"] = fx
             p["fy"] = fy
             p["fz"] = fz
@@ -1143,11 +1183,11 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             if verbose:
                 tag = " [SELECTED]" if is_selected else ""
                 print(f"\nSim {idx + 1}/{len(combos)}:  fx={fx:.4f}  fy={fy:.4f}  fz={fz:.4f}"
-                      f"  L={L:.4f}  W={W:.4f}  T={sim_total_time}  Nsteps={sim_num_steps}{tag}")
+                      f"  L={L:.4f}  W={W:.4f}  D={D:.4f}  T={sim_total_time}  Nsteps={sim_num_steps}{tag}")
 
             fea_simulation(L=L, W=W,
-                           D=defaults["D"],
-                           NL=defaults["NL"], NW=defaults["NW"], ND=defaults["ND"],
+                           D=D,
+                           NL=p["NL"], NW=p["NW"], ND=p["ND"],
                            elastic_params=(defaults["E"], defaults["nu"]),
                            density=defaults["rho"],
                            damping_params=(defaults["eta_m"], defaults["eta_k"]),

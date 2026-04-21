@@ -4,6 +4,7 @@ Main training script.
 Final test/validation media may include scatter plots with R^2 from scikit-learn (see validation/plot_rollout.py).
 """
 
+import json
 import os
 import time
 import yaml
@@ -37,6 +38,45 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
+
+
+def _load_traj_metadata(split_dir, extra_info_dir):
+    """
+    Build a map traj_idx -> metadata dict for in-depth plot subtitles.
+
+    Prefers processed split_dir/trajectory_params.json (fx, fy, fz, L, W, D, ood_features).
+    If missing, falls back to extra_info/test_ood_features.json for the test split only (ood_features only).
+
+    Args:
+        split_dir: str or Path
+            Processed split directory, e.g. .../large/test.
+        extra_info_dir: str or Path or None
+            Processed dataset extra_info directory, or None.
+    return: dict
+        Keys are int trajectory indices; values are dicts suitable for _format_traj_metadata_text.
+    """
+    split_path = Path(split_dir)
+    params_path = split_path / "trajectory_params.json"
+    if params_path.exists():
+        with open(params_path) as fh:
+            raw_params = json.load(fh)
+        by_idx = {}
+        for _fname, entry in raw_params.items():
+            by_idx[int(entry["traj_idx"])] = entry
+        return by_idx
+    if extra_info_dir is None:
+        return {}
+    if split_path.name != "test":
+        return {}
+    ood_path = Path(extra_info_dir) / "test_ood_features.json"
+    if not ood_path.exists():
+        return {}
+    with open(ood_path) as fh:
+        ood_raw = json.load(fh)
+    by_idx = {}
+    for key_str, ood_list in ood_raw.items():
+        by_idx[int(key_str)] = {"ood_features": ood_list}
+    return by_idx
 
 
 def resolve_trainer_precision(accelerator, configured_precision):
@@ -353,7 +393,9 @@ def main(cfg):
     # =================== Final validation ===================
     if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation")
+        val_traj_metadata = _load_traj_metadata(train_cfg.val_dir, train_cfg.extra_info_dir)
+        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
+                                          traj_metadata=val_traj_metadata)
         fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
     # =================== Testing ===================
@@ -366,7 +408,9 @@ def main(cfg):
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
                                  pin_memory=train_cfg.pin_memory)
-    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test")
+    test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
+    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
+                                       traj_metadata=test_traj_metadata)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
 if __name__ == "__main__":

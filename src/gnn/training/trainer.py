@@ -62,6 +62,7 @@ class LitModule(L.LightningModule):
     # Which trajectories get in-depth plots
     selected_validation_trajectories: list[int]
     selected_test_trajectories: list[int]
+    test_traj_metadata: dict
     noise_feature_update_mode: str
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
@@ -121,6 +122,7 @@ class LitModule(L.LightningModule):
         self.test_dataset = None
         # default
         self.eval_split_name = "test"
+        self.test_traj_metadata = {}
         self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
         # Train
@@ -295,7 +297,7 @@ class LitModule(L.LightningModule):
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
 
-    def set_test_context(self, test_dataset, split_name):
+    def set_test_context(self, test_dataset, split_name, traj_metadata):
         """
         Configures the module for a final evaluation pass, specifying the dataset, split label.
 
@@ -304,9 +306,12 @@ class LitModule(L.LightningModule):
                 Dataset with trajectory boundary information for per-trajectory rollout.
             split_name: str
                 Prefix used for test logging.
+            traj_metadata: dict
+                Map from trajectory index to metadata dict (fx, fy, fz, L, W, ood_features) for plot subtitles.
         """
         self.test_dataset = test_dataset
         self.eval_split_name = split_name
+        self.test_traj_metadata = traj_metadata if traj_metadata is not None else {}
 
     ##############################################################################################################
     #                                            TRAIN, VAL
@@ -722,6 +727,7 @@ class LitModule(L.LightningModule):
         traj_split_name = f"traj{traj_idx}, {self.eval_split_name}"
         filename_prefix = f"traj{traj_idx}_{self.eval_split_name}"
         output_dir = self.model_evaluation_dir / self.eval_split_name / f"traj{traj_idx}"
+        traj_meta = self.test_traj_metadata.get(traj_idx)
         paths = in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
-                               self.plot_diagnostics_advanced)
+                               self.plot_diagnostics_advanced, traj_meta)
         return paths
