@@ -1164,6 +1164,6 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
 
 if __name__ == "__main__":
-    config = "conf/fem_generation/config_rotated.yaml"
+    config = "conf/fem_generation/fem_rotated_soft.yaml"
     MODES = ("train", "val", "test")
     run_simulations(config, verbose=False, skip_existing=False, modes=MODES)

@@ -1,0 +1,58 @@
+# fem_rotated_soft_nu.yaml
+# Config same as fem_rotated.yaml, but with nu=0.01
+output_root: "./fem_dataset_generation/rotated_nu"
+only_json: False
+
+defaults:
+  D: 0.1
+  NL: 8
+  NW: 4
+  ND: 4
+  E: 1000.0
+  nu: 0.01 # NOTE: nu: 0.3 originally
+  rho: 1.0
+  eta_m: 0.01
+  eta_k: 0.01
+  alpha_m: 0.0
+  alpha_f: 0.0
+  total_time: 4.0
+  cutoff_time_factor: 0.2
+  num_steps: 50
+  # Linear system: "mumps" (direct LU) or "krylov" (CG + AMG).
+  linear_solver: krylov
+
+val_fraction: 0.1
+test_fraction: 0.1
+
+# Training ranges — all force axes vary independently.
+# Forces are combined via Cartesian product: 1 x 6 x 6 x 6 x 5 = 1080
+train:
+  force_x: { start: 0, stop: 0, n: 1 }
+  force_y: { start: -1.5, stop: 1.5, n: 6 }
+  force_z: { start: -1.5, stop: 1.5, n: 6 }
+  lengths: { start: 0.5, stop: 1.0, n: 6 }
+  widths:  { start: 0.06, stop: 0.14, n: 5 }
+
+# Out-of-distribution ranges used for test set generation.
+# Each axis can have a "below" and/or "above" OOD sub-range.
+# Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
+test_ood_ranges:
+  force_x: {}
+  force_y:
+    below: { start: -2.0, stop: -1.6 }
+    above: { start: 1.6, stop: 2.0 }
+  force_z:
+    below: { start: -2.0, stop: -1.6 }
+    above: { start: 1.6, stop: 2.0 }
+  lengths:
+    below: { start: 0.1, stop: 0.4 }
+    above: { start: 1.1, stop: 1.5 }
+  widths:
+    below: { start: 0.01, stop: 0.05 }
+    above: { start: 0.15, stop: 1 }
+
+selected_trajs:
+  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
+  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_total_time: 32
+  num_steps: 400
