@@ -86,6 +86,7 @@ def main(cfg):
         preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"], eda_cfg.gif_generation_mode,
                                        eda_cfg.gif_sample_percentage, eda_split, train_artifact_dir,
                                        selected_indices, selected_limit)
+        # Generate gifs is inside here
         preprocessor.preprocess_data(variant_cfg, graphs_dir, run["generate_gifs"])
         eda_obj_dict[run["name"]] = preprocessor.eda_obj
         del preprocessor

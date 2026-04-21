@@ -151,14 +151,28 @@ class LitModule(L.LightningModule):
 
     def on_fit_start(self):
         """
-        Logs model parameter+buffer storage at fit start (rank 0 only).
+        Called at the beginning of fit. Sets up W&B metric definitions and model watching.
+        Only executed on rank 0 for distributed training safety.
 
-        return: None
-        """
+        Old one:
         if not self.trainer.is_global_zero:
             return
         nbytes = module_param_and_buffer_storage_bytes(self.model)
         print(f"LitModule.model at fit start (params+buffers): {human_readable_storage(nbytes)} ({nbytes} bytes)")
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+
+        if self.wandb_train_cfg_yaml:
+            self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
+
+        # Define all metrics with epoch as x-axis
+        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
+        # Watch model gradients and parameters
+        if self.enable_wandb_watch:
+            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
+        # Log initial epoch value
+        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS
@@ -224,25 +238,6 @@ class LitModule(L.LightningModule):
         root_ds = self._unwrap_train_dataset_root(self.trainer.train_dataloader.dataset)
         if hasattr(root_ds, "set_noise_epoch"):
             root_ds.set_noise_epoch(self.current_epoch)
-
-    def on_fit_start(self):
-        """
-        Called at the beginning of fit. Sets up W&B metric definitions and model watching.
-        Only executed on rank 0 for distributed training safety.
-        """
-        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
-            return
-
-        if self.wandb_train_cfg_yaml:
-            self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
-
-        # Define all metrics with epoch as x-axis
-        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
-        # Watch model gradients and parameters
-        if self.enable_wandb_watch:
-            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
-        # Log initial epoch value
-        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
 
     def on_fit_end(self):
         """

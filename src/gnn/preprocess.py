@@ -32,11 +32,9 @@ def load_selected_trajectories(extra_info_dir):
         return {}
     path = Path(extra_info_dir) / "selected_trajectories.json"
     if not path.exists():
-        raise FileNotFoundError(
-            f"Selected trajectories file not found at {path}. "
-            "Add selected_trajectories.json next to the raw dataset extra_info "
-            "(same directory as preprocess extra_info_dir / raw extra_info)."
-        )
+        raise FileNotFoundError(f"Selected trajectories file not found at {path}. "
+                                "Add selected_trajectories.json next to the raw dataset extra_info "
+                                "(same directory as preprocess extra_info_dir / raw extra_info).")
     with open(path) as f:
         return json.load(f)
 

@@ -304,6 +304,7 @@ class EdaPreprocessor:
             self._append_trajectory_feature_bundle_to_eda(trajectory_feature_bundle, normalize=False)
             if trajectory_graphs is not None:
                 traj_metadata = self.traj_params.get(filename.name, None)
+                # Generate gif plot
                 self._generate_ground_truth_gif(trajectory_graphs, traj_idx, traj_metadata)
             del trajectory_feature_bundle
             del trajectory_graphs

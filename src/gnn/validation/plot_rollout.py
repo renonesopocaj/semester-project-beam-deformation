@@ -837,8 +837,10 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
             Label used in plot titles, e.g. "traj0, test".
         filename_prefix: str
             Prefix for saved filenames, e.g. "traj0_test".
-        return: dict
-            Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
+        plot_diagnostics_advanced: boo;
+            boolean to plot more complex diagnostics
+    return: dict
+        Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
     output_dir = Path(output_dir)  # Root folder for this trajectory’s validation artifacts.
     output_dir.mkdir(parents=True, exist_ok=True)  # Create hierarchy before any savefig/mimsave.

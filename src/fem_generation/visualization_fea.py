@@ -1,5 +1,6 @@
 """
 visualization_fea.py
+
 This file contains helper functions for visualizing FEA results.
 """
 
@@ -22,21 +23,19 @@ def find_boundary_triangles(tetra_connectivity):
     Args:
         tetra_connectivity: np.ndarray
             Array of shape (num_tetra, 4) containing tetrahedral node indices.
-        return: np.ndarray
-            Array of shape (num_boundary_faces, 3) containing boundary triangle
-            node indices.
+    return: np.ndarray
+        Array of shape (num_boundary_faces, 3) containing boundary triangle
+        node indices.
     """
     # Count how many times each triangular face appears.
     face_count = defaultdict(int)
 
     for tet in tetra_connectivity:
         # Each tetrahedron has four triangular faces.
-        faces = [
-            tuple(sorted([tet[0], tet[1], tet[2]])),
-            tuple(sorted([tet[0], tet[1], tet[3]])),
-            tuple(sorted([tet[0], tet[2], tet[3]])),
-            tuple(sorted([tet[1], tet[2], tet[3]])),
-        ]
+        faces = [tuple(sorted([tet[0], tet[1], tet[2]])),
+                 tuple(sorted([tet[0], tet[1], tet[3]])),
+                 tuple(sorted([tet[0], tet[2], tet[3]])),
+                 tuple(sorted([tet[1], tet[2], tet[3]]))]
         for f in faces:
             face_count[f] += 1
 
@@ -66,8 +65,7 @@ def make_beam_gif(lst_graphs, L, W, D, out_gif, fps, verbose):
             Output filename for the generated GIF.
         fps: int
             Frames per second of the GIF.
-        return: None
-            Saves the animation to disk.
+        verbose: bool
     """
     # Temporary directory storing rendered PNG frames.
     temp_dir = "temp_frames"
@@ -191,8 +189,6 @@ def plot_check(time, u_tip, energies, save_path, verbose):
             [elastic, kinetic, damping, total].
         save_path: str
             Output path for the saved PNG figure.
-        return: None
-            Saves a plot to disk on rank 0.
     """
     # Only the root MPI process should save plots.
     if df.MPI.comm_world.rank == 0:
