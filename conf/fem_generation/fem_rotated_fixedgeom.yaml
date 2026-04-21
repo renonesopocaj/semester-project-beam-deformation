@@ -7,7 +7,7 @@ defaults:
   NW: 4 # number of vertices along the direction L (width)
   ND: 4 # number of vertices along the direction L (depth)
   E: 1000.0
-  nu: 0.01 # NOTE: nu: 0.3 originally
+  nu: 0.1 # NOTE: nu: 0.3 originally
   rho: 1.0
   eta_m: 0.01
   eta_k: 0.01
@@ -24,17 +24,19 @@ test_fraction: 0.1
 
 # Training ranges — all force axes vary independently.
 # Forces are combined via Cartesian product: 1 x 36 x 30 = 1080
+# NOTE: no lengths, widths, depths
 train:
   force_x: { start: 0, stop: 0, n: 1 }
   force_y: { start: -1.5, stop: 1.5, n: 36 }
   force_z: { start: -1.5, stop: 1.5, n: 30 }
-  lengths: { start: 0.5, stop: 0.5, n: 1 }
-  widths: { start: 0.5, stop: 0.5, n: 1 }
+  lengths: { start: 0.6, stop: 0.6, n: 1 }
+  widths: { start: 0.1, stop: 0.1, n: 1 }
   depths: { start: 0.1, stop: 0.1, n: 1 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
+# NOTE: no lengths, widths, depths
 test_ood_ranges:
   force_x: { }
   force_y:

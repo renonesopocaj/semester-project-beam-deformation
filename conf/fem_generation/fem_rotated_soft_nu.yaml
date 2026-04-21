@@ -26,7 +26,7 @@ test_fraction: 0.1
 
 # Training ranges — all force axes vary independently.
 # Forces are combined via Cartesian product: 1 x 6 x 6 x 6 x 5 = 1080
-# FIXME: lower vallues
+# NOTE: lower values of forces
 train:
   force_x: { start: 0, stop: 0, n: 1 }
   force_y: { start: -1.0, stop: 1.0, n: 6 }
@@ -38,7 +38,7 @@ train:
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
-# FIXME: lower values
+# NOTE: lower values of forces
 test_ood_ranges:
   force_x: {}
   force_y:
