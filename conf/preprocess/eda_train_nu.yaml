@@ -21,11 +21,11 @@ normalization_runs:
     normalizer_method: "None"
     isotropic_normalizer: true
     generate_gifs: true
-  - name: z_isotr
-    label: "Z isotr."
-    normalizer_method: "z"
-    isotropic_normalizer: true
-    generate_gifs: false
+#  - name: z_isotr
+#    label: "Z isotr."
+#    normalizer_method: "z"
+#    isotropic_normalizer: true
+#    generate_gifs: false
 #  - name: z_anisotr
 #    label: "Z anisotr."
 #    normalizer_method: "z"

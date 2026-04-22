@@ -18,7 +18,7 @@ import os
 import shutil
 from pathlib import Path
 
-from src.gnn.eda.eda_features_helpers import (
+from src.gnn.eda_helpers.eda_features_helpers import (
     EdaObj, build_edge_feature_names, build_node_feature_names, verify_eda_feature_names_match_builders)
 import torch
 from torch_geometric.data import Batch, Data
@@ -455,7 +455,7 @@ class EdaPreprocessor:
                 True iff the returned optional list should include minimal GIF graph objects.
             traj_idx: int
                 Index of the trajectory in processing order.
-        return: (dict, list or None)
+        return: (dict, list | None)
             trajectory_feature_bundle dict and optional GIF graph list for the current trajectory.
         """
         dataloader = torch.load(filename, weights_only=False)

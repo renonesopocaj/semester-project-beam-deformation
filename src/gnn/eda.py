@@ -16,11 +16,12 @@ import gc
 from pathlib import Path
 
 import hydra
-from src.gnn.eda.eda_plot import plot_all_distributions
 from omegaconf import OmegaConf
+
+from src.gnn.eda_helpers.eda_plot import plot_all_distributions
+from src.gnn.eda_helpers.eda_preprocessor import EdaPreprocessor
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import (load_selected_trajectories, selected_indices_for_split, selected_limit_from_json)
-from src.gnn.eda.eda_preprocessor import EdaPreprocessor
 
 EPS = 1e-6
 DEVICE = "cpu"
@@ -46,7 +47,7 @@ def _create_variant_cfg(base_cfg, normalizer_method, isotropic_normalizer):
 
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_single")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_soft_nu")
 def main(cfg):
     """
     Args:
