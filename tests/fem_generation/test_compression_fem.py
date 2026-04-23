@@ -18,7 +18,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
-
+from src.fem_generation.build_parameter_tuples import _train_axis_values, _resolve_n_cells
+import dolfin as df
+from src.fem_generation.beam_fea_solver import fea_simulation
 
 def _repo_root():
     """
@@ -28,21 +30,6 @@ def _repo_root():
         Absolute path to repo root.
     """
     return Path(__file__).resolve().parents[2]
-
-
-def _fenics_available():
-    """
-    Return True if dolfin can be imported (FEniCS available).
-
-    return: bool
-        Whether FEniCS is importable.
-    """
-    try:
-        import dolfin as df  # noqa: F401
-    except Exception:
-        return False
-    return True
-
 
 def _mid_value(axis_list):
     """
@@ -81,7 +68,6 @@ def _baseline_combo_from_cfg(cfg):
     return: tuple
         (fx, fy, fz, L, W, D, defaults_dict)
     """
-    from src.fem_generation.build_parameter_tuples import _train_axis_values
 
     defaults = cfg["defaults"]
     _fx_list, fy_list, fz_list, lengths, widths, depths = _train_axis_values(cfg)
@@ -110,7 +96,6 @@ def _resolved_mesh_counts(defaults, L, W, D):
     return: tuple
         (NL, NW, ND) as ints.
     """
-    from src.fem_generation.build_parameter_tuples import _resolve_n_cells
 
     NL = _resolve_n_cells(defaults["NL"], L, "NL")
     NW = _resolve_n_cells(defaults["NW"], W, "NW")
@@ -147,18 +132,7 @@ def _noop_save_graphs_and_plot(*args):
     return "/tmp", "no_save"
 
 
-def _run_one_simulation(
-    L,
-    W,
-    D,
-    fx,
-    fy,
-    fz,
-    nu,
-    defaults,
-    output_root,
-    fea_simulation_fn,
-):
+def _run_one_simulation(L, W, D, fx, fy, fz, nu, defaults, output_root, fea_simulation_fn):
     """
     Run a single fea_simulation with saving patched out.
 
@@ -191,33 +165,18 @@ def _run_one_simulation(
     damping_params = (defaults["eta_m"], defaults["eta_k"])
     newmark_params = (defaults["alpha_m"], defaults["alpha_f"])
     with patch("src.fem_generation.beam_fea_solver._save_graphs_and_plot", _noop_save_graphs_and_plot):
-        lst, _, _ = fea_simulation_fn(
-            L=L,
-            W=W,
-            D=D,
-            NL=NL,
-            NW=NW,
-            ND=ND,
-            elastic_params=elastic_params,
-            density=defaults["rho"],
-            damping_params=damping_params,
-            newmark_params=newmark_params,
-            initial_force_x=fx,
-            initial_force_y=fy,
-            initial_force_z=fz,
-            cutoff_time_factor=defaults["cutoff_time_factor"],
-            total_time=defaults["total_time"],
-            num_steps=defaults["num_steps"],
-            mode="compression_test",
-            output_root=output_root,
-            verbose=False,
-            first_trajectory_debug=False,
-            linear_solver=defaults["linear_solver"],
-        )
+        lst, _, _ = fea_simulation_fn(L=L, W=W, D=D, NL=NL, NW=NW, ND=ND,
+                                      elastic_params=elastic_params, density=defaults["rho"],
+                                      damping_params=damping_params,
+                                      newmark_params=newmark_params,
+                                      initial_force_x=fx, initial_force_y=fy, initial_force_z=fz,
+                                      cutoff_time_factor=defaults["cutoff_time_factor"],
+                                      total_time=defaults["total_time"], num_steps=defaults["num_steps"],
+                                      mode="compression_test", output_root=output_root, verbose=False,
+                                      first_trajectory_debug=False, linear_solver=defaults["linear_solver"])
     return lst
 
 
-@unittest.skipUnless(_fenics_available(), "FEniCS (dolfin) not available")
 class TestCompressionFem(unittest.TestCase):
     """
     Heavy integration test: 60 transient beam simulations (6 sweeps x 10 points) and a diagnostic figure.
@@ -230,8 +189,6 @@ class TestCompressionFem(unittest.TestCase):
         return: None
             Asserts metrics are finite and output image exists.
         """
-        from src.fem_generation.beam_fea_solver import fea_simulation
-
         cfg = _load_fem_rotated_nu_config()
         fx0, fy0, fz0, L0, W0, D0, defaults = _baseline_combo_from_cfg(cfg)
         self.assertEqual(fx0, 0.0)
