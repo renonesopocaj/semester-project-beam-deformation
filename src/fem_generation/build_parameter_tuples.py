@@ -820,6 +820,32 @@ def build_test(cfg):
         # Otherwise increase density and try again.
         scale_factor += 1
 
+
+def build_all_splits(cfg):
+    """
+    Build the train, val, test parameter combos described in the module pydocs.
+
+    Args:
+        cfg: dict
+            yaml config
+    return: dict
+        {"train": list, "val": list, "test": list} where each element is a tuple
+        ((fx, fy, fz), L, W, D). The last entry of "test" is the explicit (0, 0, 0) force trajectory.
+    """
+    _, n_val, n_test = _split_target_counts(cfg)
+    train_combos = build_train(cfg)
+    _validate_no_zero_force(train_combos, "train")
+    val_combos = build_val(cfg)
+    if len(val_combos) != n_val:
+        raise RuntimeError(f"Val split has length {len(val_combos)}, expected {n_val}.")
+    test_combos = build_test(cfg)
+    if len(test_combos) != n_test:
+        raise RuntimeError(f"Test split has length {len(test_combos)}, expected {n_test}.")
+    _validate_no_zero_force(test_combos, "test")
+    test_combos.append(_build_zero_force_test_combo(cfg))
+    return {"train": train_combos, "val": val_combos, "test": test_combos}
+
+
 # ---------------------------------------------------------------------------
 #  Zero-force guard
 # ---------------------------------------------------------------------------
