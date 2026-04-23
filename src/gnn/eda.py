@@ -47,7 +47,7 @@ def _create_variant_cfg(base_cfg, normalizer_method, isotropic_normalizer):
 
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_soft_nu")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_easiest_rotated")
 def main(cfg):
     """
     Args:

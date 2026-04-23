@@ -135,7 +135,7 @@ class ClofNetVel(nn.Module):
         # Position coefficients
         coff_i = torch.matmul(edge_basis, r_i.unsqueeze(-1)).squeeze(-1)
         coff_j = torch.matmul(edge_basis, r_j.unsqueeze(-1)).squeeze(-1)
-        # Velocity coefficients: this is the chi_i instantiation
+        # Velocity coefficients, i.e. coordinates of the projection on the local frame: this is chi_i
         vel_i = torch.matmul(edge_basis, v_i.unsqueeze(-1)).squeeze(-1)
         vel_j = torch.matmul(edge_basis, v_j.unsqueeze(-1)).squeeze(-1)
         # Obtain angles

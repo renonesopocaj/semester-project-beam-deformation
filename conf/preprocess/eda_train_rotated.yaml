@@ -11,7 +11,7 @@ seed: 42
 time_discretization_method: "second_order_central" # newmark vs second_order_central
 
 eda_split: train # Possible values: train | val | test
-gif_generation_mode: UNIFORMLY_SAMPLED # Possible values: ALL | UNIFORMLY_SAMPLED
+gif_generation_mode: ALL # Possible values: ALL | UNIFORMLY_SAMPLED
 gif_sample_percentage: 10.0
 generate_distributions: true
 

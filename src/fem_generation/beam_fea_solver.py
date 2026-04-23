@@ -556,18 +556,16 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     # Record t = 0 state (all zeros: beam is at rest).
     nverts = mesh.num_vertices()
-    graph_t0 = Data(
-        x=torch.tensor(initial_coordinates, dtype=torch.float),
-        edge_index=bidir_edge_index,
-        x_vel_t=torch.zeros((nverts, 3), dtype=torch.float),
-        y_acc_t=torch.zeros((nverts, 3), dtype=torch.float),
-        y_sig_t=torch.zeros((nverts, 9), dtype=torch.float),
-        x_node_force=torch.zeros((nverts, 3), dtype=torch.float),
-        x_bc=node_scalar_bc_mask,
-        y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
-        x_element_connectivity=mesh_connectivity,
-        time=torch.tensor([0.0], dtype=torch.float),
-    )
+    graph_t0 = Data(x=torch.tensor(initial_coordinates, dtype=torch.float),
+                    edge_index=bidir_edge_index,
+                    x_vel_t=torch.zeros((nverts, 3), dtype=torch.float),
+                    y_acc_t=torch.zeros((nverts, 3), dtype=torch.float),
+                    y_sig_t=torch.zeros((nverts, 9), dtype=torch.float),
+                    x_node_force=torch.zeros((nverts, 3), dtype=torch.float),
+                    x_bc=node_scalar_bc_mask,
+                    y_node_lumped_masses=torch.tensor(lumped_masses_nodes, dtype=torch.float),
+                    x_element_connectivity=mesh_connectivity,
+                    time=torch.tensor([0.0], dtype=torch.float))
     lst_graph_tstep.append(graph_t0)
 
     ##############################################################################################################
@@ -632,7 +630,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
         if first_trajectory_debug and i < 2:
             print(f"\n=== DEBUG t={i + 1} (time={t_now:.4f}) ===\navg force: {np.mean(f_ext_nodal, axis=0)}"
-                  f"avg acc:   {np.mean(acc_values, axis=0)}avg vel:   {np.mean(vel_values, axis=0)}")
+                  f"\n\tavg acc:   {np.mean(acc_values, axis=0)}\n\tavg vel:   {np.mean(vel_values, axis=0)}")
 
         # Track tip displacement only in serial (z-component at the tip).
         if df.MPI.comm_world.size == 1:

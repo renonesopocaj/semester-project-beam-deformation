@@ -15,7 +15,6 @@ from torch import nn
 from src.gnn.models.clofnet.gcl_clofnet import ClofMPBlock
 from src.gnn.models.clofnet.clof_helpers import compute_angle_feat, forward_pass_generic, coord2localframe
 
-
 class ClofNet(nn.Module):
     """
     Local-frame ClofNet: without explicit velocity scalarization, and with MLP edge encoding.
@@ -73,7 +72,8 @@ class ClofNet(nn.Module):
         self.embedding_edge_dim = embedding_edge_dim
         self.in_dim_edge_mlp = self.hidden_dim // 2
         self.hiddendim_fuse_mlp = self.hidden_dim // 2
-        edge_embed_dim = in_dim_edge + 8 # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j = 8. # Concatenated with the 2-dim edge_attr used in the original code path.
+        # Concatenated with the 2-dim edge_attr used in the original code path.
+        edge_embed_dim = in_dim_edge + 8 # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j = 8.
         self.fuse_in_dim = edge_embed_dim
         # Embedding layers mlp
         self.embedding_node_mlp = nn.Linear(in_dim_node, self.hidden_dim)
