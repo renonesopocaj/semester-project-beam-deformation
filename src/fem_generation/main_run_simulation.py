@@ -7,11 +7,9 @@ To see how parameter sets are generated see build_parmaeter_tuples.py
 """
 
 import json
-from src.fem_generation.build_parameter_tuples import (build_train, build_val, build_test,
-                                                       _build_zero_force_test_combo, _list_ood_feature_names,
+from src.fem_generation.build_parameter_tuples import (build_all_splits, _list_ood_feature_names,
                                                        _graph_filepath, _split_target_counts, _train_ranges,
-                                                       _validate_no_zero_force, _resolve_n_cells,
-                                                       _build_trajectory_params_json)
+                                                       _resolve_n_cells, _build_trajectory_params_json)
 from pathlib import Path
 import yaml
 from tqdm import tqdm
@@ -99,19 +97,11 @@ def _save_extra_info(output_root, selected_trajs, ood_by_traj):
 def _run_only_json(cfg, defaults, output_root, requested_modes, selected_trajs):
     if "test" not in requested_modes:
         raise ValueError("only_json requires 'test' in modes.")
-    n_train, n_val, n_test = _split_target_counts(cfg)
+    _, _, n_test = _split_target_counts(cfg)
     if n_test == 0:
         raise ValueError("only_json requires a non-zero test split (check test_fraction / train size).")
-    # Validate train has no zero-force combos (even in only_json mode).
-    train_combos = build_train(cfg)
-    _validate_no_zero_force(train_combos, "train")
-    test_combos = build_test(cfg)
-    if len(test_combos) != n_test:
-        raise RuntimeError(f"Test split has length {len(test_combos)}, expected {n_test}.")
-    _validate_no_zero_force(test_combos, "test")
-    # Inject one deterministic zero-force combo into test.
-    zero_force_combo = _build_zero_force_test_combo(cfg)
-    test_combos.append(zero_force_combo)
+    all_splits = build_all_splits(cfg)
+    test_combos = all_splits["test"]
     test_dir = Path(output_root) / "test"
     test_dir.mkdir(parents=True, exist_ok=True)
     train_ranges = _train_ranges(cfg)
@@ -167,22 +157,13 @@ def run_simulations(config_path, verbose, skip_existing, modes):
     # Allocate combination builder
     n_train, n_val, n_test = _split_target_counts(cfg)
     expected_counts = {"train": n_train, "val": n_val, "test": n_test}
-    builders = {"train": build_train, "val": build_val, "test": build_test}
-    # Call builders, one for each
-    splits = {}
+    all_splits = build_all_splits(cfg)
+    splits = {mode: all_splits[mode] for mode in requested_modes}
     for mode in requested_modes:
-        splits[mode] = builders[mode](cfg)
-        if len(splits[mode]) != expected_counts[mode]:
+        expected_len = expected_counts[mode] + (1 if mode == "test" else 0)
+        if len(splits[mode]) != expected_len:
             raise RuntimeError(f"Split '{mode}' has length {len(splits[mode])}, "
-                               f"but the expected target is {expected_counts[mode]}.")
-    # Validate no zero-force combos in train or test algorithmic builds.
-    if "train" in requested_modes:
-        _validate_no_zero_force(splits["train"], "train")
-    if "test" in requested_modes:
-        _validate_no_zero_force(splits["test"], "test")
-        # Inject one deterministic zero-force combo into test.
-        zero_force_combo = _build_zero_force_test_combo(cfg)
-        splits["test"].append(zero_force_combo)
+                               f"but the expected target is {expected_len}.")
     # Save trajectory_params.json for every requested split.
     train_ranges = _train_ranges(cfg)
     for mode in requested_modes:
@@ -210,12 +191,11 @@ def run_simulations(config_path, verbose, skip_existing, modes):
         dir_path.mkdir(parents=True, exist_ok=True)
         mode_selected_indices = _selected_indices_for_mode(selected_trajs, mode)
 
-        print("\n" + "=" * 60 + f"  {mode.upper()}: {len(combos)} simulations (target {expected_counts[mode]})" + "=" * 60)
+        sim_target = expected_counts[mode] + (1 if mode == "test" else 0)
+        print("\n" + "=" * 60 + f"  {mode.upper()}: {len(combos)} simulations (target {sim_target})" + "=" * 60)
 
         # MAIN LOOP FOR EACH MODE
         for idx, ((fx, fy, fz), L, W, D) in tqdm(enumerate(combos), total=len(combos)):
-            if _graph_filepath(p, dir_path).exists() and skip_existing:
-                continue
             is_selected = idx in mode_selected_indices
             sim_total_time = selected_total_time if is_selected else defaults["total_time"]
             sim_num_steps = selected_num_steps if is_selected else defaults["num_steps"]
@@ -226,6 +206,8 @@ def run_simulations(config_path, verbose, skip_existing, modes):
             p["ND"] = _resolve_n_cells(defaults["ND"], D, "ND")
             p["fx"], p["fy"], p["fz"] = fx, fy, fz
             p["total_time"], p["num_steps"] = sim_total_time, sim_num_steps
+            if _graph_filepath(p, dir_path).exists() and skip_existing:
+                continue
 
             if verbose:
                 tag = " [SELECTED]" if is_selected else ""
