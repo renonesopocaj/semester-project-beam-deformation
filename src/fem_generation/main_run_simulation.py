@@ -119,6 +119,8 @@ def load_config(path):
 def linspace_list(start, stop, n):
     """
     Return a list from np.linspace with the specified parameters.
+    For n == 1 the result is a single value equal to start (NumPy linspace convention), not the midpoint of
+    [start, stop].
 
     Args:
         start: float
