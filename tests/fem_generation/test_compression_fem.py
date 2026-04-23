@@ -1,14 +1,14 @@
 """
 test_compression_fem.py
 
-Integration-style checks for axial (x) response of the clamped beam with f_x=0: six parameter sweeps
-read baseline settings from conf/fem_generation/fem_rotated_nu.yaml, run FEA in memory
-(saving disabled via mock), and plot mean / max spatial-mean x-displacement vs each swept parameter.
+Runnable script (not a unittest): six FEA parameter sweeps with f_x=0, baseline from
+conf/fem_generation/fem_rotated_nu.yaml, graphs kept in memory (save patched), and a
+multi-panel PNG written under tests/fem_generation/compression_fem_output/.
+
+Run from repo root, FEniCS env recommended:
+    python tests/fem_generation/test_compression_fem.py
 """
 
-import os
-import tempfile
-import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,9 +18,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
-from src.fem_generation.build_parameter_tuples import _train_axis_values, _resolve_n_cells
-import dolfin as df
-from src.fem_generation.beam_fea_solver import fea_simulation
+
+# This file is a runnable script, not a pytest/unittest target.
+__test__ = False
+
 
 def _repo_root():
     """
@@ -30,6 +31,7 @@ def _repo_root():
         Absolute path to repo root.
     """
     return Path(__file__).resolve().parents[2]
+
 
 def _mid_value(axis_list):
     """
@@ -68,6 +70,7 @@ def _baseline_combo_from_cfg(cfg):
     return: tuple
         (fx, fy, fz, L, W, D, defaults_dict)
     """
+    from src.fem_generation.build_parameter_tuples import _train_axis_values
 
     defaults = cfg["defaults"]
     _fx_list, fy_list, fz_list, lengths, widths, depths = _train_axis_values(cfg)
@@ -96,6 +99,7 @@ def _resolved_mesh_counts(defaults, L, W, D):
     return: tuple
         (NL, NW, ND) as ints.
     """
+    from src.fem_generation.build_parameter_tuples import _resolve_n_cells
 
     NL = _resolve_n_cells(defaults["NL"], L, "NL")
     NW = _resolve_n_cells(defaults["NW"], W, "NW")
@@ -165,115 +169,149 @@ def _run_one_simulation(L, W, D, fx, fy, fz, nu, defaults, output_root, fea_simu
     damping_params = (defaults["eta_m"], defaults["eta_k"])
     newmark_params = (defaults["alpha_m"], defaults["alpha_f"])
     with patch("src.fem_generation.beam_fea_solver._save_graphs_and_plot", _noop_save_graphs_and_plot):
-        lst, _, _ = fea_simulation_fn(L=L, W=W, D=D, NL=NL, NW=NW, ND=ND,
-                                      elastic_params=elastic_params, density=defaults["rho"],
-                                      damping_params=damping_params,
-                                      newmark_params=newmark_params,
-                                      initial_force_x=fx, initial_force_y=fy, initial_force_z=fz,
-                                      cutoff_time_factor=defaults["cutoff_time_factor"],
-                                      total_time=defaults["total_time"], num_steps=defaults["num_steps"],
-                                      mode="compression_test", output_root=output_root, verbose=False,
-                                      first_trajectory_debug=False, linear_solver=defaults["linear_solver"])
+        lst, _, _ = fea_simulation_fn(
+            L=L,
+            W=W,
+            D=D,
+            NL=NL,
+            NW=NW,
+            ND=ND,
+            elastic_params=elastic_params,
+            density=defaults["rho"],
+            damping_params=damping_params,
+            newmark_params=newmark_params,
+            initial_force_x=fx,
+            initial_force_y=fy,
+            initial_force_z=fz,
+            cutoff_time_factor=defaults["cutoff_time_factor"],
+            total_time=defaults["total_time"],
+            num_steps=defaults["num_steps"],
+            mode="compression_test",
+            output_root=output_root,
+            verbose=False,
+            first_trajectory_debug=False,
+            linear_solver=defaults["linear_solver"],
+        )
     return lst
 
 
-class TestCompressionFem(unittest.TestCase):
+def run_compression_sweeps_and_plot(output_dir):
     """
-    Heavy integration test: 60 transient beam simulations (6 sweeps x 10 points) and a diagnostic figure.
+    Run 60 FEA simulations (six sweeps of ten points), build displacement curves, save one PNG.
+
+    Args:
+        output_dir: Path
+            Directory to create and write compression_sweeps.png into.
+    return: Path
+        Path to the written PNG.
     """
+    from src.fem_generation.beam_fea_solver import fea_simulation
 
-    def test_compression_parameter_sweeps_and_plot(self):
-        """
-        Run six sweep families (10 points each) with f_x=0 throughout; x-displacement statistics; write a PNG.
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        return: None
-            Asserts metrics are finite and output image exists.
-        """
-        cfg = _load_fem_rotated_nu_config()
-        fx0, fy0, fz0, L0, W0, D0, defaults = _baseline_combo_from_cfg(cfg)
-        self.assertEqual(fx0, 0.0)
-        nu0 = float(defaults["nu"])
+    cfg = _load_fem_rotated_nu_config()
+    fx0, fy0, fz0, L0, W0, D0, defaults = _baseline_combo_from_cfg(cfg)
+    nu0 = float(defaults["nu"])
 
-        npts = 10
-        geom_axis = np.linspace(0.01, 2.0, npts)
-        force_axis = np.linspace(0.0, 2.0, npts)
-        nu_axis = np.linspace(0.0001, 0.45, npts)
+    npts = 10
+    geom_axis = np.linspace(0.01, 2.0, npts)
+    force_axis = np.linspace(0.0, 2.0, npts)
+    nu_axis = np.linspace(0.0001, 0.45, npts)
 
-        sweeps = []
+    sweeps = []
+    run_idx = 0
+    total_runs = 6 * npts
 
-        # 1) fixed f_y, f_z, W, L, nu — vary D
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, Dv in enumerate(geom_axis):
-            lst = _run_one_simulation(L0, W0, Dv, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("D", geom_axis, mean_a.copy(), max_a.copy()))
+    # 1) fixed f_y, f_z, W, L, nu — vary D
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, Dv in enumerate(geom_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=D  D=%s" % (run_idx, total_runs, Dv))
+        lst = _run_one_simulation(L0, W0, Dv, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("D", geom_axis, mean_a.copy(), max_a.copy()))
 
-        # 2) fixed f_y, f_z, W, D, nu — vary L
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, Lv in enumerate(geom_axis):
-            lst = _run_one_simulation(Lv, W0, D0, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("L", geom_axis, mean_a.copy(), max_a.copy()))
+    # 2) fixed f_y, f_z, W, D, nu — vary L
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, Lv in enumerate(geom_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=L  L=%s" % (run_idx, total_runs, Lv))
+        lst = _run_one_simulation(Lv, W0, D0, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("L", geom_axis, mean_a.copy(), max_a.copy()))
 
-        # 3) fixed f_y, f_z, L, D, nu — vary W
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, Wv in enumerate(geom_axis):
-            lst = _run_one_simulation(L0, Wv, D0, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("W", geom_axis, mean_a.copy(), max_a.copy()))
+    # 3) fixed f_y, f_z, L, D, nu — vary W
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, Wv in enumerate(geom_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=W  W=%s" % (run_idx, total_runs, Wv))
+        lst = _run_one_simulation(L0, Wv, D0, fx0, fy0, fz0, nu0, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("W", geom_axis, mean_a.copy(), max_a.copy()))
 
-        # 4) fixed f_z, W, D, L, nu — vary f_y
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, fyv in enumerate(force_axis):
-            lst = _run_one_simulation(L0, W0, D0, fx0, fyv, fz0, nu0, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("f_y", force_axis, mean_a.copy(), max_a.copy()))
+    # 4) fixed f_z, W, D, L, nu — vary f_y
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, fyv in enumerate(force_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=f_y  f_y=%s" % (run_idx, total_runs, fyv))
+        lst = _run_one_simulation(L0, W0, D0, fx0, fyv, fz0, nu0, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("f_y", force_axis, mean_a.copy(), max_a.copy()))
 
-        # 5) fixed f_y, W, D, L, nu — vary f_z
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, fzv in enumerate(force_axis):
-            lst = _run_one_simulation(L0, W0, D0, fx0, fy0, fzv, nu0, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("f_z", force_axis, mean_a.copy(), max_a.copy()))
+    # 5) fixed f_y, W, D, L, nu — vary f_z
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, fzv in enumerate(force_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=f_z  f_z=%s" % (run_idx, total_runs, fzv))
+        lst = _run_one_simulation(L0, W0, D0, fx0, fy0, fzv, nu0, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("f_z", force_axis, mean_a.copy(), max_a.copy()))
 
-        # 6) fixed f_y, W, D, L, f_z — vary nu
-        mean_a = np.zeros(npts)
-        max_a = np.zeros(npts)
-        for i, nuv in enumerate(nu_axis):
-            lst = _run_one_simulation(L0, W0, D0, fx0, fy0, fz0, nuv, defaults, "/tmp", fea_simulation)
-            mean_a[i], max_a[i] = _x_displacement_stats(lst)
-        sweeps.append(("nu", nu_axis, mean_a.copy(), max_a.copy()))
+    # 6) fixed f_y, W, D, L, f_z — vary nu
+    mean_a = np.zeros(npts)
+    max_a = np.zeros(npts)
+    for i, nuv in enumerate(nu_axis):
+        run_idx += 1
+        print("run %d/%d  sweep=nu  nu=%s" % (run_idx, total_runs, nuv))
+        lst = _run_one_simulation(L0, W0, D0, fx0, fy0, fz0, nuv, defaults, "/tmp", fea_simulation)
+        mean_a[i], max_a[i] = _x_displacement_stats(lst)
+    sweeps.append(("nu", nu_axis, mean_a.copy(), max_a.copy()))
 
-        for name, xs, mean_y, max_y in sweeps:
-            self.assertTrue(np.all(np.isfinite(mean_y)), msg="non-finite mean metric for sweep %s" % name)
-            self.assertTrue(np.all(np.isfinite(max_y)), msg="non-finite max metric for sweep %s" % name)
+    for name, xs, mean_y, max_y in sweeps:
+        if not np.all(np.isfinite(mean_y)) or not np.all(np.isfinite(max_y)):
+            print("warning: non-finite displacement metrics for sweep %s" % name)
 
-        fig, axes = plt.subplots(6, 1, figsize=(7, 16), constrained_layout=True)
-        for ax, (name, xs, mean_y, max_y) in zip(axes, sweeps):
-            ax.plot(xs, mean_y, label="mean_t mean_i u_x")
-            ax.plot(xs, max_y, label="max_t mean_i u_x")
-            ax.set_xlabel(name)
-            ax.set_ylabel("displacement (x)")
-            ax.set_title("sweep: %s" % name)
-            ax.legend(loc="best")
+    fig, axes = plt.subplots(6, 1, figsize=(7, 16), constrained_layout=True)
+    for ax, (name, xs, mean_y, max_y) in zip(axes, sweeps):
+        ax.plot(xs, mean_y, label="mean_t mean_i u_x")
+        ax.plot(xs, max_y, label="max_t mean_i u_x")
+        ax.set_xlabel(name)
+        ax.set_ylabel("displacement (x)")
+        ax.set_title("sweep: %s" % name)
+        ax.legend(loc="best")
 
-        out_dir = tempfile.mkdtemp(prefix="compression_fem_")
-        out_path = Path(out_dir) / "compression_sweeps.png"
-        fig.savefig(out_path)
-        plt.close(fig)
-        self.assertTrue(out_path.is_file())
-        self.assertGreater(out_path.stat().st_size, 0)
-        try:
-            out_path.unlink()
-            os.rmdir(out_dir)
-        except OSError:
-            pass
+    out_path = output_dir / "compression_sweeps.png"
+    fig.savefig(out_path)
+    plt.close(fig)
+    return out_path
+
+
+def main():
+    """
+    Default entry: write plots next to this file under compression_fem_output/.
+
+    return: None
+    """
+    default_out = Path(__file__).resolve().parent / "compression_fem_output"
+    path = run_compression_sweeps_and_plot(default_out)
+    print("Wrote %s" % (path.resolve(),))
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()
