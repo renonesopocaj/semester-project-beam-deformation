@@ -161,10 +161,6 @@ class TrainYaml:
         self.curvature_loss_weight = flattened_cfg["curvature_loss_weight"]
         self.optimizer = flattened_cfg["optimizer"]
         self.fused_adam = flattened_cfg["fused_adam"]
-        self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
-        self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
-        self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
-        self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
         # Notes various
         self.pin_memory = flattened_cfg["pin_memory"]
         self.rollout_batch_size = flattened_cfg["rollout_batch_size"]
@@ -183,6 +179,10 @@ class TrainYaml:
         # Misc
         self.protect_from_oom = flattened_cfg["protect_from_oom"]
         if self.model_name == "MGN":
+            self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
+            self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
+            self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
+            self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
             self.num_messages = flattened_cfg["num_messages"]
             self.hidden_processor_dim = flattened_cfg["latent_dim"]
         elif self.model_name == "gunet":

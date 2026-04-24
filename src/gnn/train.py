@@ -146,7 +146,7 @@ def create_model(train_cfg, preprocess_cfg, device):
         raise NotImplementedError("CLOFNet not implemented")
     elif train_cfg.model_name == "gunet":
         return GUNet(in_channels=preprocess_cfg.node_channels, hidden_channels=train_cfg.hidden_channels,
-                     out_channels=train_cfg.out_channels, layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,
+                     layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,
                      pool_ratios=train_cfg.pool_ratios, sum_res=train_cfg.sum_res,
                      enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
                      decoder_layers=train_cfg.decoder_layers)

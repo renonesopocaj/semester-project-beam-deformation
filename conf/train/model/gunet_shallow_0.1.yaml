@@ -1,7 +1,7 @@
 model_name: "gunet"
 layer_norm: true
 depth: 5
-pool_ratios: ["0.9", "0.8", "0.7", "0.6", "0.5"]
+pool_ratios: [0.9, 0.8, 0.7, 0.6, 0.5]
 sum_res: true
 enable_embedder: true
 encoder_layers: 2
