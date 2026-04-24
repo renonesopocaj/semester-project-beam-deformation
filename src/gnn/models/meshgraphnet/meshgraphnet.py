@@ -11,7 +11,6 @@ from src.gnn.models.models_helpers import build_mlp_d
 import torch.nn as nn
 from torch_scatter import scatter_add
 
-
 class Encoder(torch.nn.Module):
     """
     Encoder for making an initial embedding of node and edge features, made by 2 mlps (1 MLP for each).
@@ -103,7 +102,7 @@ class GraphNetBlock(torch.nn.Module):
 
 class Decoder(torch.nn.Module):
     """
-    Final decoder to predict acceleration and von Mises stress.
+    Final decoder to predict acceleration and von Mises stress. Uses 2 heads.
     """
 
     def __init__(self, in_and_latent_size, enable_layer_norm, num_layers_heads):

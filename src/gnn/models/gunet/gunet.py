@@ -50,12 +50,18 @@ class GUNet(torch.nn.Module):
             self.graph_unet = GraphUNet(in_channels, hidden_channels, hidden_channels, depth, pool_ratios,
                                         sum_res, ReLU)
         # Note: Graph U-Net already has a final decoder, here we append a head [N, H] --> [N, H]
-        self.head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=out_channels,
-                                num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True, use_softmax=False)
+        self.acc_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=3,
+                                    num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
+                                    use_softmax=False)
+        self.mises_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=1,
+                                    num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
+                                    use_softmax=False)
 
     def forward(self, x):
         if self.enable_embedder:
             x = self.encoder(x)
         x = self.graph_unet(x)
-        pred = self.head(x)
+        acc_pred = self.acc_head(x)
+        mises_pred = self.mises_head(x)
+        pred = torch.cat([acc_pred, mises_pred], dim=1)
         return pred

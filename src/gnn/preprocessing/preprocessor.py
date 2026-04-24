@@ -6,7 +6,6 @@ A lot of redundancy in Data(...) which are the PyG-formatted graphs, because it 
 later in training without having to slice tensors and "remembering" which feature is where.
 One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
 Note one file = one trajectory.
-
 Validation/test:
     1. load files and stats
     2. for each file:

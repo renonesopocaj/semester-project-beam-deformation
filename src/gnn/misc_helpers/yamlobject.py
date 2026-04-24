@@ -131,8 +131,6 @@ class TrainYaml:
         self.batch_size = flattened_cfg["batch_size"]
         self.num_workers = flattened_cfg["num_workers"]
         self.model_name = flattened_cfg["model_name"]
-        self.num_messages = flattened_cfg["num_messages"]
-        self.latent_dim = flattened_cfg["latent_dim"]
         self.initial_lr = float(flattened_cfg["initial_lr"])
         self.scheduler_cfg = _extract_nested(cfg, "lr_scheduler")
         self.total_epochs = flattened_cfg["total_epochs"]
@@ -182,7 +180,20 @@ class TrainYaml:
         # Exponentiate
         self.exp_mises = flattened_cfg["exp_mises"]
         self.stress_weight = flattened_cfg["stress_weight"]
+        # Misc
         self.protect_from_oom = flattened_cfg["protect_from_oom"]
+        if self.model_name == "MGN":
+            self.num_messages = flattened_cfg["num_messages"]
+            self.hidden_processor_dim = flattened_cfg["latent_dim"]
+        elif self.model_name == "gunet":
+            self.hidden_channels = flattened_cfg["hidden_channels"]
+            self.layer_norm = flattened_cfg["layer_norm"]
+            self.depth = flattened_cfg["depth"]
+            self.pool_ratios = flattened_cfg["pool_ratios"]
+            self.sum_res = flattened_cfg["sum_res"]
+            self.enable_embedder = flattened_cfg["enable_embedder"]
+            self.encoder_layers = flattened_cfg["encoder_layers"]
+            self.decoder_layers = flattened_cfg["decoder_layers"]
 
 def _to_dict_flatten(data):
     """

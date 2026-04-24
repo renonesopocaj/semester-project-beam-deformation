@@ -23,7 +23,7 @@ from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
-
+from src.gnn.models.gunet.gunet import GUNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
@@ -134,14 +134,26 @@ def create_model(train_cfg, preprocess_cfg, device):
         # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
         # layer_norm_enable_processor
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
-                            encoder_latent_size=train_cfg.latent_dim, encoder_decoder_latent_size=train_cfg.latent_dim,
-                            processor_latent_size=train_cfg.latent_dim, num_msgs=train_cfg.num_messages,
+                            encoder_latent_size=train_cfg.hidden_processor_dim, encoder_decoder_latent_size=train_cfg.hidden_processor_dim,
+                            processor_latent_size=train_cfg.hidden_processor_dim, num_msgs=train_cfg.num_messages,
                             num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
                             layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
                             layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
-                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor)
+                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor,
+                            num_layers_heads=train_cfg.num_layers_heads,
+                            num_layers_encoder=train_cfg.num_layers_encoder)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
+    elif train_cfg.model_name == "gunet":
+        return GUNet(in_channels=preprocess_cfg.node_channels, hidden_channels=train_cfg.hidden_channels,
+                     out_channels=train_cfg.out_channels, layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,
+                     pool_ratios=train_cfg.pool_ratios, sum_res=train_cfg.sum_res,
+                     enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
+                     decoder_layers=train_cfg.decoder_layers)
+    elif train_cfg.model_name == "magnet":
+        raise NotImplementedError("MAGNet not implemented")
+    elif train_cfg.model_name == "transolver":
+        raise NotImplementedError("Transolver not implemented")
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
@@ -220,7 +232,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
         # recommend CPU tensors plus pin_memory=True for faster transfer instead.
         # NOTE: batch size does not influence rollout since we use a separate dataloader (internal)
-        val_batch_size = train_cfg.batch_size * 2
+        val_batch_size = train_cfg.batch_size
         validation_dataloader = DataLoader(validation_dataset, batch_size=val_batch_size, shuffle=False,
                                            num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
                                            pin_memory=train_cfg.pin_memory)
