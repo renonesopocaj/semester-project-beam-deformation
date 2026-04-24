@@ -1,0 +1,15 @@
+# MAgNET graph U-Net aligned with the paper's 3D beam setup:
+# (num_poolings, layers_per_level, MAg window) = (5, 1, A^2);
+# channels per level (encoder + bottleneck) = (3, 3, 3, 12, 24, 48);
+# hidden activations Leaky ReLU; final head linear (fixed in MAGNet).
+# Use preprocess with node_channels == 3 if inputs are (f_x, f_y, f_z) like the paper.
+model_name: "magnet"
+hidden_channels: [3, 3, 3, 12, 24, 48]
+num_poolings: 5
+layers_per_level: 1
+window_size: 2
+# Paper: pooling run 1000× with different seeds; pick fewest nodes at coarsest. Value here is a placeholder.
+pool_seed: 42
+# Paper does not name the clique-pool aggregation; "max" matches conf/train/model/magnet.yaml.
+pool_aggr: "max"
+activation: "leakyrelu"
