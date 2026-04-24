@@ -1,60 +1,86 @@
-import tensorflow as tf
-from tensorflow import keras
+"""
+g_pool.py
+
+PyTorch graph pooling for fixed-topology MAgNET graphs.
+"""
+
+import torch
+import torch.nn as nn
+from torch_scatter import scatter
 
 
-class G_Pool(keras.layers.Layer):
+def _pool_index_from_subgraphs(subgraphs):
+    """
+    Map each parent node index to its pooled clique id (order matches `subgraphs`).
 
+    Args:
+        subgraphs: list[torch.Tensor]
+            Disjoint node index tensors, one per clique.
+    return:
+        torch.Tensor
+            Long tensor `pool_index` of shape `[N]` with `pool_index[j] == i` iff `j in subgraphs[i]`.
+    """
+    if len(subgraphs) == 0:
+        raise ValueError("subgraphs must be non-empty.")
+    device = subgraphs[0].device
+    node_ids = torch.cat([s.long().reshape(-1) for s in subgraphs], dim=0)
+    clique_ids = torch.cat(
+        [torch.full((s.numel(),), i, dtype=torch.long, device=device) for i, s in enumerate(subgraphs)],
+        dim=0,
+    )
+    num_nodes = int(node_ids.max().item()) + 1
+    pool_index = torch.empty((num_nodes,), dtype=torch.long, device=device)
+    pool_index[node_ids] = clique_ids
+    return pool_index
+
+
+class GPool(nn.Module):
+    """
+    Clique pooling over `[batch, nodes, channels]` tensors.
     """
 
-    Pooling layer
+    pool_index: torch.Tensor
+    num_pools: int
+    aggr: str
 
-    Input    : Tensorflow layer with shape  (None, units)       ;   units = n_channels*nodes
-    Output   : Tensorflow layer with shape  (None, pool_units)  ;   unpool_units = n_channels*pool_nodes
+    def __init__(self, subgraphs, aggr):
+        """
+        Args:
+            subgraphs: list[torch.Tensor]
+                Non-overlapping cliques from the parent graph.
+            aggr: str
+                Pooling aggregation: `max`, `mean`, `sum`, or `min`.
+        return:
+            None
+        """
+        super().__init__()
+        self.aggr = aggr
+        pool_index = _pool_index_from_subgraphs(subgraphs)
+        self.register_buffer("pool_index", pool_index)
+        self.num_pools = len(subgraphs)
+        self._scatter_reduce = {"max": "max", "min": "min", "sum": "sum", "mean": "mean"}[aggr]
 
-    :argument
-
-    subgraph = This is a list of tensors(tf.int32) containing the subgraphs over which pooling has to be performed
-    nodes    = number of nodes for the unpooled graph (for the originally pooled graph)
-
-    """
-
-    def __init__(self,subgraph, nodes = None):
-        super(G_Pool, self).__init__()
-        self.subgraph = subgraph
-        self.nodes = nodes
-
-    def call(self, inputs):
-
-        batch_dim = tf.shape(inputs)[0]
-        units = inputs.shape[-1]
-
-        n_channels = int(units/self.nodes)
-        n_cliques = len(self.subgraph)
-
-        batch_layer = tf.reshape(inputs, [batch_dim, n_channels, self.nodes])
-
-        out = tf.range(n_cliques, dtype=tf.float32)
-        out = tf.reshape(out, [1, n_cliques])
-        out = tf.tile(out, tf.constant([n_channels, 1], tf.int32))
-        out = tf.tile(tf.expand_dims(out, 0), [batch_dim, 1, 1])
-        pooled_out = out
-
-        for i in range(n_cliques):
-            sliced_tensor = tf.gather(batch_layer, self.subgraph[i], axis=2)
-            indices = tf.where(tf.equal(out, tf.constant(i, dtype=tf.float32)))
-            indices = tf.reshape(indices, [batch_dim, n_channels, 3])
-            pooled_out = tf.tensor_scatter_nd_update(pooled_out, indices, tf.reduce_max(sliced_tensor, axis=2))
-
-        pooled_out = tf.reshape(pooled_out,[batch_dim,n_cliques*n_channels])
-
-        return pooled_out
-
-
-    def get_config(self):
-
-        config = super().get_config().copy()
-        config.update({
-            'subgraph': self.subgraph,
-            'nodes': self.nodes,
-        })
-        return config
+    def forward(self, x):
+        """
+        Args:
+            x: torch.Tensor
+                Dense graph features `[B, N, C]`.
+        return:
+            torch.Tensor
+                Pooled features `[B, P, C]`.
+        """
+        batch_size, num_nodes, channels = x.shape[0], x.shape[1], x.shape[2]
+        if num_nodes != self.pool_index.numel():
+            raise ValueError(
+                f"GPool expected N={self.pool_index.numel()} nodes, got x with N={num_nodes}."
+            )
+        batch_offsets = torch.arange(batch_size, dtype=torch.long, device=x.device) * self.num_pools
+        index = self.pool_index.view(1, num_nodes) + batch_offsets.view(batch_size, 1)
+        pooled = scatter(
+            x.reshape(batch_size * num_nodes, channels),
+            index.reshape(batch_size * num_nodes),
+            dim=0,
+            dim_size=batch_size * self.num_pools,
+            reduce=self._scatter_reduce,
+        )
+        return pooled.reshape(batch_size, self.num_pools, channels)

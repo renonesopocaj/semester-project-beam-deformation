@@ -194,6 +194,14 @@ class TrainYaml:
             self.enable_embedder = flattened_cfg["enable_embedder"]
             self.encoder_layers = flattened_cfg["encoder_layers"]
             self.decoder_layers = flattened_cfg["decoder_layers"]
+        elif self.model_name == "magnet":
+            self.hidden_channels = flattened_cfg["hidden_channels"]
+            self.num_poolings = flattened_cfg["num_poolings"]
+            self.layers_per_level = flattened_cfg["layers_per_level"]
+            self.window_size = flattened_cfg["window_size"]
+            self.pool_seed = flattened_cfg["pool_seed"]
+            self.pool_aggr = flattened_cfg["pool_aggr"]
+            self.activation = flattened_cfg["activation"]
 
 def _to_dict_flatten(data):
     """

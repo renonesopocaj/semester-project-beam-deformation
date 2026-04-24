@@ -24,6 +24,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
 from src.gnn.models.gunet.gunet import GUNet
+from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
@@ -128,7 +129,7 @@ def maybe_compile_model(model, train_cfg, protect_from_oom):
         compiled_model = torch.compile(model, mode=compile_mode, fullgraph=True)
     return compiled_model
 
-def create_model(train_cfg, preprocess_cfg, device):
+def create_model(train_cfg, preprocess_cfg, device, graph_template):
     if train_cfg.model_name == "MGN":
         # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
         # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
@@ -151,7 +152,19 @@ def create_model(train_cfg, preprocess_cfg, device):
                      enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
                      decoder_layers=train_cfg.decoder_layers)
     elif train_cfg.model_name == "magnet":
-        raise NotImplementedError("MAGNet not implemented")
+        return MAGNet(
+            preprocess_cfg.node_channels,
+            preprocess_cfg.edge_channels,
+            4,
+            train_cfg.hidden_channels,
+            train_cfg.num_poolings,
+            train_cfg.layers_per_level,
+            train_cfg.window_size,
+            train_cfg.pool_seed,
+            train_cfg.pool_aggr,
+            train_cfg.activation,
+            graph_template,
+        )
     elif train_cfg.model_name == "transolver":
         raise NotImplementedError("Transolver not implemented")
     else:
@@ -224,7 +237,6 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print(f"\n\nOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
           f"({peek_batch_bytes} bytes), num_graphs={peek_num_graphs}, config batch_size={train_cfg.batch_size}")
     print("(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)\n\n")
-    del peek_batch
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
@@ -239,7 +251,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
-    model_eager = create_model(train_cfg, preprocess_cfg, device)
+    model_eager = create_model(train_cfg, preprocess_cfg, device, peek_batch)
+    del peek_batch
     eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
     print("\n\nModel info:")
     print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} "

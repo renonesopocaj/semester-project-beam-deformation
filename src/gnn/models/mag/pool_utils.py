@@ -1,142 +1,139 @@
-import tensorflow as tf
-import numpy as np
+"""
+pool_utils.py
+
+Topology utilities for the PyTorch MAgNET implementation.
+"""
+
+import torch
 
 
-def adjacency_pool(adjacency, pool_type: str, seed=10):
-
+def edge_index_to_adjacency(edge_index, num_nodes, device):
     """
+    Build a symmetric boolean adjacency matrix with self-loops from PyG edge_index.
 
-    Function for creating pooled adjacency matrix along with list of subgraphs over which pooling is to be performed.
-
-    :argument      adjacency: A numpy array of adjacency matrix
-    :argument      pool_type: String defining type of pooling
-                          'clique'  -  Pooling over non-overlapping cliques of a graph
-                          'element' -  Pooling over elements of a FEM mesh
-    :argument      seed     : Integer for numpy random seed.
-
-    :return:       A_pool   : Pooled adjacency matrix
-    :return:       subgraphs: List of tensors representing nodes over which pooling is to be performed
-
+    Args:
+        edge_index: torch.Tensor
+            Edge indices `[2, E]`, using PyG source-to-target convention.
+        num_nodes: int
+            Number of nodes in one fixed-topology graph.
+        device: torch.device
+            Device for the adjacency tensor.
+    return:
+        torch.Tensor
+            Boolean adjacency `[N, N]` where row is target node and column is source node.
     """
-
-    if pool_type == 'clique':
-
-        A_reduced = np.copy(adjacency)
-        subgraphs = []
-        node_list = np.arange(len(A_reduced))
-        np.random.seed(seed)
-
-        while ~(node_list == 0.0).all():
-
-            rand_node = np.random.choice(node_list)
-
-            graph = np.array([rand_node])
-
-            connected_nodes = np.squeeze(np.array(np.nonzero(A_reduced[rand_node])))
-            connected_nodes = np.delete(connected_nodes, np.where(connected_nodes == rand_node))
-
-            # connections = [p for p in itertools.combinations(connected_nodes, 2)]
-
-            for node in connected_nodes:
-                if (adjacency[graph, node] == 1.0).all():
-                    graph = np.append(graph, node)
-
-            A_reduced[:, graph] = 0.
-            A_reduced[graph, :] = 0.
-
-            subgraphs.append(graph)
-
-            node_list = np.asarray([i for i in node_list if i not in graph])
-
-        #Corss check if you have a overlapping node in the subgraph
-        for i in range(len(subgraphs)):
-            for j in range(i, len(subgraphs)):
-                if i != j and np.in1d(subgraphs[i], subgraphs[j]).any():
-                    raise ValueError('Common node found')
-
-        A_pool = new_adjacency(subgraphs,adjacency)
-
-        subgraphs = [tf.convert_to_tensor(graph, dtype=tf.int32) if graph.ndim != 0 else tf.expand_dims(
-            tf.convert_to_tensor(graph, dtype=tf.int32), axis=0) for graph in subgraphs]
-
-    # We pool over each element of the finite element mesh, not implemented in the paper
-    elif pool_type == 'element':
-
-        no_ele = len(e_connect)
-
-        A_pool = np.zeros((no_ele, no_ele))
-
-        for i in range(no_ele):
-            for j in range(no_ele):
-                if bool(set(e_connect[i]) & set(e_connect[j])):
-                    A_pool[i, j] = 1
-
-        subgraphs = tf.convert_to_tensor(e_connect, dtype=tf.int32)
+    adjacency = torch.zeros((num_nodes, num_nodes), dtype=torch.bool, device=device)
+    source = edge_index[0].long().to(device)
+    target = edge_index[1].long().to(device)
+    adjacency[target, source] = True
+    adjacency[source, target] = True
+    adjacency.fill_diagonal_(True)
+    return adjacency
 
 
-    else:
-        raise ValueError('This type of pooling is not implemented')
+def adjacency_window(adjacency, window_size):
+    """
+    Expand aggregation support to `A ** window_size` in the boolean semiring.
 
-
-    return A_pool, subgraphs
-
+    Args:
+        adjacency: torch.Tensor
+            Boolean adjacency `[N, N]` with self-loops.
+        window_size: int
+            Graph window size, e.g. 2 for MAgNET's common `A^2` support.
+    return:
+        torch.Tensor
+            Boolean adjacency with expanded support.
+    """
+    if window_size < 1:
+        raise ValueError("window_size must be >= 1.")
+    current = adjacency
+    adjacency_float = adjacency.float()
+    for _ in range(window_size - 1):
+        current = (current.float() @ adjacency_float) > 0
+    current.fill_diagonal_(True)
+    return current
 
 
 def new_adjacency(subgraphs, adjacency):
+    """
+    Create pooled adjacency from parent adjacency and clique subgraphs.
 
-    '''
-
-    Creates a pooled adjacency using subghrap connections and parent adjacency matrix
-
-    '''
-
-    new_size = len(subgraphs)
-    A_pool = np.zeros((new_size, new_size))
-
-    for i in range(new_size):
-        for j in range(new_size):
-            slice1 = adjacency[subgraphs[i], :]
-
-            if slice1.ndim == 1:
-                slice1 = np.expand_dims(slice1, axis=0)
-
-            slice2 = slice1[:, subgraphs[j]]
-
-            if ~(slice2 == 0.0).all():
-                A_pool[i, j] = 1
-
-    return A_pool
+    Args:
+        subgraphs: list[torch.Tensor]
+            Non-overlapping node lists.
+        adjacency: torch.Tensor
+            Parent boolean adjacency `[N, N]`.
+    return:
+        torch.Tensor
+            Pooled boolean adjacency `[P, P]`.
+    """
+    pooled_size = len(subgraphs)
+    pooled_adjacency = torch.zeros((pooled_size, pooled_size), dtype=torch.bool, device=adjacency.device)
+    for row_idx, row_nodes in enumerate(subgraphs):
+        for col_idx, col_nodes in enumerate(subgraphs):
+            pooled_adjacency[row_idx, col_idx] = adjacency[row_nodes][:, col_nodes].any()
+    pooled_adjacency.fill_diagonal_(True)
+    return pooled_adjacency
 
 
+def adjacency_pool(adjacency, pool_seed):
+    """
+    Split the graph into non-overlapping cliques and build the pooled adjacency.
 
-
-def pooled_adjacencies(adjacency, no_poolings, poolseed):
-
-    '''
-    Generates multiple pooled adjacencies
-
-    :argument      adjacency   : Adjacency matrix of the input graph (adjacency of first graph U-Net level)
-    :argument      no_poolings : Number of times pooling to be performed (number of pooling operations in graph U-Net)
-    :argument      poolseed    : Random seed for the first pooling operation
-
-    :return:       pooled_adjs : Adjacencies of pooled graphs
-    :return:       subgraphs   : Subgraphs (List of nodes over which pooling performed) for all pooled adjacencies
-
-    '''
-
-    pooled_adjs = [adjacency]
+    Args:
+        adjacency: torch.Tensor
+            Boolean adjacency `[N, N]`.
+        pool_seed: int
+            Deterministic seed for the random clique construction.
+    return:
+        tuple
+            `(pooled_adjacency, subgraphs)`.
+    """
+    adjacency_cpu = adjacency.detach().to("cpu").bool()
+    reduced = adjacency_cpu.clone()
+    remaining = torch.arange(adjacency_cpu.shape[0], dtype=torch.long)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(pool_seed))
     subgraphs = []
+    while remaining.numel() > 0:
+        random_idx = torch.randint(remaining.numel(), (1,), generator=generator).item()
+        seed_node = remaining[random_idx]
+        clique = torch.tensor([seed_node.item()], dtype=torch.long)
+        connected = torch.nonzero(reduced[seed_node], as_tuple=False).flatten()
+        connected = connected[connected != seed_node]
+        for node in connected:
+            if torch.isin(node, remaining) and adjacency_cpu[clique, node].all():
+                clique = torch.cat((clique, node.reshape(1)))
+        reduced[:, clique] = False
+        reduced[clique, :] = False
+        subgraphs.append(clique.to(adjacency.device))
+        keep_mask = ~torch.isin(remaining, clique)
+        remaining = remaining[keep_mask]
+    pooled_adjacency = new_adjacency(subgraphs, adjacency)
+    return pooled_adjacency, subgraphs
 
-    for i in range(no_poolings):
-        if i==0:
-            A_pooled, subgraph = adjacency_pool(pooled_adjs[-1],pool_type='clique', seed=poolseed)
-            pooled_adjs.append(A_pooled)
-            subgraphs.append(subgraph)
-        else:
-            A_pooled, subgraph = adjacency_pool(pooled_adjs[-1],pool_type='clique')
-            pooled_adjs.append(A_pooled)
-            subgraphs.append(subgraph)
 
-    pooled_adjs = [tf.convert_to_tensor(adj,dtype=tf.float32) for adj in pooled_adjs]
+def pooled_adjacencies(adjacency, num_poolings, pool_seed):
+    """
+    Generate pooled adjacency hierarchy and saved subgraphs for unpooling.
 
-    return pooled_adjs, subgraphs
+    Args:
+        adjacency: torch.Tensor
+            Finest-level adjacency `[N, N]`.
+        num_poolings: int
+            Number of coarsening operations.
+        pool_seed: int
+            Seed for first pooling level; later levels use incremented seeds.
+    return:
+        tuple
+            `(adjacency_list, subgraph_list)`.
+    """
+    adjacency_list = [adjacency]
+    subgraph_list = []
+    for level in range(num_poolings):
+        pooled_adjacency, subgraphs = adjacency_pool(adjacency_list[-1], int(pool_seed) + level)
+        if pooled_adjacency.shape[0] == adjacency_list[-1].shape[0]:
+            raise ValueError("Pooling did not reduce the graph; reduce num_poolings or increase adjacency window.")
+        adjacency_list.append(pooled_adjacency)
+        subgraph_list.append(subgraphs)
+    return adjacency_list, subgraph_list
