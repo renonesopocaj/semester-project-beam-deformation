@@ -1,6 +1,8 @@
 """
 models_helpers.py
+
 Contains helper functions for building models.
+MLPs are ReLu activated.
 """
 
 import torch.nn as nn

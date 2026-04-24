@@ -4,13 +4,12 @@ clofnet_vel.py
 ClofNet variant that explicitly scalarizes velocities in the local frame.
 Paper correspondence:
     This is the practical realization of the paper's notation
-        Scalarize(x_i, x_j, chi_i, chi_j, F_ij)
+                         Scalarize(x_i, x_j, chi_i, chi_j, F_ij)
     where chi_i is instantiated as the velocity vector v_i.
 Compared with ClofNet:
     The frame coefficients now include both projected coordinates and projected velocities for source and target nodes.
-
 The extra term
-    coord += coord_mlp_vel(h) * vel
+                             coord += coord_mlp_vel(h) * vel
 is not a paper equation. It is a repository-level dynamics addition.
 """
 

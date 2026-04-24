@@ -1,5 +1,6 @@
 """
 eda_features_helpers.py
+
 Feature names for EDA plots must stay aligned with build_node_features / build_edge_features in
 src/gnn/preprocessing/build_features.py. Use verify_eda_feature_names_match_builders() (runs
 probe_feature_layout) to fail fast on drift.

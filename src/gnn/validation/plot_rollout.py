@@ -1,5 +1,6 @@
 """
 plot_rollout.py
+
 Contains all files that plot metrics or diagnostics for rollout, in depth for each trajectory.
 Main access points: in_depth_plots()
 """
@@ -48,7 +49,7 @@ def _finite_coordinate_bounds_from_stack(all_coordinates):
         finite_coords = all_coordinates[mask]  # Only finite positions fed into axis limit computation.
         coordinate_min = finite_coords.min(axis=0).astype(np.float64)  # Per-axis min for set_xlim/ylim/zlim lower.
         coordinate_max = finite_coords.max(axis=0).astype(np.float64)  # Per-axis max for set_xlim/ylim/zlim upper.
-    eps = 1e-9  # Tiny extent so degenerate axis range still draws in 3D.
+    eps = 1e-10  # Tiny extent so degenerate axis range still draws in 3D.
     for axis in range(3):
         if not np.isfinite(coordinate_min[axis]) or not np.isfinite(coordinate_max[axis]):
             coordinate_min[axis] = -1.0  # Replace bad axis with symmetric default for stable camera box.

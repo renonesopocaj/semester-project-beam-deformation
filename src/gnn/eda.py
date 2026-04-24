@@ -23,7 +23,6 @@ from src.gnn.eda_helpers.eda_preprocessor import EdaPreprocessor
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import (load_selected_trajectories, selected_indices_for_split, selected_limit_from_json)
 
-EPS = 1e-6
 DEVICE = "cpu"
 
 

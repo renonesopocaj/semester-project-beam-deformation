@@ -134,9 +134,8 @@ def create_model(train_cfg, preprocess_cfg, device):
         # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
         # layer_norm_enable_processor
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
-                            encoder_latent_size=train_cfg.latent_dim, decoder_latent_size=train_cfg.latent_dim,
-                            processor_latent_size=train_cfg.latent_dim,
-                            num_msgs=train_cfg.num_messages,
+                            encoder_latent_size=train_cfg.latent_dim, encoder_decoder_latent_size=train_cfg.latent_dim,
+                            processor_latent_size=train_cfg.latent_dim, num_msgs=train_cfg.num_messages,
                             num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
                             layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
                             layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,

@@ -8,8 +8,6 @@ Builds features for the GNN and physical quantities.
 
 import torch
 
-EPS = 1e-8
-
 @torch.jit.script
 def _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ: bool,
                               enable_absolute_pos: bool, enable_node_norms: bool):
@@ -59,7 +57,7 @@ def _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge
     src = edge_index[0]
     dst = edge_index[1]
     feat_list = []
-    eps = 1e-8
+    eps = 1e-10
 
     xij_t = x_t[dst] - x_t[src]
     x_tm1_past_ij = x_tm1_prev[dst] - x_tm1_prev[src]

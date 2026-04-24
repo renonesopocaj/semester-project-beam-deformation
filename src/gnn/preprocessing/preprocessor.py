@@ -13,7 +13,6 @@ Validation/test:
         2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
         2.b. normalize with stats loaded in 1
     3. for each file: save
-
 Train:
     1. load files
     2. for each file:
