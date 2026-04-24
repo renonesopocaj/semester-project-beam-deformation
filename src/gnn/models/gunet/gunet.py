@@ -4,7 +4,6 @@ gunet.py
 Parameters:
 - in_channels (int) – Size of each input sample.
 - hidden_channels (int) – Size of each hidden sample.
-- out_channels (int) – Size of each output sample.
 - depth (int) – The depth of the U-Net architecture.
 - pool_ratios (float or [float], optional) – Graph pooling ratio for each depth. (default: 0.5)
 - sum_res (bool, optional) – If set to False, will use concatenation for integration of skip connections instead
@@ -13,20 +12,18 @@ Parameters:
 """
 
 import torch
-from torch.nn import ReLU
 from torch_geometric.nn.models.graph_unet import GraphUNet
 from src.gnn.models.models_helpers import build_mlp_d
 
 class GUNet(torch.nn.Module):
 
-    def __init__(self, in_channels, hidden_channels, out_channels, layer_norm, depth, pool_ratios, sum_res,
+    def __init__(self, in_channels, hidden_channels, layer_norm, depth, pool_ratios, sum_res,
                  enable_embedder, encoder_layers, decoder_layers):
         """
 
         Args:
             in_channels:
             hidden_channels:
-            out_channels:
             layer_norm:
             depth:
             pool_ratios:
@@ -44,11 +41,11 @@ class GUNet(torch.nn.Module):
                                        use_softmax=False)
             # NOte: Graph U-Net already has an initial GCN layer. [N, H] --> [N, H]
             self.graph_unet = GraphUNet(hidden_channels, hidden_channels, hidden_channels, depth, pool_ratios,
-                                        sum_res, ReLU)
+                                        sum_res, "relu")
         else:
             # [N, C_in] --> [N, H]
             self.graph_unet = GraphUNet(in_channels, hidden_channels, hidden_channels, depth, pool_ratios,
-                                        sum_res, ReLU)
+                                        sum_res, "relu")
         # Note: Graph U-Net already has a final decoder, here we append a head [N, H] --> [N, H]
         self.acc_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=3,
                                     num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
@@ -57,10 +54,22 @@ class GUNet(torch.nn.Module):
                                     num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
                                     use_softmax=False)
 
-    def forward(self, x):
+    def forward(self, ingraph):
+        """
+        Same graph contract as MeshGraphNet: reads node features and topology from a PyG Data or Batch.
+
+        Args:
+            ingraph:
+                PyG graph with x [N, C_in], edge_index [2, E], and optional batch [N] for batched graphs.
+        return:
+            pred [N, 4] concatenation of acceleration (3) and von Mises head (1), matching trainer targets.
+        """
+        x = ingraph.x
+        edge_index = ingraph.edge_index
+        batch = getattr(ingraph, "batch", None)
         if self.enable_embedder:
             x = self.encoder(x)
-        x = self.graph_unet(x)
+        x = self.graph_unet(x, edge_index, batch)
         acc_pred = self.acc_head(x)
         mises_pred = self.mises_head(x)
         pred = torch.cat([acc_pred, mises_pred], dim=1)

@@ -1,0 +1,8 @@
+model_name: "magnet"
+hidden_channels: [64, 128, 256]
+num_poolings: 2
+layers_per_level: 1
+window_size: 2
+pool_seed: 10
+pool_aggr: "max"
+activation: "leakyrelu"

@@ -101,7 +101,9 @@ def main():
 
     # Build model, optimizer, scheduler (optimizer/scheduler needed by LitModule constructor
     # but won't be stepped during eval; their state is overwritten by the checkpoint)
-    model = create_model(train_cfg, preprocess_cfg, device)
+    template_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
+    graph_template = template_dataset[0]
+    model = create_model(train_cfg, preprocess_cfg, device, graph_template)
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
 
