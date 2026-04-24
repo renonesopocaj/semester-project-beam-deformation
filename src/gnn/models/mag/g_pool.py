@@ -24,10 +24,8 @@ def _pool_index_from_subgraphs(subgraphs):
         raise ValueError("subgraphs must be non-empty.")
     device = subgraphs[0].device
     node_ids = torch.cat([s.long().reshape(-1) for s in subgraphs], dim=0)
-    clique_ids = torch.cat(
-        [torch.full((s.numel(),), i, dtype=torch.long, device=device) for i, s in enumerate(subgraphs)],
-        dim=0,
-    )
+    clique_ids = torch.cat([torch.full((s.numel(),), i, dtype=torch.long, device=device)
+                            for i, s in enumerate(subgraphs)], dim=0)
     num_nodes = int(node_ids.max().item()) + 1
     pool_index = torch.empty((num_nodes,), dtype=torch.long, device=device)
     pool_index[node_ids] = clique_ids
@@ -71,16 +69,10 @@ class GPool(nn.Module):
         """
         batch_size, num_nodes, channels = x.shape[0], x.shape[1], x.shape[2]
         if num_nodes != self.pool_index.numel():
-            raise ValueError(
-                f"GPool expected N={self.pool_index.numel()} nodes, got x with N={num_nodes}."
-            )
+            raise ValueError(f"GPool expected N={self.pool_index.numel()} nodes, got x with N={num_nodes}.")
         batch_offsets = torch.arange(batch_size, dtype=torch.long, device=x.device) * self.num_pools
         index = self.pool_index.view(1, num_nodes) + batch_offsets.view(batch_size, 1)
-        pooled = scatter(
-            x.reshape(batch_size * num_nodes, channels),
-            index.reshape(batch_size * num_nodes),
-            dim=0,
-            dim_size=batch_size * self.num_pools,
-            reduce=self._scatter_reduce,
-        )
+        pooled = scatter(x.reshape(batch_size * num_nodes, channels),
+                         index.reshape(batch_size * num_nodes), dim=0, dim_size=batch_size * self.num_pools,
+                         reduce=self._scatter_reduce)
         return pooled.reshape(batch_size, self.num_pools, channels)

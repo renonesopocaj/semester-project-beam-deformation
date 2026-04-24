@@ -6,7 +6,6 @@ PyTorch implementation of MAgNET's fixed-topology graph U-Net.
 
 import torch
 import torch.nn as nn
-
 from src.gnn.models.mag.g_pool import GPool
 from src.gnn.models.mag.g_unpool import GUnpool
 from src.gnn.models.mag.pool_utils import adjacency_window, edge_index_to_adjacency, pooled_adjacencies
@@ -16,7 +15,6 @@ class MAgLayer(nn.Module):
     """
     Multi-channel Aggregation layer with node-specific, edge-specific trainable kernels.
     """
-
     num_nodes: int
     in_channels: int
     out_channels: int
@@ -38,8 +36,6 @@ class MAgLayer(nn.Module):
                 `leakyrelu`, `relu`, or `linear`.
             use_bias: bool
                 Whether to add node/channel-specific bias.
-        return:
-            None
         """
         super().__init__()
         edge_nodes = torch.nonzero(adjacency.bool(), as_tuple=False)
@@ -153,13 +149,12 @@ class MAGNet(nn.Module):
     bottleneck: MAgLevel
     output_layer: MAgLayer
 
-    def __init__(self, node_channels, edge_channels, output_channels, hidden_channels, num_poolings, layers_per_level, window_size, pool_seed, pool_aggr, activation, graph_template):
+    def __init__(self, node_channels, output_channels, hidden_channels, num_poolings, layers_per_level,
+                 window_size, pool_seed, pool_aggr, activation, graph_template):
         """
         Args:
             node_channels: int
                 Raw node feature width.
-            edge_channels: int
-                Raw edge feature width; kept for train config symmetry, not used by MAgNET.
             output_channels: int
                 Node-wise prediction width.
             hidden_channels: int or list[int]
@@ -178,12 +173,9 @@ class MAGNet(nn.Module):
                 Hidden activation (`leakyrelu` or `relu`).
             graph_template:
                 PyG `Data`/`Batch` used to construct fixed MAg kernels and pooling hierarchy.
-        return:
-            None
         """
         super().__init__()
         self.node_channels = node_channels
-        self.edge_channels = edge_channels
         self.output_channels = output_channels
         self.num_poolings = num_poolings
         self.channels = self._normalize_channels(hidden_channels, num_poolings)
@@ -202,8 +194,7 @@ class MAGNet(nn.Module):
             current_channels = self.channels[level]
         self.bottleneck = MAgLevel(current_channels, self.channels[-1], window_adjacencies[-1], layers_per_level, activation)
         current_channels = self.channels[-1]
-        decoder_levels = []
-        unpool_layers = []
+        decoder_levels, unpool_layers = [], []
         for level in reversed(range(num_poolings)):
             unpool_layers.append(GUnpool(subgraph_list[level], self.node_counts[level]))
             decoder_levels.append(MAgLevel(current_channels + self.channels[level], self.channels[level], window_adjacencies[level], layers_per_level, activation))

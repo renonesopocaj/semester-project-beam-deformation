@@ -152,19 +152,9 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                      enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
                      decoder_layers=train_cfg.decoder_layers)
     elif train_cfg.model_name == "magnet":
-        return MAGNet(
-            preprocess_cfg.node_channels,
-            preprocess_cfg.edge_channels,
-            4,
-            train_cfg.hidden_channels,
-            train_cfg.num_poolings,
-            train_cfg.layers_per_level,
-            train_cfg.window_size,
-            train_cfg.pool_seed,
-            train_cfg.pool_aggr,
-            train_cfg.activation,
-            graph_template,
-        )
+        return MAGNet(preprocess_cfg.node_channels, 4, train_cfg.hidden_channels, train_cfg.num_poolings,
+                      train_cfg.layers_per_level, train_cfg.window_size, train_cfg.pool_seed, train_cfg.pool_aggr,
+                      train_cfg.activation, graph_template)
     elif train_cfg.model_name == "transolver":
         raise NotImplementedError("Transolver not implemented")
     else:

@@ -14,7 +14,6 @@ class GUnpool(nn.Module):
     """
     Replicate pooled clique features back to parent graph nodes.
     """
-
     pool_index: torch.Tensor
     nodes: int
 
@@ -32,9 +31,7 @@ class GUnpool(nn.Module):
         self.nodes = nodes
         pool_index = _pool_index_from_subgraphs(subgraphs)
         if pool_index.numel() != nodes:
-            raise ValueError(
-                f"GUnpool nodes={nodes} but subgraph partition implies N={pool_index.numel()}."
-            )
+            raise ValueError(f"GUnpool nodes={nodes} but subgraph partition implies N={pool_index.numel()}.")
         self.register_buffer("pool_index", pool_index)
 
     def forward(self, x):

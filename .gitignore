@@ -34,3 +34,4 @@ outputs
 fem_dataset_generation
 old_venv
 hydra
+compression_fem_output
