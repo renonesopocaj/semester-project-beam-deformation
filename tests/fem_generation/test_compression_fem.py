@@ -10,13 +10,14 @@ Run from repo root, FEniCS env recommended:
 
 from pathlib import Path
 from unittest.mock import patch
-
+from src.fem_generation.build_parameter_tuples import _resolve_n_cells
 import matplotlib
-
+from src.fem_generation.beam_fea_solver import fea_simulation
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+from src.fem_generation.build_parameter_tuples import _train_axis_values
 
 # This file is a runnable script, not a pytest/unittest target.
 __test__ = False
@@ -69,7 +70,6 @@ def _baseline_combo_from_cfg(cfg):
     return: tuple
         (fx, fy, fz, L, W, D, defaults_dict)
     """
-    from src.fem_generation.build_parameter_tuples import _train_axis_values
 
     defaults = cfg["defaults"]
     _fx_list, fy_list, fz_list, lengths, widths, depths = _train_axis_values(cfg)
@@ -98,7 +98,7 @@ def _resolved_mesh_counts(defaults, L, W, D):
     return: tuple
         (NL, NW, ND) as ints.
     """
-    from src.fem_generation.build_parameter_tuples import _resolve_n_cells
+
 
     NL = _resolve_n_cells(defaults["NL"], L, "NL")
     NW = _resolve_n_cells(defaults["NW"], W, "NW")
@@ -204,7 +204,6 @@ def run_compression_sweeps_and_plot(output_dir):
     return: Path
         Path to the written PNG.
     """
-    from src.fem_generation.beam_fea_solver import fea_simulation
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -302,7 +301,7 @@ def run_compression_sweeps_and_plot(output_dir):
 
 
 def main():
-    default_out = Path(__file__).resolve().parent / "compression_fem_output"
+    default_out = "compression_fem_output"
     path = run_compression_sweeps_and_plot(default_out)
     print("Wrote %s" % (path.resolve(),))
 
