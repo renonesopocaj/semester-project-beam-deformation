@@ -17,6 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+import torch
 from src.fem_generation.build_parameter_tuples import _train_axis_values
 
 # This file is a runnable script, not a pytest/unittest target.
@@ -156,7 +157,6 @@ def _edge_yz_component_max_max_stretch(lst_graph_tstep):
     return: tuple
         (max_t_max_e_stretch_y, max_t_max_e_stretch_z)
     """
-    import torch
 
     eps = 1e-12
     ei0 = lst_graph_tstep[0].edge_index
@@ -234,23 +234,12 @@ def _fixed_params_caption(sweep_key, fx0, fy0, fz0, L0, W0, D0, nu0, defaults, g
         lines.append("D=%.6g" % D0)
     if sweep_key != "nu":
         lines.append("nu=%.6g" % nu0)
-    lines.append(
-        "E=%.6g rho=%.6g eta_m=%.6g eta_k=%.6g"
-        % (defaults["E"], defaults["rho"], defaults["eta_m"], defaults["eta_k"])
-    )
-    lines.append(
-        "alpha_m=%.6g alpha_f=%.6g"
-        % (defaults["alpha_m"], defaults["alpha_f"])
-    )
-    lines.append(
-        "T=%.6g Nsteps=%d Tc_factor=%.6g solver=%s"
-        % (
-            defaults["total_time"],
-            int(defaults["num_steps"]),
-            defaults["cutoff_time_factor"],
-            defaults["linear_solver"],
-        )
-    )
+    lines.append("E=%.6g rho=%.6g eta_m=%.6g eta_k=%.6g"
+                 % (defaults["E"], defaults["rho"], defaults["eta_m"], defaults["eta_k"]))
+    lines.append("alpha_m=%.6g alpha_f=%.6g" % (defaults["alpha_m"], defaults["alpha_f"]))
+    lines.append("T=%.6g Nsteps=%d Tc_factor=%.6g solver=%s"
+                % (defaults["total_time"], int(defaults["num_steps"]), defaults["cutoff_time_factor"],
+                defaults["linear_solver"]))
     lines.append("mesh NL,NW,ND=%d,%d,%d (ref L,W,D=%.4g,%.4g,%.4g)" % (NL, NW, ND, Lm, Wm, Dm))
     return "\n".join(lines)
 
@@ -298,29 +287,15 @@ def _run_one_simulation(L, W, D, fx, fy, fz, nu, defaults, output_root, fea_simu
     damping_params = (defaults["eta_m"], defaults["eta_k"])
     newmark_params = (defaults["alpha_m"], defaults["alpha_f"])
     with patch("src.fem_generation.beam_fea_solver._save_graphs_and_plot", _noop_save_graphs_and_plot):
-        lst, _, _ = fea_simulation_fn(
-            L=L,
-            W=W,
-            D=D,
-            NL=NL,
-            NW=NW,
-            ND=ND,
-            elastic_params=elastic_params,
-            density=defaults["rho"],
-            damping_params=damping_params,
-            newmark_params=newmark_params,
-            initial_force_x=fx,
-            initial_force_y=fy,
-            initial_force_z=fz,
-            cutoff_time_factor=defaults["cutoff_time_factor"],
-            total_time=defaults["total_time"],
-            num_steps=defaults["num_steps"],
-            mode="compression_test",
-            output_root=output_root,
-            verbose=False,
-            first_trajectory_debug=False,
-            linear_solver=defaults["linear_solver"],
-        )
+        lst, _, _ = fea_simulation_fn(L=L, W=W, D=D, NL=NL, NW=NW, ND=ND,
+                                      elastic_params=elastic_params, density=defaults["rho"],
+                                      damping_params=damping_params,
+                                      newmark_params=newmark_params,
+                                      initial_force_x=fx, initial_force_y=fy, initial_force_z=fz,
+                                      cutoff_time_factor=defaults["cutoff_time_factor"], total_time=defaults["total_time"],
+                                      num_steps=defaults["num_steps"], mode="compression_test",
+                                      output_root=output_root, verbose=False, first_trajectory_debug=False,
+                                      linear_solver=defaults["linear_solver"])
     return lst
 
 
@@ -432,9 +407,8 @@ def run_compression_sweeps_and_plot(output_dir):
         mean_mean_e[i], max_mean_e[i], max_max_e[i] = _edge_stretch_stats(lst)
         yz_max_y[i], yz_max_z[i] = _edge_yz_component_max_max_stretch(lst)
     cap = _fixed_params_caption("f_z", fx0, fy0, fz0, L0, W0, D0, nu0, defaults, geom_axis)
-    sweeps.append(
-        ("f_z", force_axis, mean_mean_e.copy(), max_mean_e.copy(), max_max_e.copy(), cap, yz_max_y.copy(), yz_max_z.copy())
-    )
+    sweeps.append(("f_z", force_axis, mean_mean_e.copy(), max_mean_e.copy(), max_max_e.copy(), cap, yz_max_y.copy(),
+         yz_max_z.copy()))
 
     # 6) fixed f_y, W, D, L, f_z — vary nu
     mean_mean_e = np.zeros(npts)
@@ -470,18 +444,9 @@ def run_compression_sweeps_and_plot(output_dir):
         ax.set_title("sweep: %s" % name, fontsize=12)
         ax.legend(loc="lower right", fontsize=9)
         ax.grid(True, alpha=0.35, zorder=1)
-        ax.text(
-            0.02,
-            0.98,
-            cap,
-            transform=ax.transAxes,
-            fontsize=7,
-            family="monospace",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="0.5", alpha=0.9),
-            zorder=5,
-        )
+        ax.text(0.02, 0.98, cap, transform=ax.transAxes, fontsize=7, family="monospace", verticalalignment="top",
+                horizontalalignment="left",
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="0.5", alpha=0.9), zorder=5)
 
     out_path = output_dir / "compression_sweeps.png"
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -497,18 +462,9 @@ def run_compression_sweeps_and_plot(output_dir):
         ax.set_title("sweep: %s (Y/Z component max)" % name, fontsize=12)
         ax.legend(loc="lower right", fontsize=9)
         ax.grid(True, alpha=0.35, zorder=1)
-        ax.text(
-            0.02,
-            0.98,
-            cap,
-            transform=ax.transAxes,
-            fontsize=7,
-            family="monospace",
-            verticalalignment="top",
+        ax.text(0.02, 0.98, cap, transform=ax.transAxes, fontsize=7, family="monospace", verticalalignment="top",
             horizontalalignment="left",
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="0.5", alpha=0.9),
-            zorder=5,
-        )
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="0.5", alpha=0.9), zorder=5)
 
     out_path_yz = output_dir / "compression_sweeps_yz_max_max.png"
     fig2.savefig(out_path_yz, dpi=300, bbox_inches="tight")
