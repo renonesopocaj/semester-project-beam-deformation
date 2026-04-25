@@ -7,7 +7,7 @@ defaults:
   NW: 4 # number of vertices along the direction L (width)
   ND: 4 # number of vertices along the direction L (depth)
   E: 1000.0
-  nu: 0.001
+  nu: 0.3
   rho: 1.0
   eta_m: 0.01
   eta_k: 0.01

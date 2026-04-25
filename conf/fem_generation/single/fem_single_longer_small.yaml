@@ -1,5 +1,5 @@
 # config_single.yaml
-output_root: "./fem_dataset_generation/single"
+output_root: "./fem_dataset_generation/single_longer/small"
 only_json: False
 
 defaults:
@@ -24,14 +24,14 @@ val_fraction: 0.1
 test_fraction: 0.1
 
 # Training ranges — force_x/z are constant at 0 (n=1), only force_y varies.
-# Forces are combined via Cartesian product, so 1 * 10 * 1 = 10 force tuples.
+# Forces are combined via Cartesian product, so 1 * 6 * 1 * 4 * 3 * 3 = 216 force tuples.
 train:
   force_x: { start: 0.0, stop: 0.0, n: 1 }
-  force_y: { start: 0.25, stop: 1.5, n: 10 }
+  force_y: { start: -1.5, stop: 1.5, n: 6 }
   force_z: { start: 0.0, stop: 0.0, n: 1 }
-  lengths: { start: 0.5, stop: 1.0, n: 10 }
-  widths: { start: 0.06, stop: 0.14, n: 10 }
-  depths: { start: 0.1, stop: 0.1, n: 1 }
+  lengths: { start: 1.0, stop: 2.0, n: 4 }
+  widths: { start: 0.06, stop: 0.14, n: 3 }
+  depths: { start: 0.05, stop: 0.15, n: 3 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
@@ -39,22 +39,24 @@ train:
 test_ood_ranges:
   force_x: {}
   force_y:
-    below: { start: -1.5, stop: -0.01 }
-    above: { start: 1.6, stop: 2.0 }
+    below: { start: -2.0, stop: -1.6 }
+    above: { start: 1.6, stop: 1.6 }
   force_z:
-    below: { start: -1.5, stop: -0.25 }
-    above: { start: 0.25, stop: 1.5 }
+    below: { start: -2.0, stop: -1.6 }
+    above: { start: 1.6, stop: 2.0 }
   lengths:
-    below: { start: 0.1, stop: 0.4 }
-    above: { start: 1.1, stop: 1.5 }
+    below: { start: 0.1, stop: 0.9 }
+    above: { start: 2.1, stop: 2.5 }
   widths:
     below: { start: 0.01, stop: 0.05 }
     above: { start: 0.15, stop: 0.4 }
-  depths: {}
+  depths:
+    below: { start: 0.01, stop: 0.04 }
+    above: { start: 0.16, stop: 0.4 }
 
 # trajectories with longer rollout
 selected_trajs:
-  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
-  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
+  selected_test_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
   selected_total_time: 32
   num_steps: 400
