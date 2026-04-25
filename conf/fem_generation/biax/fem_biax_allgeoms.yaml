@@ -27,8 +27,8 @@ test_fraction: 0.1
 # Forces are combined via Cartesian product: 1 x 5 x 5 x 4 x 4 x 3 = 1200
 train:
   force_x: { start: 0, stop: 0, n: 1 }
-  force_y: { start: -1.0, stop: 1.0, n: 5 }
-  force_z: { start: -1.0, stop: 1.0, n: 5 }
+  force_y: { start: -0.9, stop: 1.0, n: 5 }
+  force_z: { start: -0.9, stop: 1.0, n: 5 }
   lengths: { start: 0.05, stop: 1.0, n: 4 }
   widths:  { start: 0.05, stop: 1.0, n: 4 }
   depths: { start: 0.05, stop: 1.0, n: 3 }

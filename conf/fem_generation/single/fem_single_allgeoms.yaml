@@ -39,16 +39,16 @@ train:
 test_ood_ranges:
   force_x: {}
   force_y:
-    below: { start: -1.5, stop: -0.01 }
+    below: { start: -2.0, stop: -1.6 }
     above: { start: 1.6, stop: 2.0 }
   force_z:
     below: { start: -1.5, stop: -0.25 }
     above: { start: 0.25, stop: 1.5 }
   lengths:
-    below: { start: 0.01, stop: 0.05 }
+    below: { start: 0.01, stop: 0.04 }
     above: { start: 1.1, stop: 1.5 }
   widths:
-    below: { start: 0.01, stop: 0.05 }
+    below: { start: 0.01, stop: 0.04 }
     above: { start: 1.1, stop: 1.5 }
   depths:
     below: { start: 0.01, stop: 0.04 }

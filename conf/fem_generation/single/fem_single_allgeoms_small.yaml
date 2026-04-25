@@ -42,8 +42,8 @@ test_ood_ranges:
     below: { start: -2.0, stop: -1.6 }
     above: { start: 1.6, stop: 2.0 }
   force_z:
-    below: { start: -2.0, stop: -1.6 }
-    above: { start: 1.6, stop: 2.0 }
+    below: { start: -1.0, stop: -0.1 }
+    above: { start: 0.1, stop: 1.0 }
   lengths:
     below: { start: 0.01, stop: 0.04 }
     above: { start: 1.1, stop: 1.5 }

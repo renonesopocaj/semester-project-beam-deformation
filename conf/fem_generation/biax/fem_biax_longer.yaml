@@ -46,7 +46,7 @@ test_ood_ranges:
     above: { start: 1.1, stop: 1.5 }
   lengths:
     below: { start: 0.01, stop: 0.04 }
-    above: { start: 1.1, stop: 1.5 }
+    above: { start: 2.1, stop: 2.5 }
   widths:
     below: { start: 0.01, stop: 0.04 }
     above: { start: 0.16, stop: 0.3 }

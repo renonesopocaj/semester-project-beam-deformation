@@ -1,5 +1,5 @@
 # Idea of this config file: 1) f_y, f_z != 0 2) no constraints on geometry 3) a bit more data
-output_root: "./fem_dataset_generation/biax_allgeoms/small"
+output_root: "./fem_dataset_generation/triax_allgeoms/small"
 only_json: False
 
 defaults:
