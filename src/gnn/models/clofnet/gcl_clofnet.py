@@ -285,12 +285,13 @@ class ClofMPBlock(nn.Module):
         # embedding coord feature x_i <-- x_i + 1/N * sum_j m_ij * vectorize(coord_mlp(m_ij))
         coord_xi = self.coord_mlp_forward(coord_xi, edge_index, coord_diff_a_ij, coord_cross_b_ij, coord_vertical_c_ij,
                                           embedded_mij)
+        # Node forward pass
+        h, _ = self.node_model_forward(h, edge_index, embedded_mij)
         # Add velocity to coordinates
         # FIXME: why does the MLP embed only h and not also vel?
         if self.enable_vel:
             coord_xi = coord_xi + self.vel_mlp(h) * vel
         # node feat + add skip connection + layer norm, i.e. h <-- h + phi_h(h, sum_j m_ij)
-        h, _ = self.node_model_forward(h, edge_index, embedded_mij)
         h = residue + h
         h = self.layer_norm_h(h)
         return h, coord_xi, eij_sij_embed

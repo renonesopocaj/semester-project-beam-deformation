@@ -1,0 +1,62 @@
+# config_single.yaml
+output_root: "./fem_dataset_generation/single_allgeoms/large"
+only_json: False
+
+defaults:
+  # NL, NW, ND: fixed int (cells along L, W, D) or ratio: { ratio: r } -> max(1, round(dim * r)).
+  NL: 8
+  NW: 4
+  ND: 4
+  E: 1000.0
+  nu: 0.3
+  rho: 1.0
+  eta_m: 0.01
+  eta_k: 0.01
+  alpha_m: 0.0
+  alpha_f: 0.0
+  total_time: 4.0
+  cutoff_time_factor: 0.2
+  num_steps: 50
+  # Linear system: "mumps" (direct LU) or "krylov" (CG + AMG).
+  linear_solver: krylov
+
+val_fraction: 0.1
+test_fraction: 0.1
+
+# Training ranges — force_x/z are constant at 0 (n=1), only force_y varies.
+# Forces are combined via Cartesian product, so 1 * 10 * 1 * 5 * 5 * 4 = 1000
+train:
+  force_x: { start: 0, stop: 0, n: 1 }
+  force_y: { start: -1.0, stop: 1.0, n: 10 }
+  force_z: { start: 0.0, stop: 0.0, n: 1 }
+  lengths: { start: 0.05, stop: 1.0, n: 5 }
+  widths:  { start: 0.05, stop: 1.0, n: 5 }
+  depths: { start: 0.05, stop: 1.0, n: 4 }
+
+# Out-of-distribution ranges used for test set generation.
+# Each axis can have a "below" and/or "above" OOD sub-range.
+# force_x has no OOD (constant at 0 in both train and test for single direction).
+test_ood_ranges:
+  force_x: {}
+  force_y:
+    below: { start: -1.5, stop: -0.01 }
+    above: { start: 1.6, stop: 2.0 }
+  force_z:
+    below: { start: -1.5, stop: -0.25 }
+    above: { start: 0.25, stop: 1.5 }
+  lengths:
+    below: { start: 0.01, stop: 0.05 }
+    above: { start: 1.1, stop: 1.5 }
+  widths:
+    below: { start: 0.01, stop: 0.05 }
+    above: { start: 1.1, stop: 1.5 }
+  depths:
+    below: { start: 0.01, stop: 0.04 }
+    above: { start: 1.1, stop: 1.5 }
+
+# trajectories with longer rollout
+selected_trajs:
+  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
+  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_total_time: 32
+  num_steps: 400

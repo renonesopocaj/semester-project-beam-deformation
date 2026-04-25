@@ -230,6 +230,9 @@ def run_simulations(config_path, verbose, skip_existing, modes):
 
 
 if __name__ == "__main__":
-    config = "conf/fem_generation/extreme.yaml"
+    # config = "conf/fem_generation/biax/fem_biax_allgeoms_small.yaml"
+    # config = "conf/fem_generation/biax/fem_biax_longer_small.yaml"
+    # config = "conf/fem_generation/single/fem_single_allgeoms_small.yaml"
+    config = "conf/fem_generation/single/fem_single_longer_small.yaml"
     MODES = ("train", "val", "test")
     run_simulations(config, verbose=False, skip_existing=False, modes=MODES)
