@@ -7,10 +7,8 @@ No assertions: prints coefficients, differences, and torch.allclose outcomes.
 """
 
 from pathlib import Path
+from textwrap import wrap
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -66,6 +64,60 @@ def _fmt_sci_scalar(x):
             Printable string.
     """
     return f"{float(x):.2e}"
+
+
+def _wrapped_title(title):
+    """
+    Wrap a long plot title so it stays inside the figure boundary.
+
+    Args:
+        title: str
+            Raw title.
+
+    return:
+        str
+            Wrapped title.
+    """
+    return "\n".join(wrap(title, width=78))
+
+
+def _unit_vector(vec_np):
+    """
+    Normalize a vector for plotting.
+
+    Args:
+        vec_np: numpy.ndarray
+            Shape [3].
+
+    return:
+        numpy.ndarray
+            Shape [3], normalized if non-zero.
+    """
+    norm = float(np.linalg.norm(vec_np))
+    if norm < 1e-15:
+        return vec_np
+    return vec_np / norm
+
+
+def _show_or_close(fig, interactive):
+    """
+    Show figures for interactive script runs, otherwise close them for pytest.
+
+    Args:
+        fig: figure object
+            Figure object.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    if interactive:
+        plt.ion()
+        fig.show()
+        plt.pause(0.001)
+    else:
+        plt.close(fig)
 
 
 def build_beam_lattice(nx, ny, nz, length, width, height):
@@ -268,7 +320,29 @@ def _bbox_scale(points_np):
     return ext
 
 
-def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path):
+def _set_equal_3d_limits(ax, points_np):
+    """
+    Set equal-ish 3D limits including points and arrow endpoints.
+
+    Args:
+        ax: axes object
+            3D axes.
+        points_np: numpy.ndarray
+            Shape [N, 3].
+
+    return:
+        None
+    """
+    lo = points_np.min(axis=0)
+    hi = points_np.max(axis=0)
+    center = 0.5 * (lo + hi)
+    radius = 0.55 * max(float(np.max(hi - lo)), 1e-6)
+    ax.set_xlim(center[0] - radius, center[0] + radius)
+    ax.set_ylim(center[1] - radius, center[1] + radius)
+    ax.set_zlim(center[2] - radius, center[2] + radius)
+
+
+def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path, interactive):
     """
     3D plot: raw nodes i,j,h,k, edges (i,j) vs (h,k), translation arrows for t_vec.
 
@@ -289,6 +363,8 @@ def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path):
             Figure title.
         save_path: pathlib.Path
             PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
 
     return:
         None
@@ -300,30 +376,26 @@ def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path):
     tv = _to_numpy_float_vec(t_vec)
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_title(title)
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
     ax.scatter([xi[0]], [xi[1]], [xi[2]], c="tab:blue", s=60, label="i")
     ax.scatter([xj[0]], [xj[1]], [xj[2]], c="tab:cyan", s=60, label="j")
     ax.scatter([xh[0]], [xh[1]], [xh[2]], c="tab:orange", s=60, label="h")
     ax.scatter([xk[0]], [xk[1]], [xk[2]], c="tab:red", s=60, label="k")
     ax.plot([xi[0], xj[0]], [xi[1], xj[1]], [xi[2], xj[2]], c="tab:blue", linewidth=2, label="edge (i,j)")
     ax.plot([xh[0], xk[0]], [xh[1], xk[1]], [xh[2], xk[2]], c="tab:orange", linewidth=2, label="edge (h,k)")
-    scale = 0.25 * _bbox_scale(np.stack([xi, xj, xh, xk], axis=0))
-    ax.quiver(xi[0], xi[1], xi[2], tv[0], tv[1], tv[2], color="green", arrow_length_ratio=0.15, length=scale,
-              normalize=True, label="t_vec from i")
-    ax.quiver(xj[0], xj[1], xj[2], tv[0], tv[1], tv[2], color="olive", arrow_length_ratio=0.15, length=scale,
-              normalize=True, label="t_vec from j",)
+    ax.quiver(xi[0], xi[1], xi[2], tv[0], tv[1], tv[2], color="green", arrow_length_ratio=0.15, label="t_vec from i")
+    ax.quiver(xj[0], xj[1], xj[2], tv[0], tv[1], tv[2], color="olive", arrow_length_ratio=0.15, label="t_vec from j")
+    _set_equal_3d_limits(ax, np.stack([xi, xj, xh, xk, xi + tv, xj + tv], axis=0))
     ax.legend(loc="upper left", fontsize=8)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
-    if str(matplotlib.get_backend()).lower() != "agg":
-        plt.show()
-    plt.close(fig)
+    _show_or_close(fig, interactive)
 
 
-def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path):
+def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path, interactive):
     """
     3D plot: centered nodes and local frames (a,b,c) at i for edge (i,j) and at h for edge (h,k).
 
@@ -344,6 +416,8 @@ def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path):
             Figure title.
         save_path: pathlib.Path
             PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
 
     return:
         None
@@ -354,41 +428,47 @@ def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path):
     Oh = _to_numpy_float_vec(x_centered[h])
     Oj = _to_numpy_float_vec(x_centered[j])
     Ok = _to_numpy_float_vec(x_centered[k])
-    ai = _to_numpy_float_vec(a_ij)
-    bi = _to_numpy_float_vec(b_ij)
-    ci = _to_numpy_float_vec(c_ij)
-    ah = _to_numpy_float_vec(a_hk)
-    bh = _to_numpy_float_vec(b_hk)
-    ch = _to_numpy_float_vec(c_hk)
+    ai = _unit_vector(_to_numpy_float_vec(a_ij))
+    bi = _unit_vector(_to_numpy_float_vec(b_ij))
+    ci = _unit_vector(_to_numpy_float_vec(c_ij))
+    ah = _unit_vector(_to_numpy_float_vec(a_hk))
+    bh = _unit_vector(_to_numpy_float_vec(b_hk))
+    ch = _unit_vector(_to_numpy_float_vec(c_hk))
     pts = np.stack([Oi, Oj, Oh, Ok], axis=0)
-    scale = 0.2 * _bbox_scale(pts)
+    scale = 0.12 * _bbox_scale(pts)
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_title(title)
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
     ax.scatter([Oi[0]], [Oi[1]], [Oi[2]], c="tab:blue", s=60, label="i")
     ax.scatter([Oj[0]], [Oj[1]], [Oj[2]], c="tab:cyan", s=60, label="j")
     ax.scatter([Oh[0]], [Oh[1]], [Oh[2]], c="tab:orange", s=60, label="h")
     ax.scatter([Ok[0]], [Ok[1]], [Ok[2]], c="tab:red", s=60, label="k")
     ax.plot([Oi[0], Oj[0]], [Oi[1], Oj[1]], [Oi[2], Oj[2]], c="tab:blue", linewidth=1, linestyle="--")
     ax.plot([Oh[0], Ok[0]], [Oh[1], Ok[1]], [Oh[2], Ok[2]], c="tab:orange", linewidth=1, linestyle="--")
-    for vec, col, lab in ((ai, "r", "a_ij"), (bi, "g", "b_ij"), (ci, "b", "c_ij")):
-        ax.quiver(Oi[0], Oi[1], Oi[2], vec[0], vec[1], vec[2], color=col, arrow_length_ratio=0.12, length=scale,
-                  normalize=True, label=lab)
-    for vec, col, lab in ((ah, "darkred", "a_hk"), (bh, "darkgreen", "b_hk"), (ch, "navy", "c_hk")):
-        ax.quiver(Oh[0], Oh[1], Oh[2], vec[0], vec[1], vec[2], color=col, arrow_length_ratio=0.12, length=scale,
-                  normalize=True, label=lab,)
+    for n, vec in enumerate((ai, bi, ci)):
+        label = "frame (i,j): a,b,c" if n == 0 else None
+        vec_scaled = vec * scale
+        ax.quiver(Oi[0], Oi[1], Oi[2], vec_scaled[0], vec_scaled[1], vec_scaled[2], color="tab:blue",
+                  arrow_length_ratio=0.12, label=label)
+    for n, vec in enumerate((ah, bh, ch)):
+        label = "frame (h,k): a,b,c" if n == 0 else None
+        vec_scaled = vec * scale
+        ax.quiver(Oh[0], Oh[1], Oh[2], vec_scaled[0], vec_scaled[1], vec_scaled[2], color="tab:orange",
+                  arrow_length_ratio=0.12, label=label)
+    endpoints = [Oi, Oj, Oh, Ok]
+    endpoints.extend([Oi + vec * scale for vec in (ai, bi, ci)])
+    endpoints.extend([Oh + vec * scale for vec in (ah, bh, ch)])
+    _set_equal_3d_limits(ax, np.stack(endpoints, axis=0))
     ax.legend(loc="upper left", fontsize=7, ncol=2)
     ax.set_xlabel("x (centered)")
     ax.set_ylabel("y (centered)")
     ax.set_zlabel("z (centered)")
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
-    if str(matplotlib.get_backend()).lower() != "agg":
-        plt.show()
-    plt.close(fig)
+    _show_or_close(fig, interactive)
 
 
-def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_slug):
+def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_slug, interactive):
     """
     Run one diagnostic case: print four edges, three comparisons, and two 3D figures.
 
@@ -417,13 +497,14 @@ def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_
             Directory for PNG outputs.
         case_slug: str
             Filename prefix, e.g. case1 or case2.
+        interactive: bool
+            Whether to show figures interactively.
     """
     output_dir = Path(output_dir)
     x = centralize_positions(x_raw)
     err_map_jk = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec))
     print("\n" + "=" * 72)
     print(title)
-    print("\n" + "indices i, j, h, k:", i, j, h, k)
     print("indices i, j, h, k:", i, j, h, k)
     print("x_raw[i]:", _fmt_sci(x_raw[i]))
     print("x_raw[j]:", _fmt_sci(x_raw[j]))
@@ -451,19 +532,21 @@ def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_
     print_comparison("full six coeffs edge (j,i) vs edge (k,h)", six_ji, six_kh, rtol, atol)
     out_a = output_dir / f"{case_slug}_nodes_edges_tvec.png"
     out_b = output_dir / f"{case_slug}_nodes_frames.png"
-    _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title + " — raw nodes, edges, t_vec", out_a)
-    _plot_nodes_frames(x, i, j, h, k, eps, title + " — centered nodes + frames (i,j) and (h,k)", out_b,)
+    _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title + " - raw nodes, edges, t_vec", out_a, interactive)
+    _plot_nodes_frames(x, i, j, h, k, eps, title + " - centered nodes + frames (i,j) and (h,k)", out_b, interactive)
     print("saved:", out_a)
     print("saved:", out_b)
 
 
-def main(output_dir):
+def main(output_dir, interactive):
     """
     Build lattice, run translation case and same-length case, print diagnostics, write plots.
 
     Args:
         output_dir: pathlib.Path
             Directory for PNG outputs (created if missing).
+        interactive: bool
+            Whether to show figures interactively.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -477,17 +560,17 @@ def main(output_dir):
     width = 1.0
     height = 0.2
     x_raw = build_beam_lattice(nx, ny, nz, length, width, height)
-    iy0 = 1
+    iy0 = 0
     iz0 = 1
     i = lattice_index(0, iy0, iz0, nx, ny)
     j = lattice_index(1, iy0, iz0, nx, ny)
-    h = lattice_index(1, iy0, iz0, nx, ny)
-    k = lattice_index(2, iy0, iz0, nx, ny)
+    h = lattice_index(0, iy0 + 1, iz0, nx, ny)
+    k = lattice_index(1, iy0 + 1, iz0, nx, ny)
     t_vec_case1 = x_raw[h] - x_raw[i]
     err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec_case1))
     err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec_case1))
-    run_case("Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).",
-        x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1")
+    run_case("Case 1: (h,k) is a pure translation of (i,j), with four distinct nodes i, j, h, k.",
+        x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1", interactive)
     print("sanity Case1: ||x_h - (x_i + t)|| raw:", _fmt_sci_scalar(err_h), "||x_k - (x_j + t)|| raw:",
           _fmt_sci_scalar(err_k))
     i2 = i
@@ -500,7 +583,10 @@ def main(output_dir):
         print("WARNING Case 2 setup: edge lengths differ:", _fmt_sci_scalar(len_ij), _fmt_sci_scalar(len_hk))
     t_vec_case2 = x_raw[h2] - x_raw[i2]
     run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).",
-        x_raw, i2, j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2",)
+        x_raw, i2, j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2", interactive)
+    if interactive:
+        print("Interactive plots are open. Close the figure windows to finish the script.")
+        plt.show(block=True)
 
 
 def test_scalarization_diagnostic():
@@ -508,8 +594,8 @@ def test_scalarization_diagnostic():
     Pytest entry: run main so `pytest -s` shows prints.
     """
     out = Path.cwd() / "scalarization_clofnet_plots"
-    main(out)
+    main(out, False)
 
 
 if __name__ == "__main__":
-    main(Path.cwd() / "scalarization_clofnet_plots")
+    main(Path.cwd() / "scalarization_clofnet_plots", True)
