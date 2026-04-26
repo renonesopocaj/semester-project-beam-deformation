@@ -308,32 +308,10 @@ def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path):
     ax.plot([xi[0], xj[0]], [xi[1], xj[1]], [xi[2], xj[2]], c="tab:blue", linewidth=2, label="edge (i,j)")
     ax.plot([xh[0], xk[0]], [xh[1], xk[1]], [xh[2], xk[2]], c="tab:orange", linewidth=2, label="edge (h,k)")
     scale = 0.25 * _bbox_scale(np.stack([xi, xj, xh, xk], axis=0))
-    ax.quiver(
-        xi[0],
-        xi[1],
-        xi[2],
-        tv[0],
-        tv[1],
-        tv[2],
-        color="green",
-        arrow_length_ratio=0.15,
-        length=scale,
-        normalize=True,
-        label="t_vec from i",
-    )
-    ax.quiver(
-        xj[0],
-        xj[1],
-        xj[2],
-        tv[0],
-        tv[1],
-        tv[2],
-        color="olive",
-        arrow_length_ratio=0.15,
-        length=scale,
-        normalize=True,
-        label="t_vec from j",
-    )
+    ax.quiver(xi[0], xi[1], xi[2], tv[0], tv[1], tv[2], color="green", arrow_length_ratio=0.15, length=scale,
+              normalize=True, label="t_vec from i")
+    ax.quiver(xj[0], xj[1], xj[2], tv[0], tv[1], tv[2], color="olive", arrow_length_ratio=0.15, length=scale,
+              normalize=True, label="t_vec from j",)
     ax.legend(loc="upper left", fontsize=8)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
@@ -394,33 +372,11 @@ def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path):
     ax.plot([Oi[0], Oj[0]], [Oi[1], Oj[1]], [Oi[2], Oj[2]], c="tab:blue", linewidth=1, linestyle="--")
     ax.plot([Oh[0], Ok[0]], [Oh[1], Ok[1]], [Oh[2], Ok[2]], c="tab:orange", linewidth=1, linestyle="--")
     for vec, col, lab in ((ai, "r", "a_ij"), (bi, "g", "b_ij"), (ci, "b", "c_ij")):
-        ax.quiver(
-            Oi[0],
-            Oi[1],
-            Oi[2],
-            vec[0],
-            vec[1],
-            vec[2],
-            color=col,
-            arrow_length_ratio=0.12,
-            length=scale,
-            normalize=True,
-            label=lab,
-        )
+        ax.quiver(Oi[0], Oi[1], Oi[2], vec[0], vec[1], vec[2], color=col, arrow_length_ratio=0.12, length=scale,
+                  normalize=True, label=lab)
     for vec, col, lab in ((ah, "darkred", "a_hk"), (bh, "darkgreen", "b_hk"), (ch, "navy", "c_hk")):
-        ax.quiver(
-            Oh[0],
-            Oh[1],
-            Oh[2],
-            vec[0],
-            vec[1],
-            vec[2],
-            color=col,
-            arrow_length_ratio=0.12,
-            length=scale,
-            normalize=True,
-            label=lab,
-        )
+        ax.quiver(Oh[0], Oh[1], Oh[2], vec[0], vec[1], vec[2], color=col, arrow_length_ratio=0.12, length=scale,
+                  normalize=True, label=lab,)
     ax.legend(loc="upper left", fontsize=7, ncol=2)
     ax.set_xlabel("x (centered)")
     ax.set_ylabel("y (centered)")
@@ -495,26 +451,8 @@ def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_
     print_comparison("full six coeffs edge (j,i) vs edge (k,h)", six_ji, six_kh, rtol, atol)
     out_a = output_dir / f"{case_slug}_nodes_edges_tvec.png"
     out_b = output_dir / f"{case_slug}_nodes_frames.png"
-    _plot_nodes_edges_tvec(
-        x_raw,
-        i,
-        j,
-        h,
-        k,
-        t_vec,
-        title + " — raw nodes, edges, t_vec",
-        out_a,
-    )
-    _plot_nodes_frames(
-        x,
-        i,
-        j,
-        h,
-        k,
-        eps,
-        title + " — centered nodes + frames (i,j) and (h,k)",
-        out_b,
-    )
+    _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title + " — raw nodes, edges, t_vec", out_a)
+    _plot_nodes_frames(x, i, j, h, k, eps, title + " — centered nodes + frames (i,j) and (h,k)", out_b,)
     print("saved:", out_a)
     print("saved:", out_b)
 
@@ -548,26 +486,10 @@ def main(output_dir):
     t_vec_case1 = x_raw[h] - x_raw[i]
     err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec_case1))
     err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec_case1))
-    run_case(
-        "Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).",
-        x_raw,
-        i,
-        j,
-        h,
-        k,
-        t_vec_case1,
-        eps,
-        rtol,
-        atol,
-        output_dir,
-        "case1",
-    )
-    print(
-        "sanity Case1: ||x_h - (x_i + t)|| raw:",
-        _fmt_sci_scalar(err_h),
-        "||x_k - (x_j + t)|| raw:",
-        _fmt_sci_scalar(err_k),
-    )
+    run_case("Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).",
+        x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1")
+    print("sanity Case1: ||x_h - (x_i + t)|| raw:", _fmt_sci_scalar(err_h), "||x_k - (x_j + t)|| raw:",
+          _fmt_sci_scalar(err_k))
     i2 = i
     j2 = j
     h2 = lattice_index(2, 0, 0, nx, ny)
@@ -575,26 +497,10 @@ def main(output_dir):
     len_ij = torch.linalg.norm(x_raw[i2] - x_raw[j2])
     len_hk = torch.linalg.norm(x_raw[h2] - x_raw[k2])
     if not torch.isclose(len_ij, len_hk, rtol=rtol, atol=atol):
-        print(
-            "WARNING Case 2 setup: edge lengths differ:",
-            _fmt_sci_scalar(len_ij),
-            _fmt_sci_scalar(len_hk),
-        )
+        print("WARNING Case 2 setup: edge lengths differ:", _fmt_sci_scalar(len_ij), _fmt_sci_scalar(len_hk))
     t_vec_case2 = x_raw[h2] - x_raw[i2]
-    run_case(
-        "Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).",
-        x_raw,
-        i2,
-        j2,
-        h2,
-        k2,
-        t_vec_case2,
-        eps,
-        rtol,
-        atol,
-        output_dir,
-        "case2",
-    )
+    run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).",
+        x_raw, i2, j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2",)
 
 
 def test_scalarization_diagnostic():
