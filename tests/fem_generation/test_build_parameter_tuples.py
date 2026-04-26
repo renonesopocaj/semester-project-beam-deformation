@@ -4,10 +4,14 @@ test_build_parameter_tuples.py
 Unittests for split semantics in build_parameter_tuples (module pydocs) via build_all_splits.
 Covers forces and geometry (lengths, widths, depths): val in-range off-grid, test OOD buckets,
 per-axis OOD presence when configured, and constant train axes (excluding the injected (0,0,0) test row for forces).
+Also covers Hydra-style resolution lists: validation, round-robin mesh assignment, and trajectory_params.json fields.
 """
 
+import json
+import tempfile
 import unittest
 from itertools import product
+from pathlib import Path
 
 from src.fem_generation.build_parameter_tuples import (
     DECIMALS,
@@ -21,6 +25,9 @@ from src.fem_generation.build_parameter_tuples import (
     _train_axis_values,
     _train_count,
     _train_ranges,
+    _build_trajectory_params_json,
+    _mesh_cells_for_trajectory,
+    _normalize_cfg_resolutions,
     build_all_splits,
 )
 
@@ -438,6 +445,89 @@ class TestConstantTrainAxes(unittest.TestCase):
         for combo in splits["train"] + splits["val"] + splits["test"]:
             self.assertAlmostEqual(_feature_from_combo(combo, "widths"), 0.03, places=8)
             self.assertAlmostEqual(_feature_from_combo(combo, "depths"), 0.09, places=8)
+
+
+class TestResolutionMesh(unittest.TestCase):
+    """
+    Tests that resolution.resolution is validated, mesh triples are chosen round-robin when configured,
+    and trajectory_params.json records NL, NW, ND and resolution for each trajectory.
+    """
+
+    def test_normalize_cfg_resolutions_accepts_default_shape(self):
+        """
+        Informal spec: a single [NL, NW, ND] triple inside a one-element list normalizes to three positive ints.
+        """
+        got = _normalize_cfg_resolutions([[8, 4, 4]])
+        self.assertEqual(got, [[8, 4, 4]])
+
+    def test_normalize_cfg_resolutions_rejects_non_triple(self):
+        """
+        Informal spec: each resolution entry must have exactly three components or validation raises.
+        """
+        with self.assertRaises(ValueError):
+            _normalize_cfg_resolutions([[8, 4]])
+
+    def test_mesh_cells_round_robin_without_changing_geometry(self):
+        """
+        Informal spec: with multiple resolution triples, trajectory index i uses resolutions[i % n] for fixed L,W,D.
+        """
+        cfg = {"resolutions": [[1, 2, 3], [4, 5, 6]]}
+        defaults = {"NL": 99, "NW": 99, "ND": 99}
+        L, W, D = 0.7, 0.05, 0.05
+        self.assertEqual(_mesh_cells_for_trajectory(cfg, defaults, 0, L, W, D), (1, 2, 3))
+        self.assertEqual(_mesh_cells_for_trajectory(cfg, defaults, 1, L, W, D), (4, 5, 6))
+        self.assertEqual(_mesh_cells_for_trajectory(cfg, defaults, 2, L, W, D), (1, 2, 3))
+
+    def test_mesh_cells_falls_back_to_defaults_when_no_resolutions(self):
+        """
+        Informal spec: legacy flat configs without cfg['resolutions'] still resolve NL,NW,ND from defaults only.
+        """
+        cfg = {}
+        defaults = {"NL": 8, "NW": 4, "ND": 4}
+        L, W, D = 0.7, 0.05, 0.05
+        self.assertEqual(_mesh_cells_for_trajectory(cfg, defaults, 0, L, W, D), (8, 4, 4))
+
+    def test_trajectory_params_json_includes_resolution_per_file(self):
+        """
+        Informal spec: written trajectory_params.json entries include NL, NW, ND and a resolution list
+        consistent with round-robin assignment for the trajectory index.
+        """
+        cfg_base = _cfg_fy_only()
+        defaults = {
+            "E": 1000.0,
+            "nu": 0.3,
+            "rho": 1.0,
+            "eta_m": 0.01,
+            "eta_k": 0.01,
+            "alpha_m": 0.0,
+            "alpha_f": 0.0,
+            "total_time": 4.0,
+            "cutoff_time_factor": 0.2,
+            "num_steps": 50,
+            "linear_solver": "krylov",
+            "NL": 8,
+            "NW": 4,
+            "ND": 4,
+        }
+        cfg = dict(cfg_base)
+        cfg["resolutions"] = [[8, 4, 4], [9, 9, 9]]
+        combos = [
+            ((0.0, -1.0, 0.0), 0.7, 0.05, 0.05),
+            ((0.0, 1.0, 0.0), 0.7, 0.05, 0.05),
+        ]
+        train_ranges = _train_ranges(cfg)
+        with tempfile.TemporaryDirectory() as tmp:
+            split_dir = Path(tmp) / "train"
+            _build_trajectory_params_json(combos, defaults, split_dir, train_ranges, cfg)
+            data = json.loads((split_dir / "trajectory_params.json").read_text())
+        self.assertEqual(len(data), 2)
+        keys = list(data.keys())
+        for i, key in enumerate(keys):
+            entry = data[key]
+            nl, nw, nd = entry["NL"], entry["NW"], entry["ND"]
+            self.assertEqual(entry["resolution"], [nl, nw, nd])
+            exp = cfg["resolutions"][i % len(cfg["resolutions"])]
+            self.assertEqual([nl, nw, nd], exp)
 
 
 if __name__ == "__main__":
