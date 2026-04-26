@@ -1,8 +1,8 @@
 # Grid counts n only (matches former *_large.yaml without _small suffix). Selected trajectories: large set.
 name: medium
 selected_trajs:
-  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
-  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_validation_trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+  selected_test_trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
   selected_total_time: 32
   num_steps: 400
 n_by_combo:
