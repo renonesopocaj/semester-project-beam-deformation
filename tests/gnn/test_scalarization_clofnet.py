@@ -468,9 +468,70 @@ def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path, interactiv
     _show_or_close(fig, interactive)
 
 
+def _plot_frames_at_origin(x_centered, i, j, h, k, eps, title, save_path, interactive):
+    """
+    3D plot: unit frame basis vectors for (i,j) then (h,k), drawn from the global origin.
+
+    Each arrow runs from (0,0,0) to the tip of a_ij, b_ij, c_ij (first color) then a_hk, b_hk, c_hk (second color).
+
+    Args:
+        x_centered: torch.Tensor
+            Centered positions [N, 3].
+        i: int
+            Source index for edge (i,j).
+        j: int
+            Target index for edge (i,j).
+        h: int
+            Source index for edge (h,k).
+        k: int
+            Target index for edge (h,k).
+        eps: float
+            Stability epsilon passed to frame_and_coeffs.
+        title: str
+            Figure title.
+        save_path: pathlib.Path
+            PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    a_ij, b_ij, c_ij, _, _ = frame_and_coeffs(x_centered, i, j, eps)
+    a_hk, b_hk, c_hk, _, _ = frame_and_coeffs(x_centered, h, k, eps)
+    ai = _unit_vector(_to_numpy_float_vec(a_ij))
+    bi = _unit_vector(_to_numpy_float_vec(b_ij))
+    ci = _unit_vector(_to_numpy_float_vec(c_ij))
+    ah = _unit_vector(_to_numpy_float_vec(a_hk))
+    bh = _unit_vector(_to_numpy_float_vec(b_hk))
+    ch = _unit_vector(_to_numpy_float_vec(c_hk))
+    o = np.zeros(3, dtype=np.float64)
+    tips = np.stack([ai, bi, ci, ah, bh, ch], axis=0)
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
+    ax.scatter([0.0], [0.0], [0.0], c="black", s=40, label="origin")
+    color_ij = "tab:blue"
+    color_hk = "tab:orange"
+    for n, vec in enumerate((ai, bi, ci)):
+        lab = ("a_ij", "b_ij", "c_ij")[n]
+        ax.quiver(o[0], o[1], o[2], vec[0], vec[1], vec[2], color=color_ij, arrow_length_ratio=0.12, label=lab)
+    for n, vec in enumerate((ah, bh, ch)):
+        lab = ("a_hk", "b_hk", "c_hk")[n]
+        ax.quiver(o[0], o[1], o[2], vec[0], vec[1], vec[2], color=color_hk, arrow_length_ratio=0.12, label=lab)
+    _set_equal_3d_limits(ax, np.vstack([o.reshape(1, 3), tips]))
+    ax.legend(loc="upper left", fontsize=7, ncol=2)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    _show_or_close(fig, interactive)
+
+
 def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_slug, interactive):
     """
-    Run one diagnostic case: print four edges, three comparisons, and two 3D figures.
+    Run one diagnostic case: print four edges, three comparisons, and three 3D figures.
 
     Args:
         title: str
@@ -532,10 +593,23 @@ def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_
     print_comparison("full six coeffs edge (j,i) vs edge (k,h)", six_ji, six_kh, rtol, atol)
     out_a = output_dir / f"{case_slug}_nodes_edges_tvec.png"
     out_b = output_dir / f"{case_slug}_nodes_frames.png"
+    out_c = output_dir / f"{case_slug}_frames_origin.png"
     _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title + " - raw nodes, edges, t_vec", out_a, interactive)
     _plot_nodes_frames(x, i, j, h, k, eps, title + " - centered nodes + frames (i,j) and (h,k)", out_b, interactive)
+    _plot_frames_at_origin(
+        x,
+        i,
+        j,
+        h,
+        k,
+        eps,
+        title + " - local frame bases at origin (a_ij,b_ij,c_ij then a_hk,b_hk,c_hk)",
+        out_c,
+        interactive,
+    )
     print("saved:", out_a)
     print("saved:", out_b)
+    print("saved:", out_c)
 
 
 def main(output_dir, interactive):
