@@ -16,7 +16,8 @@ class Encoder(torch.nn.Module):
     Encoder for making an initial embedding of node and edge features, made by 2 mlps (1 MLP for each).
     """
 
-    def __init__(self, node_channels, edge_channels, latent_and_out_size, layer_norm_enable, num_layers_encoder):
+    def __init__(self, node_channels, edge_channels, latent_and_out_size, layer_norm_enable, num_layers_encoder,
+                 dropout):
         super(Encoder, self).__init__()
         # [N, C_n] --> [N, H]
         self.edge_encoder = build_mlp_d(in_size=edge_channels,
@@ -24,14 +25,16 @@ class Encoder(torch.nn.Module):
                                         out_size=latent_and_out_size,
                                         num_layers=num_layers_encoder,
                                         layer_norm=layer_norm_enable,
-                                        use_sigmoid=False, use_softmax=False)
+                                        use_sigmoid=False, use_softmax=False,
+                                        dropout=dropout)
         # [E, C_e] --> [E, H]
         self.node_encoder = build_mlp_d(in_size=node_channels,
                                         hidden_size=latent_and_out_size,
                                         out_size=latent_and_out_size,
                                         num_layers=num_layers_encoder,
                                         layer_norm=layer_norm_enable,
-                                        use_sigmoid=False, use_softmax=False)
+                                        use_sigmoid=False, use_softmax=False,
+                                        dropout=dropout)
 
     def forward(self, node_features, edge_features):
         node_embedding = self.node_encoder(node_features)
@@ -49,7 +52,8 @@ class GraphNetBlock(torch.nn.Module):
     3. Update node embeddings
     """
 
-    def __init__(self, in_size_edge_MLP, in_size_node_MLP, latent_and_out_size, num_layers_graphnetblock, enable_layer_norm):
+    def __init__(self, in_size_edge_MLP, in_size_node_MLP, latent_and_out_size, num_layers_graphnetblock,
+                 enable_layer_norm, dropout):
         super(GraphNetBlock, self).__init__()
         self._latent_size = latent_and_out_size
         # Edge MLP: updates edge embeddings [IN, HIDD] --> [HIDD, HIDD]
@@ -58,13 +62,15 @@ class GraphNetBlock(torch.nn.Module):
                                     out_size=latent_and_out_size,
                                     num_layers=num_layers_graphnetblock,
                                     layer_norm=enable_layer_norm,
-                                    use_sigmoid=False, use_softmax=False)
+                                    use_sigmoid=False, use_softmax=False,
+                                    dropout=dropout)
         # Node MLP: updates node embeddings [IN, HIDD] --> [HIDD, HIDD]
         self.node_net = build_mlp_d(in_size=in_size_node_MLP, hidden_size=latent_and_out_size,
                                     out_size=latent_and_out_size,
                                     num_layers=num_layers_graphnetblock,
                                     layer_norm=enable_layer_norm,
-                                    use_sigmoid=False, use_softmax=False)
+                                    use_sigmoid=False, use_softmax=False,
+                                    dropout=dropout)
 
     def forward(self, edge_index, node_embedding, edge_embedding):
         """
@@ -105,16 +111,16 @@ class Decoder(torch.nn.Module):
     Final decoder to predict acceleration and von Mises stress. Uses 2 heads.
     """
 
-    def __init__(self, in_and_latent_size, enable_layer_norm, num_layers_heads):
+    def __init__(self, in_and_latent_size, enable_layer_norm, num_layers_heads, dropout):
         super(Decoder, self).__init__()
         self.acc_decoder = build_mlp_d(in_size=in_and_latent_size, hidden_size=in_and_latent_size, out_size=3,
                                        num_layers=num_layers_heads,
                                        layer_norm=enable_layer_norm,
-                                       use_sigmoid=False, use_softmax=False)
+                                       use_sigmoid=False, use_softmax=False, dropout=dropout)
         self.von_mises_decoder = build_mlp_d(in_size=in_and_latent_size, hidden_size=in_and_latent_size, out_size=1,
                                              num_layers=num_layers_heads,
                                              layer_norm=enable_layer_norm,
-                                             use_sigmoid=False, use_softmax=False)
+                                             use_sigmoid=False, use_softmax=False, dropout=dropout)
 
     def forward(self, node_embedding):
         """
@@ -144,7 +150,8 @@ class MeshGraphNet(nn.Module):
 
     def __init__(self, node_channels, edge_channels, encoder_latent_size, encoder_decoder_latent_size,
                  processor_latent_size, num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder,
-                 layer_norm_enable_decoder, layer_norm_enable_processor, num_layers_heads, num_layers_encoder):
+                 layer_norm_enable_decoder, layer_norm_enable_processor, num_layers_heads, num_layers_encoder,
+                 dropout_encoder, dropout_head, dropout_processor):
         """
         Args:
             node_channels: int
@@ -176,17 +183,18 @@ class MeshGraphNet(nn.Module):
         # Encoder: takes nodes [N, C_n] --> [N, H] and edges [E, C_e] --> [E, H]
         self.encoder = Encoder(node_channels=node_channels, edge_channels=edge_channels,
                                latent_and_out_size=encoder_latent_size, layer_norm_enable=layer_norm_enable_encoder,
-                               num_layers_encoder=num_layers_encoder)
+                               num_layers_encoder=num_layers_encoder, dropout=dropout_encoder)
         # L Message-passing layers: each one takes in input [N, 2H] --> [N, H] and edges [E, 3H] --> [E, H]
         self.processer_list = nn.ModuleList([GraphNetBlock(in_size_edge_MLP=3 * encoder_decoder_latent_size,
                                                            in_size_node_MLP=2 * encoder_decoder_latent_size,
                                                            latent_and_out_size=encoder_decoder_latent_size,
                                                            num_layers_graphnetblock=num_layers_graphnetblock,
-                                                           enable_layer_norm=layer_norm_enable_processor)
+                                                           enable_layer_norm=layer_norm_enable_processor,
+                                                           dropout=dropout_processor)
                                              for _ in range(num_msgs)])
         # Decoder: takes in input [N, H] and outputs [N, 4] (acceleration and von Mises stress)
         self.decoder = Decoder(in_and_latent_size=processor_latent_size, enable_layer_norm=layer_norm_enable_decoder,
-                               num_layers_heads=num_layers_heads)
+                               num_layers_heads=num_layers_heads, dropout=dropout_head)
 
     def forward(self, ingraph):
         """

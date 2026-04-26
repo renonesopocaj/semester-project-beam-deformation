@@ -1,4 +1,6 @@
 """
+test_magnet_forward.py
+
 Smoke tests for MAGNet forward pass (PyG graph in, [N, 4] predictions out).
 """
 
@@ -109,19 +111,8 @@ def test_magnet_single_graph_no_edge_attr():
     x = torch.randn(num_nodes, node_channels)
     edge_index = _ring_edge_index(num_nodes)
     graph = Data(x=x, edge_index=edge_index)
-    model = MAGNet(
-        node_channels,
-        edge_channels,
-        output_channels,
-        hidden_channels,
-        num_poolings,
-        layers_per_level,
-        window_size,
-        pool_seed,
-        pool_aggr,
-        activation,
-        graph,
-    )
+    model = MAGNet(node_channels, edge_channels, output_channels, hidden_channels, num_poolings, layers_per_level,
+                   window_size, pool_seed, pool_aggr, activation, graph,)
     model.eval()
     with torch.no_grad():
         pred = model(graph)
@@ -131,11 +122,6 @@ def test_magnet_single_graph_no_edge_attr():
 def test_magnet_batched_fixed_topology():
     """
     Batched fixed-topology graphs: output rows match total nodes; last dim is 4.
-
-    Args:
-        None
-    return:
-        None
     """
     node_channels = 6
     edge_channels = 0
@@ -151,26 +137,10 @@ def test_magnet_batched_fixed_topology():
     graphs = []
     for n in sizes:
         edge_index = _ring_edge_index(n)
-        graphs.append(
-            Data(
-                x=torch.randn(n, node_channels),
-                edge_index=edge_index,
-            )
-        )
+        graphs.append(Data(x=torch.randn(n, node_channels), edge_index=edge_index,))
     batch = Batch.from_data_list(graphs)
-    model = MAGNet(
-        node_channels,
-        edge_channels,
-        output_channels,
-        hidden_channels,
-        num_poolings,
-        layers_per_level,
-        window_size,
-        pool_seed,
-        pool_aggr,
-        activation,
-        batch,
-    )
+    model = MAGNet(node_channels, edge_channels, output_channels, hidden_channels, num_poolings,
+        layers_per_level, window_size, pool_seed, pool_aggr, activation, batch,)
     model.eval()
     with torch.no_grad():
         pred = model(batch)
@@ -180,11 +150,6 @@ def test_magnet_batched_fixed_topology():
 def test_magnet_has_pool_unpool_layers():
     """
     MAGNet builds the graph U-Net pool and unpool hierarchy.
-
-    Args:
-        None
-    return:
-        None
     """
     num_nodes = 16
     node_channels = 3
@@ -197,23 +162,9 @@ def test_magnet_has_pool_unpool_layers():
     pool_seed = 1
     pool_aggr = "max"
     activation = "leakyrelu"
-    graph = Data(
-        x=torch.randn(num_nodes, node_channels),
-        edge_index=_ring_edge_index(num_nodes),
-    )
-    model = MAGNet(
-        node_channels,
-        edge_channels,
-        output_channels,
-        hidden_channels,
-        num_poolings,
-        layers_per_level,
-        window_size,
-        pool_seed,
-        pool_aggr,
-        activation,
-        graph,
-    )
+    graph = Data(x=torch.randn(num_nodes, node_channels), edge_index=_ring_edge_index(num_nodes))
+    model = MAGNet(node_channels, edge_channels, output_channels, hidden_channels, num_poolings, layers_per_level,
+                   window_size, pool_seed, pool_aggr, activation, graph)
     assert len(model.pool_layers) == num_poolings
     assert len(model.unpool_layers) == num_poolings
 
@@ -221,11 +172,6 @@ def test_magnet_has_pool_unpool_layers():
 def test_magnet_rejects_variable_size_batch():
     """
     True MAg kernels are node-specific, so one model expects one fixed graph topology.
-
-    Args:
-        None
-    return:
-        None
     """
     node_channels = 3
     graph = Data(x=torch.randn(12, node_channels), edge_index=_ring_edge_index(12))

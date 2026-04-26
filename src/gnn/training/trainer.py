@@ -16,7 +16,7 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
-from src.gnn.misc_helpers.misc import compute_mean_relative_mae, human_readable_storage, module_param_and_buffer_storage_bytes
+from src.gnn.misc_helpers.misc import compute_mean_relative_mae, relative_mae_sum_and_count, human_readable_storage, module_param_and_buffer_storage_bytes
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
@@ -383,7 +383,48 @@ class LitModule(L.LightningModule):
             metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target)}
         return metrics
 
-    def _log_metrics(self, metrics, prog_bar_keys, batch_size, sync_dist_keys):
+    def _noroll_eval_metric_weights(self, pred, metric_names):
+        """
+        Lightning uses logged value times weight summed over steps, divided by sum of weights,
+        so each weight must be the tensor numel the corresponding batch scalar is a mean over.
+
+        Args:
+            pred: torch.Tensor
+                Model output `(num_nodes, 4)` for the batch.
+            metric_names: list[str]
+                Keys present in the metrics dict being logged.
+        return: dict
+            metric_name -> positive int weight (element count).
+        """
+        weights = {}
+        for name in metric_names:
+            if name.endswith("overall_relative_mae"):
+                weights[name] = int(pred.numel())
+            elif name.endswith("acc_all_rel_mae") or name.endswith("acc_all_loss"):
+                weights[name] = int(pred[:, 0:3].numel())
+            elif name.endswith("stress_rel_mae") or name.endswith("stress_loss"):
+                weights[name] = int(pred[:, 3].numel())
+            else:
+                raise ValueError("Unknown metric for node-weighted logging: %s" % name)
+        return weights
+
+    def _train_loss_log_weight(self, batch, pred):
+        """
+        Weight for epoch aggregation of train/loss (scalar mean over tensor elements per batch when not exp_mises).
+
+        Args:
+            batch: Data
+                PyG batch.
+            pred: torch.Tensor
+                Model predictions.
+        return: int
+            Element count for mean losses, or num_graphs when exp_mises mixes non-comparable means.
+        """
+        if self.exp_mises:
+            return int(batch.num_graphs)
+        return int(pred.numel())
+
+    def _log_metrics(self, metrics, prog_bar_keys, metric_weights, sync_dist_keys):
         """
         Logs metrics one by one so only selected keys are synchronized across ranks.
         Used by all steps: validation_step, train_step, test_step to log the final metrics collected for that epoch.
@@ -393,8 +434,8 @@ class LitModule(L.LightningModule):
                 Dictionary of tensor metrics.
             prog_bar_keys: list[str]
                 Metrics that should appear in the progress bar.
-            batch_size: int
-                Batch size for Lightning aggregation.
+            metric_weights: dict
+                Maps each key in metrics to a positive int (denominator of that batch's logged mean).
             sync_dist_keys: list[str]
                 Metric names that must be synchronized across ranks.
         """
@@ -403,12 +444,12 @@ class LitModule(L.LightningModule):
         sync_dist_key_set = set(sync_dist_keys)
         if has_logger:
             self.log("epoch", float(self._current_wandb_epoch()), on_step=False, on_epoch=True,
-                     prog_bar=False, logger=True, batch_size=batch_size, sync_dist=False, rank_zero_only=True)
+                     prog_bar=False, logger=True, batch_size=1, sync_dist=False, rank_zero_only=True)
 
         for metric_name, metric_value in metrics.items():
             self.log(metric_name, metric_value, on_step=False, on_epoch=True,
                      prog_bar=metric_name in prog_bar_key_set,
-                     logger=has_logger, batch_size=batch_size,
+                     logger=has_logger, batch_size=metric_weights[metric_name],
                      sync_dist=metric_name in sync_dist_key_set)
 
     def training_step(self, batch, batch_idx):
@@ -427,8 +468,8 @@ class LitModule(L.LightningModule):
         target = batch.y
         # Metrics collected: only train loss (for now)
         metrics = self._collect_train_batch_metrics_noroll(pred, target, batch)
-        # Log metrics collected
-        self._log_metrics(metrics, prog_bar_keys=["train/loss"], batch_size=batch.num_graphs,
+        lw = self._train_loss_log_weight(batch, pred)
+        self._log_metrics(metrics, prog_bar_keys=["train/loss"], metric_weights={"train/loss": lw},
                           sync_dist_keys=["train/loss"])
         # on_train_epoch_end
         # 1. Steps the custom LR scheduler using the epoch loss
@@ -479,7 +520,8 @@ class LitModule(L.LightningModule):
         pred = self(batch)
         target = batch.y
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
-        self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], batch_size=batch.num_graphs,
+        mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
+        self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], metric_weights=mw,
                           sync_dist_keys=list(metrics.keys()))
 
     def predict_step(self, batch, batch_idx):
@@ -512,14 +554,18 @@ class LitModule(L.LightningModule):
         if not self.enable_rollout_val or self.validation_dataset is None:
             return
         self._log_wandb_epoch_marker(commit=False)
-        # 1. Collect all (for each traj) final rollout MAE error on position (averaged among all nodes)
+        # 1. Collect all (for each traj) final rollout MAE error on position (mean over nodes*coords), then pool
+        # across trajectories weighted by numel so the scalar matches one global mean over all nodes.
         all_final_roll_err_pos = []
+        weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(self.validation_dataset.num_trajectories):
             traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
-            _, _, final_roll_err_pos = self._run_rollout(traj_loader)
+            _, _, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
             all_final_roll_err_pos.append(final_roll_err_pos)
-        # 2. Compute average among all trajectories
-        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+            weighted_sum += final_roll_err_pos * n_pos
+            weight_total += n_pos
+        # 2. Node-weighted mean across trajectories
+        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
         self.rollout_all_step_error = avg_final_roll_err_pos
         avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
         # Rank zero only
@@ -569,8 +615,8 @@ class LitModule(L.LightningModule):
         wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
         # collects not rollout metrics overall_relative_mae, acc_all_rel_mae, stress_rel_mae
         metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
-        # logs
-        self._log_metrics(metrics, prog_bar_keys=[f"{wb_prefix}/overall_relative_mae"], batch_size=batch.num_graphs,
+        mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
+        self._log_metrics(metrics, prog_bar_keys=[f"{wb_prefix}/overall_relative_mae"], metric_weights=mw,
                           sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
 
@@ -591,14 +637,17 @@ class LitModule(L.LightningModule):
         all_true_rollouts, all_pred_rollouts, all_final_roll_err_pos = {}, {}, []
         num_trajectories = self.test_dataset.num_trajectories
         # FIXME: add pbar
+        weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(num_trajectories):
             traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
-            true_rollout, pred_rollout, final_roll_err_pos = self._run_rollout(traj_loader)
+            true_rollout, pred_rollout, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
             all_true_rollouts[traj_idx] = true_rollout
             all_pred_rollouts[traj_idx] = pred_rollout
             all_final_roll_err_pos.append(final_roll_err_pos)
-        # --- Average rollout error across all trajectories
-        avg_final_roll_err_pos = sum(all_final_roll_err_pos) / len(all_final_roll_err_pos)
+            weighted_sum += final_roll_err_pos * n_pos
+            weight_total += n_pos
+        # --- Node-weighted mean of final-step position MAE across all trajectories
+        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
         avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
         self.rollout_all_step_error = avg_final_roll_err_pos
         # --- Log to wandb rollout info (position only) (media will be logged later)
@@ -662,8 +711,9 @@ class LitModule(L.LightningModule):
         Args:
             traj_loader: DataLoader
                 Single-trajectory dataloader used for rollout evaluation.
-            return: (list, list, float)
-                Ground-truth rollout, predicted rollout, and final-step rollout MAE.
+            return: (list, list, float, int)
+                Ground-truth rollout, predicted rollout, final-step rollout MAE (mean abs over positions),
+                and numel of final position tensor for cross-trajectory weighting.
         """
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
@@ -674,8 +724,10 @@ class LitModule(L.LightningModule):
                                                 time_discretizer=self.time_discretizer,
                                                 exp_mises=self.exp_mises)
         # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
-        final_roll_err_pos = torch.mean(torch.abs(true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t)).item()
-        return true_rollout, pred_rollout, final_roll_err_pos
+        diff = true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t
+        final_roll_err_pos = torch.mean(torch.abs(diff)).item()
+        n_pos = int(diff.numel())
+        return true_rollout, pred_rollout, final_roll_err_pos, n_pos
 
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
@@ -693,8 +745,8 @@ class LitModule(L.LightningModule):
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
                 traj_loader = self._get_trajectory_loader(dataset, traj_idx)
-                acc_maes = []
-                stress_maes = []
+                acc_sum, acc_cnt = 0.0, 0.0
+                stress_sum, stress_cnt = 0.0, 0.0
                 for batch in traj_loader:
                     batch = batch.to(self.device)
                     pred = self(batch)
@@ -703,10 +755,14 @@ class LitModule(L.LightningModule):
                     target_acc = target[:, 0:3].contiguous()
                     pred_stress = pred[:, 3].contiguous()
                     target_stress = target[:, 3].contiguous()
-                    acc_maes.append(compute_mean_relative_mae(pred_acc, target_acc).item())
-                    stress_maes.append(compute_mean_relative_mae(pred_stress, target_stress).item())
-                per_traj_acc_rel_mae.append(sum(acc_maes) / len(acc_maes) if acc_maes else 0.0)
-                per_traj_stress_rel_mae.append(sum(stress_maes) / len(stress_maes) if stress_maes else 0.0)
+                    s_a, c_a = relative_mae_sum_and_count(pred_acc, target_acc)
+                    s_s, c_s = relative_mae_sum_and_count(pred_stress, target_stress)
+                    acc_sum += float(s_a.detach().item())
+                    acc_cnt += float(c_a.detach().item())
+                    stress_sum += float(s_s.detach().item())
+                    stress_cnt += float(c_s.detach().item())
+                per_traj_acc_rel_mae.append(acc_sum / acc_cnt if acc_cnt > 0 else 0.0)
+                per_traj_stress_rel_mae.append(stress_sum / stress_cnt if stress_cnt > 0 else 0.0)
         return per_traj_acc_rel_mae, per_traj_stress_rel_mae
 
     def _log_plot_roll_single_traj(self, true_rollout, pred_rollout, traj_idx):

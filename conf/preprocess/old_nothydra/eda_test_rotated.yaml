@@ -41,25 +41,6 @@ scalar_run_names:
   - z_isotr
   - robust_isotr
 
-# Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
-# Includes target von Mises, node norms (enable_node_norms), edge norms, stretch, and direction cosine when features: all.
-scalar_feature_names:
-  - von_mises
-  - displacement_norm
-  - force_norm
-  - velocity_norm
-  - position_norm
-  - rest_pos_norm
-  - displacement_pos_past_norm
-  - position_past_norm
-  - edge_relative_pos_norm
-  - edge_rest_relative_pos_norm
-  - edge_displacement_norm
-  - edge_force_norm
-  - edge_velocity_norm
-  - edge_stretch_norm
-  - edge_direction_cosine
-
 hydra:
   run:
     dir: hydra/outputs/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}

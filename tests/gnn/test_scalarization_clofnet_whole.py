@@ -1,12 +1,132 @@
 """
-Diagnostic prints for whole-mesh ClofNet scalarization invariance under SE(3).
+test_scalarization_clofnet_whole.py
 
+Diagnostic prints for whole-mesh ClofNet scalarization invariance under SE(3).
 Two meshes are used: one beam-like lattice, and one obtained by rotating the
 whole mesh and then translating it. After separate centroid centralization, all
 non-degenerate directed-edge scalarization coefficients should match.
 """
 
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+
+
+def _positions_to_numpy(pos):
+    """
+    Convert node positions tensor to a float64 numpy array for plotting.
+
+    Args:
+        pos: torch.Tensor
+            Node positions of shape [N, 3].
+
+    return:
+        numpy.ndarray
+            Shape [N, 3], dtype float64.
+    """
+    return pos.detach().cpu().numpy().astype(np.float64)
+
+
+def _set_axes_equal_3d(ax):
+    """
+    Set equal scale on all three axes of a 3D matplotlib axis.
+
+    Args:
+        ax: matplotlib.axes.Axes
+            Axis with projection='3d'.
+
+    return:
+        None
+    """
+    limits = np.array([ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()])
+    origin = limits.mean(axis=1)
+    radius = 0.5 * np.max(np.abs(limits[:, 1] - limits[:, 0]))
+    ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
+    ax.set_ylim3d([origin[1] - radius, origin[1] + radius])
+    ax.set_zlim3d([origin[2] - radius, origin[2] + radius])
+
+
+def _draw_mesh_edges(ax, pts_np, undirected_edges):
+    """
+    Scatter mesh nodes and draw undirected edges as line segments.
+
+    Args:
+        ax: matplotlib.axes.Axes
+            3D axis.
+        pts_np: numpy.ndarray
+            Node coordinates of shape [N, 3].
+        undirected_edges: list
+            Pairs (i, j) of node indices.
+
+    return:
+        None
+    """
+    ax.scatter(pts_np[:, 0], pts_np[:, 1], pts_np[:, 2], s=12, c="tab:blue", depthshade=True)
+    for i, j in undirected_edges:
+        seg = pts_np[[i, j], :]
+        ax.plot(seg[:, 0], seg[:, 1], seg[:, 2], c="gray", linewidth=0.6, alpha=0.7)
+
+
+def _show_or_close(fig, interactive):
+    """
+    Show figures for interactive script runs, otherwise close them for pytest.
+
+    Args:
+        fig: matplotlib.figure.Figure
+            Figure object.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    if interactive:
+        plt.ion()
+        fig.show()
+        plt.pause(0.001)
+    else:
+        plt.close(fig)
+
+
+def _plot_original_vs_transformed_meshes(pos, transformed_pos, undirected_edges, save_path, interactive):
+    """
+    Save a side-by-side 3D plot of the original lattice and the rotated+translated mesh.
+
+    Args:
+        pos: torch.Tensor
+            Original node positions [N, 3].
+        transformed_pos: torch.Tensor
+            Transformed node positions [N, 3].
+        undirected_edges: list
+            Undirected connectivity as (i, j) index pairs.
+        save_path: pathlib.Path
+            PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    pos_np = _positions_to_numpy(pos)
+    trans_np = _positions_to_numpy(transformed_pos)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(12, 5))
+    ax_orig = fig.add_subplot(1, 2, 1, projection="3d")
+    ax_trans = fig.add_subplot(1, 2, 2, projection="3d")
+    ax_orig.set_title("Original mesh (not rotated)")
+    ax_trans.set_title("Rotated + translated mesh")
+    _draw_mesh_edges(ax_orig, pos_np, undirected_edges)
+    _draw_mesh_edges(ax_trans, trans_np, undirected_edges)
+    for ax in (ax_orig, ax_trans):
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
+        _set_axes_equal_3d(ax)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    _show_or_close(fig, interactive)
 
 
 def build_beam_lattice(nx, ny, nz, length, width, height):
@@ -159,9 +279,6 @@ def rotation_matrix():
     """
     Construct a deterministic proper 3D rotation matrix.
 
-    Args:
-        None
-
     return:
         torch.Tensor
             Rotation matrix of shape [3, 3] with determinant 1.
@@ -276,9 +393,6 @@ def print_summary(coeffs_a, coeffs_b, kept_edges, skipped_edges, rtol, atol):
             Relative tolerance for torch.allclose.
         atol: float
             Absolute tolerance for torch.allclose.
-
-    return:
-        None
     """
     diff = coeffs_a - coeffs_b
     abs_diff = torch.abs(diff)
@@ -306,15 +420,15 @@ def print_summary(coeffs_a, coeffs_b, kept_edges, skipped_edges, rtol, atol):
     print(diff[:5].detach().cpu().numpy())
 
 
-def main():
+def main(interactive, plot_dir):
     """
-    Build the two meshes, scalarize all valid directed edges, and print diagnostics.
+    Build the two meshes, scalarize all valid directed edges, print diagnostics, and plot meshes.
 
     Args:
-        None
-
-    return:
-        None
+        interactive: bool
+            If True, show the mesh comparison figure; if False, only save PNG and close (pytest-friendly).
+        plot_dir: pathlib.Path
+            Directory for PNG outputs.
     """
     eps = 1e-8
     degenerate_tol = 1e-10
@@ -329,9 +443,12 @@ def main():
     rot = rotation_matrix()
     translation = torch.tensor([3.4, -1.7, 0.9], dtype=torch.float64)
     transformed_pos = transform_mesh(pos, rot, translation)
+    mesh_plot_path = plot_dir / "whole_mesh_original_vs_rotated.png"
+    _plot_original_vs_transformed_meshes(pos, transformed_pos, undirected_edges, mesh_plot_path, interactive)
     x_centered = centralize_positions(pos)
     transformed_centered = centralize_positions(transformed_pos)
     kept_edges, coeffs_a, skipped_edges = scalarize_all_edges(x_centered, directed_edges, eps, degenerate_tol)
+    print("\n")
     transformed_kept_edges, coeffs_b, transformed_skipped_edges = scalarize_all_edges(transformed_centered, directed_edges, eps, degenerate_tol)
     if kept_edges != transformed_kept_edges:
         print("WARNING: kept edge lists differ after transformation")
@@ -340,20 +457,22 @@ def main():
     print("rotation determinant:", float(torch.linalg.det(rot)))
     print("translation vector:", translation.detach().cpu().numpy())
     print_summary(coeffs_a, coeffs_b, kept_edges, skipped_edges, rtol, atol)
+    if interactive:
+        print("Interactive plot is open. Close the figure window to finish the script.")
+        plt.show(block=True)
 
 
 def test_scalarization_whole_mesh_diagnostic():
     """
+    Informal specification: running the diagnostic pipeline must complete without error and must
+    write the whole-mesh comparison PNG; we are not asserting numeric invariance (that remains print-only).
+
     Pytest entry: run main so `pytest -s` shows the diagnostic prints.
-
-    Args:
-        None
-
-    return:
-        None
     """
-    main()
+    plot_dir = Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots"
+    main(False, plot_dir)
 
 
 if __name__ == "__main__":
-    main()
+    plot_dir = Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots"
+    main(True, plot_dir)

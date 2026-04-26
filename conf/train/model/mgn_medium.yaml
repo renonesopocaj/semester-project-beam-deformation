@@ -7,3 +7,6 @@ layer_norm_enable_processor: True
 layer_norm_enable_decoder: False
 num_layers_heads: 3
 num_layers_encoder: 3
+dropout_head: 0.05
+dropout_encoder: 0.05
+dropout_processor: 0.0

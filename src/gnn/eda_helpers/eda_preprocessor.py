@@ -19,7 +19,8 @@ import shutil
 from pathlib import Path
 
 from src.gnn.eda_helpers.eda_features_helpers import (
-    EdaObj, build_edge_feature_names, build_node_feature_names, verify_eda_feature_names_match_builders)
+    EdaObj, build_edge_feature_names, build_node_feature_names, build_scalar_feature_names,
+    verify_eda_feature_names_match_builders)
 import torch
 from torch_geometric.data import Batch, Data
 from tqdm import tqdm
@@ -138,6 +139,7 @@ class CachedTensorList:
 
 class EdaPreprocessor:
     eda_obj: object
+    scalar_feature_names: list
     artifact_dir: Path
     run_name: str
     gif_generation_mode: str
@@ -187,6 +189,7 @@ class EdaPreprocessor:
         self.run_name = run_name
         verify_eda_feature_names_match_builders(cfg, torch.device(cfg.device))
         self.eda_obj = EdaObj(build_node_feature_names(cfg), build_edge_feature_names(cfg))
+        self.scalar_feature_names = build_scalar_feature_names(cfg)
         self.gif_generation_mode = gif_generation_mode
         self.gif_sample_percentage = gif_sample_percentage
         self.eda_split = eda_split

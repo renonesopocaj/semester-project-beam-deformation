@@ -9,6 +9,7 @@ __pycache__
 jitfailure*/
 # Python cache directories
 __pycache__/
+.pytest_cache
 # Files artifacts
 *.json
 *.pt
@@ -35,4 +36,4 @@ fem_dataset_generation
 old_venv
 hydra
 compression_fem_output
-.pytest_cache
+tests_artifacts

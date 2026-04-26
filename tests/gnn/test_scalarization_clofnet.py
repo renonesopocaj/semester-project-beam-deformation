@@ -1,11 +1,123 @@
 """
-Diagnostic prints for ClofNet-style scalarization (paper Eq. 2–3) on a beam-like lattice.
+test_scalarization_clofnet.py
 
+Diagnostic prints for ClofNet-style scalarization (paper Eq. 2–3) on a beam-like lattice.
 Uses paper-exact normalized frame (a, b, c) and six inner-product coefficients per directed edge.
-No assertions: prints coefficients, differences, and torch.allclose outcomes.
+After each frame build, checks that (a, b, c) is numerically orthonormal (and right-handed).
 """
 
+from pathlib import Path
+from textwrap import wrap
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+
+
+def _to_numpy_float_vec(t):
+    """
+    Convert a length-3 torch tensor or similar to a 1D float64 numpy vector.
+
+    Args:
+        t: torch.Tensor
+            Vector of shape [3] or broadcastable.
+
+    return:
+        numpy.ndarray
+            Shape [3], dtype float64.
+    """
+    if hasattr(t, "detach"):
+        return t.detach().cpu().numpy().astype(np.float64).reshape(3)
+    return np.asarray(t, dtype=np.float64).reshape(3)
+
+
+def _fmt_sci(t):
+    """
+    Format a scalar or length-3 numeric vector in scientific notation with two fractional digits.
+
+    Args:
+        t: torch.Tensor or numpy.ndarray or float
+            Scalar or 1D length-3 values.
+
+    return:
+        str
+            Printable string.
+    """
+    arr = np.asarray(t, dtype=np.float64).reshape(-1)
+    return np.array2string(
+        arr,
+        separator=" ",
+        formatter={"float_kind": lambda x: f"{float(x):.2e}"},
+    )
+
+
+def _fmt_sci_scalar(x):
+    """
+    Format one float in scientific notation with two fractional digits.
+
+    Args:
+        x: float or scalar tensor
+            Numeric value.
+
+    return:
+        str
+            Printable string.
+    """
+    return f"{float(x):.2e}"
+
+
+def _wrapped_title(title):
+    """
+    Wrap a long plot title so it stays inside the figure boundary.
+
+    Args:
+        title: str
+            Raw title.
+
+    return:
+        str
+            Wrapped title.
+    """
+    return "\n".join(wrap(title, width=78))
+
+
+def _unit_vector(vec_np):
+    """
+    Normalize a vector for plotting.
+
+    Args:
+        vec_np: numpy.ndarray
+            Shape [3].
+
+    return:
+        numpy.ndarray
+            Shape [3], normalized if non-zero.
+    """
+    norm = float(np.linalg.norm(vec_np))
+    if norm < 1e-15:
+        return vec_np
+    return vec_np / norm
+
+
+def _show_or_close(fig, interactive):
+    """
+    Show figures for interactive script runs, otherwise close them for pytest.
+
+    Args:
+        fig: figure object
+            Figure object.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    if interactive:
+        plt.ion()
+        fig.show()
+        plt.pause(0.001)
+    else:
+        plt.close(fig)
 
 
 def build_beam_lattice(nx, ny, nz, length, width, height):
@@ -84,6 +196,54 @@ def centralize_positions(pos):
     return pos - centroid
 
 
+def _check_local_frame_orthonormal(a, b, cvec, dot_rtol, dot_atol, norm_rtol, norm_atol):
+    """
+    Assert (a, b, cvec) is orthogonal (pairwise dot ~ 0), each has Euclidean norm ~1 (versors), and
+    the triple is right-handed.
+
+    Versor norm checks use looser tolerances than dots because each vector is divided by (||·|| +
+    eps) in the construction, which biases lengths slightly below 1 when eps is nonzero.
+
+    Args:
+        a: torch.Tensor
+            First basis vector, shape [3].
+        b: torch.Tensor
+            Second basis vector, shape [3].
+        cvec: torch.Tensor
+            Third basis vector, shape [3].
+        dot_rtol: float
+            Relative tolerance for pairwise dot products vs 0.
+        dot_atol: float
+            Absolute tolerance for pairwise dot products vs 0.
+        norm_rtol: float
+            Relative tolerance for Euclidean norms vs 1 and for det vs 1.
+        norm_atol: float
+            Absolute tolerance for Euclidean norms vs 1 and for det vs 1.
+    """
+    z = torch.zeros((), dtype=a.dtype, device=a.device)
+    o = torch.ones((), dtype=a.dtype, device=a.device)
+    dots = (
+        (torch.dot(a, b), z, "a·b"),
+        (torch.dot(a, cvec), z, "a·c"),
+        (torch.dot(b, cvec), z, "b·c"),
+    )
+    for got, want, label in dots:
+        ok = torch.allclose(got, want, rtol=dot_rtol, atol=dot_atol)
+        assert bool(ok), "local frame not orthogonal: %s = %s (expected ~0)" % (label, float(got))
+    versors = (
+        (torch.linalg.norm(a), o, "||a||"),
+        (torch.linalg.norm(b), o, "||b||"),
+        (torch.linalg.norm(cvec), o, "||c||"),
+    )
+    for got, want, label in versors:
+        ok = torch.allclose(got, want, rtol=norm_rtol, atol=norm_atol)
+        assert bool(ok), "local frame versor not unit norm: %s = %s (expected ~1)" % (label, float(got))
+    M = torch.stack([a, b, cvec], dim=1)
+    det = torch.linalg.det(M)
+    ok_det = torch.allclose(det, o, rtol=norm_rtol, atol=norm_atol)
+    assert bool(ok_det), "local frame det([a|b|c]) = %s (expected ~+1)" % float(det)
+
+
 def frame_and_coeffs(x_centered, row, col, eps):
     """
     Paper local frame and scalarization for one directed edge (row -> col).
@@ -113,6 +273,11 @@ def frame_and_coeffs(x_centered, row, col, eps):
     cvec = torch.linalg.cross(a, b)
     norm_c = torch.linalg.norm(cvec)
     cvec = cvec / (norm_c + eps)
+    dot_rtol = 1e-9
+    dot_atol = 1e-10
+    norm_rtol = 1e-5
+    norm_atol = 1e-6
+    _check_local_frame_orthonormal(a, b, cvec, dot_rtol, dot_atol, norm_rtol, norm_atol)
     coeff_row = torch.stack([torch.dot(x_row, a), torch.dot(x_row, b), torch.dot(x_row, cvec)])
     coeff_col = torch.stack([torch.dot(x_col, a), torch.dot(x_col, b), torch.dot(x_col, cvec)])
     return a, b, cvec, coeff_row, coeff_col
@@ -155,17 +320,14 @@ def print_edge_block(title, x_centered, row, col, eps):
             Target node index.
         eps: float
             Stability epsilon for norms.
-
-    return:
-        None
     """
     a, b, cvec, coeff_row, coeff_col = frame_and_coeffs(x_centered, row, col, eps)
     print(title)
-    print("  a:", a.detach().cpu().numpy())
-    print("  b:", b.detach().cpu().numpy())
-    print("  c:", cvec.detach().cpu().numpy())
-    print("  coeff_row (source in frame of row->col):", coeff_row.detach().cpu().numpy())
-    print("  coeff_col (target in frame of row->col):", coeff_col.detach().cpu().numpy())
+    print("  a:", _fmt_sci(a))
+    print("  b:", _fmt_sci(b))
+    print("  c:", _fmt_sci(cvec))
+    print("  coeff_row (source in frame of row->col):", _fmt_sci(coeff_row))
+    print("  coeff_col (target in frame of row->col):", _fmt_sci(coeff_col))
 
 
 def print_comparison(label, u, v, rtol, atol):
@@ -183,20 +345,246 @@ def print_comparison(label, u, v, rtol, atol):
             Relative tolerance for torch.allclose.
         atol: float
             Absolute tolerance for torch.allclose.
-
-    return:
-        None
     """
     diff = u - v
     ok = torch.allclose(u, v, rtol=rtol, atol=atol)
     print(label)
     print("  are they equal (torch.allclose)?", bool(ok))
-    print("  difference (u - v):", diff.detach().cpu().numpy())
+    print("  difference (u - v):", _fmt_sci(diff))
 
 
-def run_case(title, x_raw, i, j, h, k, eps, rtol, atol):
+def _bbox_scale(points_np):
     """
-    Run one diagnostic case: print four edges and three comparisons.
+    Scalar length from axis-aligned bounding box of Nx3 points (for arrow scale).
+
+    Args:
+        points_np: numpy.ndarray
+            Shape [N, 3].
+
+    return:
+        float
+            Max edge extent of the bbox, or 1.0 if degenerate.
+    """
+    lo = points_np.min(axis=0)
+    hi = points_np.max(axis=0)
+    ext = float(np.linalg.norm(hi - lo))
+    if ext < 1e-15:
+        return 1.0
+    return ext
+
+
+def _set_equal_3d_limits(ax, points_np):
+    """
+    Set equal-ish 3D limits including points and arrow endpoints.
+
+    Args:
+        ax: axes object
+            3D axes.
+        points_np: numpy.ndarray
+            Shape [N, 3].
+
+    return:
+        None
+    """
+    lo = points_np.min(axis=0)
+    hi = points_np.max(axis=0)
+    center = 0.5 * (lo + hi)
+    radius = 0.55 * max(float(np.max(hi - lo)), 1e-6)
+    ax.set_xlim(center[0] - radius, center[0] + radius)
+    ax.set_ylim(center[1] - radius, center[1] + radius)
+    ax.set_zlim(center[2] - radius, center[2] + radius)
+
+
+def _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title, save_path, interactive):
+    """
+    3D plot: raw nodes i,j,h,k, edges (i,j) vs (h,k), translation arrows for t_vec.
+
+    Args:
+        x_raw: torch.Tensor
+            Raw positions [N, 3].
+        i: int
+            Index of node i.
+        j: int
+            Index of node j.
+        h: int
+            Index of node h.
+        k: int
+            Index of node k.
+        t_vec: torch.Tensor
+            Translation vector shape [3], maps i to h when rigid.
+        title: str
+            Figure title.
+        save_path: pathlib.Path
+            PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    xi = _to_numpy_float_vec(x_raw[i])
+    xj = _to_numpy_float_vec(x_raw[j])
+    xh = _to_numpy_float_vec(x_raw[h])
+    xk = _to_numpy_float_vec(x_raw[k])
+    tv = _to_numpy_float_vec(t_vec)
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
+    ax.scatter([xi[0]], [xi[1]], [xi[2]], c="tab:blue", s=60, label="i")
+    ax.scatter([xj[0]], [xj[1]], [xj[2]], c="tab:cyan", s=60, label="j")
+    ax.scatter([xh[0]], [xh[1]], [xh[2]], c="tab:orange", s=60, label="h")
+    ax.scatter([xk[0]], [xk[1]], [xk[2]], c="tab:red", s=60, label="k")
+    ax.plot([xi[0], xj[0]], [xi[1], xj[1]], [xi[2], xj[2]], c="tab:blue", linewidth=2, label="edge (i,j)")
+    ax.plot([xh[0], xk[0]], [xh[1], xk[1]], [xh[2], xk[2]], c="tab:orange", linewidth=2, label="edge (h,k)")
+    ax.quiver(xi[0], xi[1], xi[2], tv[0], tv[1], tv[2], color="green", arrow_length_ratio=0.15, label="t_vec from i")
+    ax.quiver(xj[0], xj[1], xj[2], tv[0], tv[1], tv[2], color="olive", arrow_length_ratio=0.15, label="t_vec from j")
+    _set_equal_3d_limits(ax, np.stack([xi, xj, xh, xk, xi + tv, xj + tv], axis=0))
+    ax.legend(loc="upper left", fontsize=8)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    _show_or_close(fig, interactive)
+
+
+def _plot_nodes_frames(x_centered, i, j, h, k, eps, title, save_path, interactive):
+    """
+    3D plot: centered nodes and local frames (a,b,c) at i for edge (i,j) and at h for edge (h,k).
+
+    Args:
+        x_centered: torch.Tensor
+            Centered positions [N, 3].
+        i: int
+            Source index for first frame.
+        j: int
+            Target index for first frame.
+        h: int
+            Source index for second frame.
+        k: int
+            Target index for second frame.
+        eps: float
+            Stability epsilon passed to frame_and_coeffs.
+        title: str
+            Figure title.
+        save_path: pathlib.Path
+            PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    a_ij, b_ij, c_ij, _, _ = frame_and_coeffs(x_centered, i, j, eps)
+    a_hk, b_hk, c_hk, _, _ = frame_and_coeffs(x_centered, h, k, eps)
+    Oi = _to_numpy_float_vec(x_centered[i])
+    Oh = _to_numpy_float_vec(x_centered[h])
+    Oj = _to_numpy_float_vec(x_centered[j])
+    Ok = _to_numpy_float_vec(x_centered[k])
+    ai = _unit_vector(_to_numpy_float_vec(a_ij))
+    bi = _unit_vector(_to_numpy_float_vec(b_ij))
+    ci = _unit_vector(_to_numpy_float_vec(c_ij))
+    ah = _unit_vector(_to_numpy_float_vec(a_hk))
+    bh = _unit_vector(_to_numpy_float_vec(b_hk))
+    ch = _unit_vector(_to_numpy_float_vec(c_hk))
+    pts = np.stack([Oi, Oj, Oh, Ok], axis=0)
+    scale = 0.12 * _bbox_scale(pts)
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
+    ax.scatter([Oi[0]], [Oi[1]], [Oi[2]], c="tab:blue", s=60, label="i")
+    ax.scatter([Oj[0]], [Oj[1]], [Oj[2]], c="tab:cyan", s=60, label="j")
+    ax.scatter([Oh[0]], [Oh[1]], [Oh[2]], c="tab:orange", s=60, label="h")
+    ax.scatter([Ok[0]], [Ok[1]], [Ok[2]], c="tab:red", s=60, label="k")
+    ax.plot([Oi[0], Oj[0]], [Oi[1], Oj[1]], [Oi[2], Oj[2]], c="tab:blue", linewidth=1, linestyle="--")
+    ax.plot([Oh[0], Ok[0]], [Oh[1], Ok[1]], [Oh[2], Ok[2]], c="tab:orange", linewidth=1, linestyle="--")
+    for n, vec in enumerate((ai, bi, ci)):
+        label = "frame (i,j): a,b,c" if n == 0 else None
+        vec_scaled = vec * scale
+        ax.quiver(Oi[0], Oi[1], Oi[2], vec_scaled[0], vec_scaled[1], vec_scaled[2], color="tab:blue",
+                  arrow_length_ratio=0.12, label=label)
+    for n, vec in enumerate((ah, bh, ch)):
+        label = "frame (h,k): a,b,c" if n == 0 else None
+        vec_scaled = vec * scale
+        ax.quiver(Oh[0], Oh[1], Oh[2], vec_scaled[0], vec_scaled[1], vec_scaled[2], color="tab:orange",
+                  arrow_length_ratio=0.12, label=label)
+    endpoints = [Oi, Oj, Oh, Ok]
+    endpoints.extend([Oi + vec * scale for vec in (ai, bi, ci)])
+    endpoints.extend([Oh + vec * scale for vec in (ah, bh, ch)])
+    _set_equal_3d_limits(ax, np.stack(endpoints, axis=0))
+    ax.legend(loc="upper left", fontsize=7, ncol=2)
+    ax.set_xlabel("x (centered)")
+    ax.set_ylabel("y (centered)")
+    ax.set_zlabel("z (centered)")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    _show_or_close(fig, interactive)
+
+
+def _plot_frames_at_origin(x_centered, i, j, h, k, eps, title, save_path, interactive):
+    """
+    3D plot: unit frame basis vectors for (i,j) then (h,k), drawn from the global origin.
+
+    Each arrow runs from (0,0,0) to the tip of a_ij, b_ij, c_ij (first color) then a_hk, b_hk, c_hk (second color).
+
+    Args:
+        x_centered: torch.Tensor
+            Centered positions [N, 3].
+        i: int
+            Source index for edge (i,j).
+        j: int
+            Target index for edge (i,j).
+        h: int
+            Source index for edge (h,k).
+        k: int
+            Target index for edge (h,k).
+        eps: float
+            Stability epsilon passed to frame_and_coeffs.
+        title: str
+            Figure title.
+        save_path: pathlib.Path
+            PNG output path.
+        interactive: bool
+            Whether to show the figure interactively.
+
+    return:
+        None
+    """
+    a_ij, b_ij, c_ij, _, _ = frame_and_coeffs(x_centered, i, j, eps)
+    a_hk, b_hk, c_hk, _, _ = frame_and_coeffs(x_centered, h, k, eps)
+    ai = _unit_vector(_to_numpy_float_vec(a_ij))
+    bi = _unit_vector(_to_numpy_float_vec(b_ij))
+    ci = _unit_vector(_to_numpy_float_vec(c_ij))
+    ah = _unit_vector(_to_numpy_float_vec(a_hk))
+    bh = _unit_vector(_to_numpy_float_vec(b_hk))
+    ch = _unit_vector(_to_numpy_float_vec(c_hk))
+    o = np.zeros(3, dtype=np.float64)
+    tips = np.stack([ai, bi, ci, ah, bh, ch], axis=0)
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(_wrapped_title(title), fontsize=8, pad=8)
+    ax.scatter([0.0], [0.0], [0.0], c="black", s=40, label="origin")
+    color_ij = "tab:blue"
+    color_hk = "tab:orange"
+    for n, vec in enumerate((ai, bi, ci)):
+        lab = ("a_ij", "b_ij", "c_ij")[n]
+        ax.quiver(o[0], o[1], o[2], vec[0], vec[1], vec[2], color=color_ij, arrow_length_ratio=0.12, label=lab)
+    for n, vec in enumerate((ah, bh, ch)):
+        lab = ("a_hk", "b_hk", "c_hk")[n]
+        ax.quiver(o[0], o[1], o[2], vec[0], vec[1], vec[2], color=color_hk, arrow_length_ratio=0.12, label=lab)
+    _set_equal_3d_limits(ax, np.vstack([o.reshape(1, 3), tips]))
+    ax.legend(loc="upper left", fontsize=7, ncol=2)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    _show_or_close(fig, interactive)
+
+
+def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_slug, interactive):
+    """
+    Run one diagnostic case: print four edges, three comparisons, and three 3D figures.
 
     Args:
         title: str
@@ -211,24 +599,37 @@ def run_case(title, x_raw, i, j, h, k, eps, rtol, atol):
             First endpoint index for second edge (h, k).
         k: int
             Second endpoint index for second edge (h, k).
+        t_vec: torch.Tensor
+            Translation x_h - x_i in raw coordinates (diagnostic).
         eps: float
             Norm stability epsilon.
         rtol: float
             allclose rtol.
         atol: float
             allclose atol.
-
-    return:
-        None
+        output_dir: pathlib.Path
+            Directory for PNG outputs.
+        case_slug: str
+            Filename prefix, e.g. case1 or case2.
+        interactive: bool
+            Whether to show figures interactively.
     """
+    output_dir = Path(output_dir)
     x = centralize_positions(x_raw)
-    print("=" * 72)
+    err_map_jk = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec))
+    print("\n" + "=" * 72)
     print(title)
     print("indices i, j, h, k:", i, j, h, k)
+    print("x_raw[i]:", _fmt_sci(x_raw[i]))
+    print("x_raw[j]:", _fmt_sci(x_raw[j]))
+    print("x_raw[h]:", _fmt_sci(x_raw[h]))
+    print("x_raw[k]:", _fmt_sci(x_raw[k]))
+    print("t_vec (x_raw[h] - x_raw[i]), maps i -> h:", _fmt_sci(t_vec))
+    print("||x_raw[k] - (x_raw[j] + t_vec)|| raw:", _fmt_sci_scalar(err_map_jk))
     seg_ij = torch.linalg.norm(x[i] - x[j])
     seg_hk = torch.linalg.norm(x[h] - x[k])
-    print("||x_i - x_j|| (centered):", float(seg_ij))
-    print("||x_h - x_k|| (centered):", float(seg_hk))
+    print("||x_i - x_j|| (centered):", _fmt_sci_scalar(seg_ij))
+    print("||x_h - x_k|| (centered):", _fmt_sci_scalar(seg_hk))
     print_edge_block("edge (i -> j)", x, i, j, eps)
     print_edge_block("edge (h -> k)", x, h, k, eps)
     print_edge_block("edge (j -> i)", x, j, i, eps)
@@ -243,18 +644,39 @@ def run_case(title, x_raw, i, j, h, k, eps, rtol, atol):
     print_comparison("i in frame (i,j) vs h in frame (h,k)", coeff_i_ij, coeff_h_hk, rtol, atol)
     print_comparison("j in frame (i,j) vs k in frame (h,k)", coeff_j_ij, coeff_k_hk, rtol, atol)
     print_comparison("full six coeffs edge (j,i) vs edge (k,h)", six_ji, six_kh, rtol, atol)
+    out_a = output_dir / f"{case_slug}_nodes_edges_tvec.png"
+    out_b = output_dir / f"{case_slug}_nodes_frames.png"
+    out_c = output_dir / f"{case_slug}_frames_origin.png"
+    _plot_nodes_edges_tvec(x_raw, i, j, h, k, t_vec, title + " - raw nodes, edges, t_vec", out_a, interactive)
+    _plot_nodes_frames(x, i, j, h, k, eps, title + " - centered nodes + frames (i,j) and (h,k)", out_b, interactive)
+    _plot_frames_at_origin(
+        x,
+        i,
+        j,
+        h,
+        k,
+        eps,
+        title + " - local frame bases at origin (a_ij,b_ij,c_ij then a_hk,b_hk,c_hk)",
+        out_c,
+        interactive,
+    )
+    print("saved:", out_a)
+    print("saved:", out_b)
+    print("saved:", out_c)
 
 
-def main():
+def main(output_dir, interactive):
     """
-    Build lattice, run translation case and same-length case, print diagnostics.
+    Build lattice, run Case 1 (pure translation) and Case 2 (oblique edge directions), print diagnostics, write plots.
 
     Args:
-        None
-
-    return:
-        None
+        output_dir: pathlib.Path
+            Directory for PNG outputs (created if missing).
+        interactive: bool
+            Whether to show figures interactively.
     """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     eps = 1e-8
     rtol = 1e-5
     atol = 1e-8
@@ -265,42 +687,49 @@ def main():
     width = 1.0
     height = 0.2
     x_raw = build_beam_lattice(nx, ny, nz, length, width, height)
-    dx = length / float(nx - 1)
-    dy = width / float(ny - 1)
-    iy0 = 1
-    iz0 = 1
-    i = lattice_index(0, iy0, iz0, nx, ny)
-    j = lattice_index(1, iy0, iz0, nx, ny)
-    h = lattice_index(1, iy0, iz0, nx, ny)
-    k = lattice_index(2, iy0, iz0, nx, ny)
-    t_vec = x_raw[j] - x_raw[i]
-    err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec))
-    err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec))
-    run_case("Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).", x_raw, i, j, h, k, eps, rtol, atol)
-    print("sanity: ||x_h - (x_i + t)|| raw:", float(err_h), "||x_k - (x_j + t)|| raw:", float(err_k))
-    i2 = i
-    j2 = j
+    i = lattice_index(0, 0, 0, nx, ny)
+    j = lattice_index(1, 1, 1, nx, ny)
+    h = lattice_index(0, 1, 0, nx, ny)
+    k = lattice_index(1, 2, 1, nx, ny)
+    v1_ij = x_raw[j] - x_raw[i]
+    v1_hk = x_raw[k] - x_raw[h]
+    print("Case 1 raw edge vectors: (j-i) =", _fmt_sci(v1_ij), "(k-h) =", _fmt_sci(v1_hk))
+    t_vec_case1 = x_raw[h] - x_raw[i]
+    err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec_case1))
+    err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec_case1))
+    run_case("Case 1: (h,k) is a pure translation of (i,j); edges span x,y,z (all deltas nonzero).",
+             x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1", interactive,)
+    print("sanity Case1: ||x_h - (x_i + t)|| raw:", _fmt_sci_scalar(err_h), "||x_k - (x_j + t)|| raw:",
+          _fmt_sci_scalar(err_k))
+    i2 = lattice_index(0, 0, 1, nx, ny)
+    j2 = lattice_index(1, 1, 2, nx, ny)
     h2 = lattice_index(2, 0, 0, nx, ny)
-    k2 = lattice_index(2, 1, 0, nx, ny)
-    len_ij = torch.linalg.norm(x_raw[i2] - x_raw[j2])
-    len_hk = torch.linalg.norm(x_raw[h2] - x_raw[k2])
-    if not torch.isclose(len_ij, len_hk, rtol=rtol, atol=atol):
-        print("WARNING Case 2 setup: edge lengths differ:", float(len_ij), float(len_hk))
-    run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).", x_raw, i2, j2, h2, k2, eps, rtol, atol)
+    k2 = lattice_index(3, 2, 1, nx, ny)
+    v_ij = x_raw[j2] - x_raw[i2]
+    v_hk = x_raw[k2] - x_raw[h2]
+    dot_ij_hk = torch.dot(v_ij, v_hk)
+    cross_ij_hk = torch.linalg.norm(torch.linalg.cross(v_ij, v_hk))
+    print("Case 2 raw edge vectors: (j-i) =", _fmt_sci(v_ij), "(k-h) =", _fmt_sci(v_hk))
+    print("Case 2 dot((j-i), (k-h)) (0 if orthogonal):", _fmt_sci_scalar(dot_ij_hk))
+    print("Case 2 ||cross((j-i), (k-h))|| (0 if parallel):", _fmt_sci_scalar(cross_ij_hk))
+    t_vec_case2 = x_raw[h2] - x_raw[i2]
+    run_case("Case 2: both edges span x,y,z (all deltas nonzero); not parallel and not orthogonal.", x_raw, i2,
+             j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2", interactive)
+    if interactive:
+        print("Interactive plots are open. Close the figure windows to finish the script.")
+        plt.show(block=True)
 
 
 def test_scalarization_diagnostic():
     """
-    Pytest entry: run main so `pytest -s` shows prints.
-
-    Args:
-        None
-
-    return:
-        None
+    Informal specification: running the ClofNet scalarization diagnostic on the beam lattice
+    must not raise; in particular every constructed local frame (a, b, c) must be numerically
+    pairwise orthogonal, each basis vector must have Euclidean norm ~1 (versors; looser
+    tolerance because of (||·|| + eps) normalization), and det([a|b|c]) ~ +1 inside frame_and_coeffs.
     """
-    main()
+    out = Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots"
+    main(out, False)
 
 
 if __name__ == "__main__":
-    main()
+    main(Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots", True)
