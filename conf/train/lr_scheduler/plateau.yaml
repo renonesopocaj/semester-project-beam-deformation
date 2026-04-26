@@ -2,6 +2,6 @@ type: "plateau"
 factor: 0.7 # factor by which lr is reduced
 patience: 7 # after how many epochs of no improvement lr is reduced. 
 min_lr: 1.0e-7 # stop if it goes below this lr
-early_stopping_patience: 15 # how many epochs of no improvement before stopping
+early_stopping_patience: 16 # how many epochs of no improvement before stopping
 # idea for early stopping: you half LR two times before stopping
 threshold: 1.0e-4 # This defines what counts as a real improvement, in relative -> 0.01%
