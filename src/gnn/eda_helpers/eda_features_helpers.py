@@ -61,30 +61,41 @@ def build_edge_feature_names(cfg):
     """
     names = []
     # Vector features (xyz triplets), same order as build_edge_features
-    names.extend(_xyz_names("edge_displacement_pos"))
+    if cfg.enable_displ_edge:
+        names.extend(_xyz_names("edge_displacement_pos"))
     if cfg.enable_edge_velocity:
         names.extend(_xyz_names("edge_velocity_pos"))
     if cfg.enable_force_edge:
         names.extend(_xyz_names("edge_force_pos"))
     if cfg.enable_absolute_pos:
-        names.extend(_xyz_names("edge_relative_pos"))
-        names.extend(_xyz_names("edge_rest_relative_pos"))
+        if cfg.enable_abs_pos_edge:
+            names.extend(_xyz_names("edge_relative_pos"))
+        if cfg.enable_abs_rest_pos_edge:
+            names.extend(_xyz_names("edge_rest_relative_pos"))
     if cfg.enable_past_history:
-        names.extend(_xyz_names("edge_displacement_pos_past"))
-        if cfg.enable_absolute_pos:
+        if cfg.enable_displ_edge:
+            names.extend(_xyz_names("edge_displacement_pos_past"))
+        if cfg.enable_absolute_pos and cfg.enable_abs_pos_edge:
             names.extend(_xyz_names("edge_relative_pos_past"))
+        if cfg.enable_abs_pos_edge_norm:
+            names.append("edge_relative_pos_past_norm")
     # Scalar features (norms)
-    names.append("edge_relative_pos_norm")
-    names.append("edge_rest_relative_pos_norm")
-    names.append("edge_displacement_norm")
-    if cfg.enable_force_edge:
+    if cfg.enable_abs_pos_edge_norm:
+        names.append("edge_relative_pos_norm")
+    if cfg.enable_rest_pos_edge_norm:
+        names.append("edge_rest_relative_pos_norm")
+    if cfg.enable_force_edge_norm:
         names.append("edge_force_norm")
-    if cfg.enable_edge_velocity:
+    if cfg.enable_edge_velocity_norm:
         names.append("edge_velocity_norm")
     if cfg.enable_stretch_edge:
         names.append("edge_stretch_norm")
+        if cfg.enable_past_history:
+            names.append("edge_stretch_norm_past")
     if cfg.enable_rotation_angle:
         names.append("edge_direction_cosine")
+        if cfg.enable_past_history:
+            names.append("edge_direction_cosine_past")
     return names
 
 
