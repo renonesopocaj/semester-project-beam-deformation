@@ -30,16 +30,15 @@ train:
   force_y: { start: -0.7, stop: 0.7, n: 3 }
   force_z: { start: -0.7, stop: 0.7, n: 3 }
   lengths: { start: 1.0, stop: 2.0, n: 2 }
-  widths:  { start: 0.05, stop: 0.15, n: 2 }
-  depths: { start: 0.05, stop: 0.15, n: 2 }
+  widths:  { start: 0.2, stop: 0.3, n: 2 }
+  depths: { start: 0.2, stop: 0.3, n: 2 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
 test_ood_ranges:
-  force_x:
-    below: { start: -1.2, stop: -0.8 }
-    above: { start: 0.8, stop: 1.2 }
+  below: { start: -1.2, stop: -0.8 }
+  above: { start: 0.8, stop: 1.2 }
   force_y:
     below: { start: -1.2, stop: -0.8 }
     above: { start: 0.8, stop: 1.2 }
@@ -47,14 +46,14 @@ test_ood_ranges:
     below: { start: -1.2, stop: -0.8 }
     above: { start: 0.8, stop: 1.2 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 1.1, stop: 1.5 }
+    below: { start: 0.5, stop: 0.9 }
+    above: { start: 2.1, stop: 2.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.3, stop: 0.4 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.3, stop: 0.4 }
 
 selected_trajs:
   selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]

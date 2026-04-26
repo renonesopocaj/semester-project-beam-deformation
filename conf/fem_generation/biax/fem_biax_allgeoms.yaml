@@ -29,9 +29,9 @@ train:
   force_x: { start: 0, stop: 0, n: 1 }
   force_y: { start: -0.9, stop: 1.0, n: 5 }
   force_z: { start: -0.9, stop: 1.0, n: 5 }
-  lengths: { start: 0.05, stop: 1.0, n: 4 }
-  widths:  { start: 0.05, stop: 1.0, n: 4 }
-  depths: { start: 0.05, stop: 1.0, n: 3 }
+  lengths: { start: 0.2, stop: 1.0, n: 4 }
+  widths:  { start: 0.2, stop: 1.0, n: 4 }
+  depths: { start: 0.2, stop: 1.0, n: 3 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
@@ -45,13 +45,13 @@ test_ood_ranges:
     below: { start: -1.5, stop: -1.1 }
     above: { start: 1.1, stop: 1.5 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
 
 selected_trajs:

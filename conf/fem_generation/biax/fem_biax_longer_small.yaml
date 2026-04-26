@@ -1,4 +1,4 @@
-# Idea of this config file: 1) f_y, f_z != 0 2) geometry is always longer than wider
+# Idea of this config file: 1) f_y, f_z != 0 2) geometry is always longer than wider NOTE: L, W, D = X, Y, Z
 output_root: "./fem_dataset_generation/biax_longer/small"
 only_json: False
 
@@ -30,8 +30,8 @@ train:
   force_y: { start: -1.0, stop: 1.0, n: 4 }
   force_z: { start: -1.0, stop: 1.0, n: 4 }
   lengths: { start: 1.0, stop: 2.0, n: 3 }
-  widths:  { start: 0.06, stop: 0.14, n: 3 }
-  depths: { start: 0.05, stop: 0.15, n: 2 }
+  widths:  { start: 0.2, stop: 0.3, n: 3 }
+  depths: { start: 0.2, stop: 0.3, n: 2 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
@@ -45,14 +45,14 @@ test_ood_ranges:
     below: { start: -1.5, stop: -1.1 }
     above: { start: 1.1, stop: 1.5 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.5, stop: 0.9 }
     above: { start: 2.1, stop: 2.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.31, stop: 0.4 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.31, stop: 0.4 }
 
 selected_trajs:
   selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]

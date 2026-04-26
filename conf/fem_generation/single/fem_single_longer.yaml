@@ -29,9 +29,9 @@ train:
   force_x: { start: 0.0, stop: 0.0, n: 1 }
   force_y: { start: 0.25, stop: 1.5, n: 10 }
   force_z: { start: 0.0, stop: 0.0, n: 1 }
-  lengths: { start: 1.5, stop: 3.0, n: 6 }
-  widths: { start: 0.06, stop: 0.14, n: 6 }
-  depths: { start: 0.05, stop: 0.15, n: 3 }
+  lengths: { start: 1.0, stop: 2.0, n: 6 }
+  widths: { start: 0.2, stop: 0.3, n: 6 }
+  depths: { start: 0.2, stop: 0.3, n: 3 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
@@ -45,14 +45,14 @@ test_ood_ranges:
     below: { start: -1.5, stop: -0.25 }
     above: { start: 0.25, stop: 1.5 }
   lengths:
-    below: { start: 0.1, stop: 1.4 }
-    above: { start: 3.1, stop: 3.5 }
+    below: { start: 0.5, stop: 0.9 }
+    above: { start: 2.1, stop: 2.5 }
   widths:
-    below: { start: 0.01, stop: 0.05 }
-    above: { start: 0.15, stop: 0.4 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.3, stop: 0.4 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.4 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.3, stop: 0.4 }
 
 # trajectories with longer rollout
 selected_trajs:
