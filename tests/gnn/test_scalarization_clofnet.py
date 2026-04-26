@@ -3,7 +3,7 @@ test_scalarization_clofnet.py
 
 Diagnostic prints for ClofNet-style scalarization (paper Eq. 2–3) on a beam-like lattice.
 Uses paper-exact normalized frame (a, b, c) and six inner-product coefficients per directed edge.
-No assertions: prints coefficients, differences, and torch.allclose outcomes.
+After each frame build, checks that (a, b, c) is numerically orthonormal (and right-handed).
 """
 
 from pathlib import Path
@@ -196,6 +196,54 @@ def centralize_positions(pos):
     return pos - centroid
 
 
+def _check_local_frame_orthonormal(a, b, cvec, dot_rtol, dot_atol, norm_rtol, norm_atol):
+    """
+    Assert (a, b, cvec) is orthogonal (pairwise dot ~ 0), each has Euclidean norm ~1 (versors), and
+    the triple is right-handed.
+
+    Versor norm checks use looser tolerances than dots because each vector is divided by (||·|| +
+    eps) in the construction, which biases lengths slightly below 1 when eps is nonzero.
+
+    Args:
+        a: torch.Tensor
+            First basis vector, shape [3].
+        b: torch.Tensor
+            Second basis vector, shape [3].
+        cvec: torch.Tensor
+            Third basis vector, shape [3].
+        dot_rtol: float
+            Relative tolerance for pairwise dot products vs 0.
+        dot_atol: float
+            Absolute tolerance for pairwise dot products vs 0.
+        norm_rtol: float
+            Relative tolerance for Euclidean norms vs 1 and for det vs 1.
+        norm_atol: float
+            Absolute tolerance for Euclidean norms vs 1 and for det vs 1.
+    """
+    z = torch.zeros((), dtype=a.dtype, device=a.device)
+    o = torch.ones((), dtype=a.dtype, device=a.device)
+    dots = (
+        (torch.dot(a, b), z, "a·b"),
+        (torch.dot(a, cvec), z, "a·c"),
+        (torch.dot(b, cvec), z, "b·c"),
+    )
+    for got, want, label in dots:
+        ok = torch.allclose(got, want, rtol=dot_rtol, atol=dot_atol)
+        assert bool(ok), "local frame not orthogonal: %s = %s (expected ~0)" % (label, float(got))
+    versors = (
+        (torch.linalg.norm(a), o, "||a||"),
+        (torch.linalg.norm(b), o, "||b||"),
+        (torch.linalg.norm(cvec), o, "||c||"),
+    )
+    for got, want, label in versors:
+        ok = torch.allclose(got, want, rtol=norm_rtol, atol=norm_atol)
+        assert bool(ok), "local frame versor not unit norm: %s = %s (expected ~1)" % (label, float(got))
+    M = torch.stack([a, b, cvec], dim=1)
+    det = torch.linalg.det(M)
+    ok_det = torch.allclose(det, o, rtol=norm_rtol, atol=norm_atol)
+    assert bool(ok_det), "local frame det([a|b|c]) = %s (expected ~+1)" % float(det)
+
+
 def frame_and_coeffs(x_centered, row, col, eps):
     """
     Paper local frame and scalarization for one directed edge (row -> col).
@@ -225,6 +273,11 @@ def frame_and_coeffs(x_centered, row, col, eps):
     cvec = torch.linalg.cross(a, b)
     norm_c = torch.linalg.norm(cvec)
     cvec = cvec / (norm_c + eps)
+    dot_rtol = 1e-9
+    dot_atol = 1e-10
+    norm_rtol = 1e-5
+    norm_atol = 1e-6
+    _check_local_frame_orthonormal(a, b, cvec, dot_rtol, dot_atol, norm_rtol, norm_atol)
     coeff_row = torch.stack([torch.dot(x_row, a), torch.dot(x_row, b), torch.dot(x_row, cvec)])
     coeff_col = torch.stack([torch.dot(x_col, a), torch.dot(x_col, b), torch.dot(x_col, cvec)])
     return a, b, cvec, coeff_row, coeff_col
@@ -669,7 +722,10 @@ def main(output_dir, interactive):
 
 def test_scalarization_diagnostic():
     """
-    Pytest entry: run main so `pytest -s` shows prints.
+    Informal specification: running the ClofNet scalarization diagnostic on the beam lattice
+    must not raise; in particular every constructed local frame (a, b, c) must be numerically
+    pairwise orthogonal, each basis vector must have Euclidean norm ~1 (versors; looser
+    tolerance because of (||·|| + eps) normalization), and det([a|b|c]) ~ +1 inside frame_and_coeffs.
     """
     out = Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots"
     main(out, False)
