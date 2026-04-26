@@ -1,5 +1,6 @@
 """
 fem2torch_helpers.py
+
 This file contains helper functions for converting FEniCS meshes to PyTorch Geometric graphs.
 """
 
@@ -16,8 +17,8 @@ def evaluate_vector_at_vertices_fast(v_fun):
     Args:
         v_fun: dolfin.Function
             Vector-valued function defined on a CG-1 vector space.
-        return: np.ndarray
-            Array of shape (num_vertices, 3).
+    return: np.ndarray
+        Array of shape (num_vertices, 3).
     """
     mesh = v_fun.function_space().mesh()
     nverts = mesh.num_vertices()
@@ -40,8 +41,8 @@ def dof_vector_to_vertex_array(vec, V):
             DOF-ordered vector (e.g. result of assemble()).
         V: dolfin.FunctionSpace
             The vector function space the DOFs belong to.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) in vertex order.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) in vertex order.
     """
     f = df.Function(V)
     f.vector()[:] = vec
@@ -56,8 +57,8 @@ def evaluate_stress_at_vertices_fast(stress_fun):
     Args:
         stress_fun: dolfin.Function
             Tensor-valued stress field projected onto a CG-1 tensor space.
-        return: np.ndarray
-            Array of shape (num_vertices, 9).
+    return: np.ndarray
+        Array of shape (num_vertices, 9).
     """
     mesh = stress_fun.function_space().mesh()
     nverts = mesh.num_vertices()
@@ -74,9 +75,9 @@ def evaluate_u_at_vertices(u, mesh):
             Vector-valued displacement field.
         mesh: dolfin.Mesh
             Mesh whose vertices define the evaluation points.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) containing the displacement
-            evaluated at each vertex.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) containing the displacement
+        evaluated at each vertex.
     """
     # obtain mesh coordinates and number of vertices
     coords = mesh.coordinates()
@@ -98,8 +99,8 @@ def evaluate_velocity_at_vertices(v_fun, mesh):
             Vector-valued velocity field.
         mesh: dolfin.Mesh
             Mesh whose vertices define the evaluation points.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) containing vertex-wise velocity.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) containing vertex-wise velocity.
     """
     # obtain mesh coordinates and number of vertices
     coords = mesh.coordinates()
@@ -122,8 +123,8 @@ def evaluate_acceleration_at_vertices(a_fun, mesh):
             Vector-valued acceleration field.
         mesh: dolfin.Mesh
             Mesh whose vertices define the evaluation points.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) containing vertex-wise acceleration.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) containing vertex-wise acceleration.
     """
     # obtain mesh coordinates and number of vertices
     coords = mesh.coordinates()
@@ -145,8 +146,8 @@ def evaluate_force_at_vertices(f, mesh):
             Vector-valued force field.
         mesh: dolfin.Mesh
             Mesh whose vertices define the evaluation points.
-        return: np.ndarray
-            Array of shape (num_vertices, 3) containing vertex-wise force values.
+    return: np.ndarray
+        Array of shape (num_vertices, 3) containing vertex-wise force values.
     """
     # obtain mesh coordinates and number of vertices
     coords = mesh.coordinates()
@@ -168,9 +169,9 @@ def evaluate_stress_at_vertices(stress_fun, mesh):
             Tensor-valued stress field. Each evaluation should return a 3x3 tensor.
         mesh: dolfin.Mesh
             Mesh whose vertices define the evaluation points.
-        return: np.ndarray
-            Array of shape (num_vertices, 9) containing the flattened stress tensor
-            at each vertex in row-major order.
+    return: np.ndarray
+        Array of shape (num_vertices, 9) containing the flattened stress tensor
+        at each vertex in row-major order.
     """
     # obtain mesh coordinates and number of vertices
     coords = mesh.coordinates()
@@ -191,10 +192,10 @@ def extract_edges(mesh):
     Args:
         mesh: dolfin.Mesh
             FEniCS mesh containing tetrahedral element connectivity.
-        return: (torch.Tensor, np.ndarray)
-            A tuple containing:
-            - bidirectional edge index with shape (2, num_edges * 2), dtype long
-            - raw element-to-node connectivity as returned by mesh.cells()
+    return: (torch.Tensor, np.ndarray)
+        A tuple containing:
+        - bidirectional edge index with shape (2, num_edges * 2), dtype long
+        - raw element-to-node connectivity as returned by mesh.cells()
     """
     # Get element-to-node connectivity.
     # For a tetrahedral mesh, each row usually contains 4 vertex indices.
@@ -231,8 +232,8 @@ def extract_mesh_bc_nodemask(bc, V):
             Boundary condition applied on the vector function space.
         V: dolfin.FunctionSpace
             Vector function space on which the boundary condition is defined.
-        return: torch.Tensor
-            Tensor of shape (num_vertices, 1) with float values 0.0 or 1.0, where 1.0 indicates a constrained vertex.
+    return: torch.Tensor
+        Tensor of shape (num_vertices, 1) with float values 0.0 or 1.0, where 1.0 indicates a constrained vertex.
     """
 
     # Retrieve the constrained DOFs from the boundary condition.

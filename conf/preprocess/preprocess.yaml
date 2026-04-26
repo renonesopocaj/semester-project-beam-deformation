@@ -1,6 +1,6 @@
 defaults:
-  - dataset: large
-  - paths: single_direction_beam
+  - size: small
+  - dataset_path: biax_longer
   - normalizer: z_isotropic
   - features: all # contains all features to be toggled on/off
   - _self_

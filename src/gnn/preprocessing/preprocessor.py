@@ -6,14 +6,12 @@ A lot of redundancy in Data(...) which are the PyG-formatted graphs, because it 
 later in training without having to slice tensors and "remembering" which feature is where.
 One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
 Note one file = one trajectory.
-
 Validation/test:
     1. load files and stats
     2. for each file:
         2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
         2.b. normalize with stats loaded in 1
     3. for each file: save
-
 Train:
     1. load files
     2. for each file:

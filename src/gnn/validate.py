@@ -19,7 +19,7 @@ from torch_geometric.loader import DataLoader
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max
-from src.gnn.train import create_model, resolve_trainer_precision
+from src.gnn.train import create_model, resolve_trainer_precision, _load_traj_metadata
 from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 
@@ -101,7 +101,9 @@ def main():
 
     # Build model, optimizer, scheduler (optimizer/scheduler needed by LitModule constructor
     # but won't be stepped during eval; their state is overwritten by the checkpoint)
-    model = create_model(train_cfg, preprocess_cfg, device)
+    template_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
+    graph_template = template_dataset[0]
+    model = create_model(train_cfg, preprocess_cfg, device, graph_template)
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
 
@@ -139,6 +141,7 @@ def main():
         print(f"Evaluating split: {split_name}")
         print("=" * 60 + "\n")
         dataset, dataloader = _load_split(split_name, train_cfg)
+        split_dir = train_cfg.val_dir if split_name == "validation" else train_cfg.test_dir
 
         # Resolve "all" to the full trajectory range now that we know num_trajectories
         selected = _resolve_in_depth(in_depth_cfg, dataset.num_trajectories)
@@ -147,7 +150,9 @@ def main():
         else:
             lightning_module.selected_validation_trajectories = selected
 
-        lightning_module.set_test_context(test_dataset=dataset, split_name=split_name)
+        traj_metadata = _load_traj_metadata(split_dir, train_cfg.extra_info_dir)
+        lightning_module.set_test_context(test_dataset=dataset, split_name=split_name,
+                                          traj_metadata=traj_metadata)
         eval_trainer.test(model=lightning_module, dataloaders=dataloader,
                           ckpt_path=str(checkpoint_path))
 

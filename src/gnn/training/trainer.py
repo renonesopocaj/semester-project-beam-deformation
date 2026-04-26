@@ -16,7 +16,7 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
-from src.gnn.misc_helpers.misc import compute_mean_relative_mae
+from src.gnn.misc_helpers.misc import compute_mean_relative_mae, human_readable_storage, module_param_and_buffer_storage_bytes
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
@@ -62,6 +62,7 @@ class LitModule(L.LightningModule):
     # Which trajectories get in-depth plots
     selected_validation_trajectories: list[int]
     selected_test_trajectories: list[int]
+    test_traj_metadata: dict
     noise_feature_update_mode: str
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
@@ -121,6 +122,7 @@ class LitModule(L.LightningModule):
         self.test_dataset = None
         # default
         self.eval_split_name = "test"
+        self.test_traj_metadata = {}
         self.log_test_media = train_cfg.log_test_media
         self.rollout_all_step_error = 0.0
         # Train
@@ -149,6 +151,30 @@ class LitModule(L.LightningModule):
                 f"Expected 'exact' or 'taylor'."
             )
 
+    def on_fit_start(self):
+        """
+        Called at the beginning of fit. Sets up W&B metric definitions and model watching.
+        Only executed on rank 0 for distributed training safety.
+
+        Old one:
+        if not self.trainer.is_global_zero:
+            return
+        nbytes = module_param_and_buffer_storage_bytes(self.model)
+        print(f"LitModule.model at fit start (params+buffers): {human_readable_storage(nbytes)} ({nbytes} bytes)")
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+
+        if self.wandb_train_cfg_yaml:
+            self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
+
+        # Define all metrics with epoch as x-axis
+        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
+        # Watch model gradients and parameters
+        if self.enable_wandb_watch:
+            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
+        # Log initial epoch value
+        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS
@@ -215,25 +241,6 @@ class LitModule(L.LightningModule):
         if hasattr(root_ds, "set_noise_epoch"):
             root_ds.set_noise_epoch(self.current_epoch)
 
-    def on_fit_start(self):
-        """
-        Called at the beginning of fit. Sets up W&B metric definitions and model watching.
-        Only executed on rank 0 for distributed training safety.
-        """
-        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
-            return
-
-        if self.wandb_train_cfg_yaml:
-            self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
-
-        # Define all metrics with epoch as x-axis
-        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
-        # Watch model gradients and parameters
-        if self.enable_wandb_watch:
-            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
-        # Log initial epoch value
-        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
-
     def on_fit_end(self):
         """
         Called at the end of fit. Unwatches model to prevent memory leaks.
@@ -290,7 +297,7 @@ class LitModule(L.LightningModule):
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
 
-    def set_test_context(self, test_dataset, split_name):
+    def set_test_context(self, test_dataset, split_name, traj_metadata):
         """
         Configures the module for a final evaluation pass, specifying the dataset, split label.
 
@@ -299,9 +306,12 @@ class LitModule(L.LightningModule):
                 Dataset with trajectory boundary information for per-trajectory rollout.
             split_name: str
                 Prefix used for test logging.
+            traj_metadata: dict
+                Map from trajectory index to metadata dict (fx, fy, fz, L, W, ood_features) for plot subtitles.
         """
         self.test_dataset = test_dataset
         self.eval_split_name = split_name
+        self.test_traj_metadata = traj_metadata if traj_metadata is not None else {}
 
     ##############################################################################################################
     #                                            TRAIN, VAL
@@ -717,6 +727,7 @@ class LitModule(L.LightningModule):
         traj_split_name = f"traj{traj_idx}, {self.eval_split_name}"
         filename_prefix = f"traj{traj_idx}_{self.eval_split_name}"
         output_dir = self.model_evaluation_dir / self.eval_split_name / f"traj{traj_idx}"
+        traj_meta = self.test_traj_metadata.get(traj_idx)
         paths = in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
-                               self.plot_diagnostics_advanced)
+                               self.plot_diagnostics_advanced, traj_meta)
         return paths

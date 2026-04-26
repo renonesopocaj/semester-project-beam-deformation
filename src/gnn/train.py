@@ -4,6 +4,7 @@ Main training script.
 Final test/validation media may include scatter plots with R^2 from scikit-learn (see validation/plot_rollout.py).
 """
 
+import json
 import os
 import time
 import yaml
@@ -22,9 +23,11 @@ from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
-
+from src.gnn.models.gunet.gunet import GUNet
+from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
+from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.preprocess import load_selected_trajectories
@@ -36,6 +39,45 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
+
+
+def _load_traj_metadata(split_dir, extra_info_dir):
+    """
+    Build a map traj_idx -> metadata dict for in-depth plot subtitles.
+
+    Prefers processed split_dir/trajectory_params.json (fx, fy, fz, L, W, D, ood_features).
+    If missing, falls back to extra_info/test_ood_features.json for the test split only (ood_features only).
+
+    Args:
+        split_dir: str or Path
+            Processed split directory, e.g. .../large/test.
+        extra_info_dir: str or Path or None
+            Processed dataset extra_info directory, or None.
+    return: dict
+        Keys are int trajectory indices; values are dicts suitable for _format_traj_metadata_text.
+    """
+    split_path = Path(split_dir)
+    params_path = split_path / "trajectory_params.json"
+    if params_path.exists():
+        with open(params_path) as fh:
+            raw_params = json.load(fh)
+        by_idx = {}
+        for _fname, entry in raw_params.items():
+            by_idx[int(entry["traj_idx"])] = entry
+        return by_idx
+    if extra_info_dir is None:
+        return {}
+    if split_path.name != "test":
+        return {}
+    ood_path = Path(extra_info_dir) / "test_ood_features.json"
+    if not ood_path.exists():
+        return {}
+    with open(ood_path) as fh:
+        ood_raw = json.load(fh)
+    by_idx = {}
+    for key_str, ood_list in ood_raw.items():
+        by_idx[int(key_str)] = {"ood_features": ood_list}
+    return by_idx
 
 
 def resolve_trainer_precision(accelerator, configured_precision):
@@ -66,6 +108,8 @@ def maybe_compile_model(model, train_cfg, protect_from_oom):
             Instantiated model to compile.
         train_cfg: TrainYaml
             Training configuration containing the torch_compile flag.
+        protect_from_oom: bool
+            When True, compile without reduce-overhead mode on CUDA to lower peak VRAM.
         return: torch.nn.Module
             Original model if compilation is disabled, otherwise compiled model.
     """
@@ -79,27 +123,40 @@ def maybe_compile_model(model, train_cfg, protect_from_oom):
         # Important for your OOM case:
         # torch._inductor.config.triton.cudagraphs = False
         # Safer than "reduce-overhead" for memory.
-        compiled_model =  torch.compile(model, fullgraph=True)
+        compiled_model = torch.compile(model, fullgraph=True)
     else:
         compile_mode = "reduce-overhead" if torch.cuda.is_available() else "default"
         compiled_model = torch.compile(model, mode=compile_mode, fullgraph=True)
     return compiled_model
 
-def create_model(train_cfg, preprocess_cfg, device):
+def create_model(train_cfg, preprocess_cfg, device, graph_template):
     if train_cfg.model_name == "MGN":
         # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
         # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
         # layer_norm_enable_processor
         return MeshGraphNet(node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
-                            encoder_latent_size=train_cfg.latent_dim, decoder_latent_size=train_cfg.latent_dim,
-                            processor_latent_size=train_cfg.latent_dim,
-                            num_msgs=train_cfg.num_messages,
+                            encoder_latent_size=train_cfg.hidden_processor_dim, encoder_decoder_latent_size=train_cfg.hidden_processor_dim,
+                            processor_latent_size=train_cfg.hidden_processor_dim, num_msgs=train_cfg.num_messages,
                             num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
                             layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
                             layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
-                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor)
+                            layer_norm_enable_processor=train_cfg.layer_norm_enable_processor,
+                            num_layers_heads=train_cfg.num_layers_heads,
+                            num_layers_encoder=train_cfg.num_layers_encoder)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
+    elif train_cfg.model_name == "gunet":
+        return GUNet(in_channels=preprocess_cfg.node_channels, hidden_channels=train_cfg.hidden_channels,
+                     layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,
+                     pool_ratios=train_cfg.pool_ratios, sum_res=train_cfg.sum_res,
+                     enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
+                     decoder_layers=train_cfg.decoder_layers)
+    elif train_cfg.model_name == "magnet":
+        return MAGNet(preprocess_cfg.node_channels, 4, train_cfg.hidden_channels, train_cfg.num_poolings,
+                      train_cfg.layers_per_level, train_cfg.window_size, train_cfg.pool_seed, train_cfg.pool_aggr,
+                      train_cfg.activation, graph_template)
+    elif train_cfg.model_name == "transolver":
+        raise NotImplementedError("Transolver not implemented")
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
@@ -163,6 +220,13 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                   pin_memory=train_cfg.pin_memory,
                                   #drop_last=train_cfg.torch_compile
                                   )
+    peek_batch = next(iter(train_dataloader))
+    peek_batch_bytes = pyg_data_tensor_storage_bytes(peek_batch)
+    peek_num_graphs = int(peek_batch.num_graphs)
+
+    print(f"\n\nOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
+          f"({peek_batch_bytes} bytes), num_graphs={peek_num_graphs}, config batch_size={train_cfg.batch_size}")
+    print("(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)\n\n")
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
@@ -170,15 +234,24 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # PyTorch's docs say it is generally not recommended to return CUDA tensors from multi-process data loading, and
         # recommend CPU tensors plus pin_memory=True for faster transfer instead.
         # NOTE: batch size does not influence rollout since we use a separate dataloader (internal)
-        val_batch_size = train_cfg.batch_size * 2
+        val_batch_size = train_cfg.batch_size
         validation_dataloader = DataLoader(validation_dataset, batch_size=val_batch_size, shuffle=False,
                                            num_workers=train_cfg.num_workers, persistent_workers=train_cfg.num_workers > 0,
                                            pin_memory=train_cfg.pin_memory)
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
-    model = create_model(train_cfg, preprocess_cfg, device)
-    model = maybe_compile_model(model, train_cfg, train_cfg.protect_from_oom)
+    model_eager = create_model(train_cfg, preprocess_cfg, device, peek_batch)
+    del peek_batch
+    eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
+    print("\n\nModel info:")
+    print(f"\tModel params+buffers before torch.compile: {human_readable_storage(eager_model_bytes)} "
+          f"({eager_model_bytes} bytes)")
+    model = maybe_compile_model(model_eager, train_cfg, train_cfg.protect_from_oom)
+    wrapped_model_bytes = module_param_and_buffer_storage_bytes(model)
+    print(f"\tModel params+buffers after torch.compile: {human_readable_storage(wrapped_model_bytes)} "
+          f"({wrapped_model_bytes} bytes) "
+          "(same tensor storage; torch.compile may still increase peak VRAM for kernels/caching.)")
     total_params = sum(parameter.numel() for parameter in model.parameters())
     print(f"\tTotal parameters: {total_params:,}")
     # Set optimizer and scheduler
@@ -334,7 +407,9 @@ def main(cfg):
     # =================== Final validation ===================
     if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation")
+        val_traj_metadata = _load_traj_metadata(train_cfg.val_dir, train_cfg.extra_info_dir)
+        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
+                                          traj_metadata=val_traj_metadata)
         fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
 
     # =================== Testing ===================
@@ -347,7 +422,9 @@ def main(cfg):
                                  num_workers=train_cfg.num_workers,
                                  persistent_workers=train_cfg.num_workers > 0,
                                  pin_memory=train_cfg.pin_memory)
-    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test")
+    test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
+    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
+                                       traj_metadata=test_traj_metadata)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
 
 if __name__ == "__main__":

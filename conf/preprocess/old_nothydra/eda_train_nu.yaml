@@ -1,0 +1,90 @@
+defaults:
+  - dataset: large # size only: large | medium | small
+  - paths: rotated_nu # rotated_beam | single_direction_beam
+  - normalizer: z_anisotropic
+  - features: all # which feature augmentation use
+  - _self_
+
+device: cpu
+dt: 0.08
+seed: 42
+time_discretization_method: "second_order_central" # newmark vs second_order_central
+
+eda_split: train # Possible values: train | val | test
+gif_generation_mode: UNIFORMLY_SAMPLED # Possible values: ALL | UNIFORMLY_SAMPLED
+gif_sample_percentage: 10.0
+generate_distributions: false
+
+normalization_runs:
+  - name: none
+    label: "No norm"
+    normalizer_method: "None"
+    isotropic_normalizer: true
+    generate_gifs: true
+#  - name: z_isotr
+#    label: "Z isotr."
+#    normalizer_method: "z"
+#    isotropic_normalizer: true
+#    generate_gifs: false
+#  - name: z_anisotr
+#    label: "Z anisotr."
+#    normalizer_method: "z"
+#    isotropic_normalizer: false
+#    generate_gifs: false
+#  - name: robust_isotr
+#    label: "Robust isotr."
+#    normalizer_method: "robust"
+#    isotropic_normalizer: true
+#    generate_gifs: false
+#  - name: robust_anisotr
+#    label: "Robust anisotr."
+#    normalizer_method: "robust"
+#    isotropic_normalizer: false
+#    generate_gifs: false
+
+run_colors:
+  none: "gray"
+  z_isotr: "tab:blue"
+  z_anisotr: "tab:orange"
+  robust_isotr: "tab:green"
+  robust_anisotr: "tab:red"
+
+vector_run_names:
+  - none
+  - z_isotr
+  - z_anisotr
+  - robust_isotr
+  - robust_anisotr
+
+scalar_run_names:
+  - none
+  - z_isotr
+  - robust_isotr
+
+# Scalar-only features do not have xyz coordinates, so isotropic vs anisotropic normalization are equivalent.
+# Includes target von Mises, node norms (enable_node_norms), edge norms, stretch, and direction cosine when features: all.
+scalar_feature_names:
+  - von_mises
+  - displacement_norm
+  - force_norm
+  - velocity_norm
+  - position_norm
+  - rest_pos_norm
+  - displacement_pos_past_norm
+  - position_past_norm
+  - edge_relative_pos_norm
+  - edge_rest_relative_pos_norm
+  - edge_displacement_norm
+  - edge_force_norm
+  - edge_velocity_norm
+  - edge_stretch_norm
+  - edge_direction_cosine
+
+hydra:
+  run:
+    dir: hydra/outputs/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/eda/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false

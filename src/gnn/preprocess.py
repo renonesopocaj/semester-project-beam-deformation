@@ -32,30 +32,30 @@ def load_selected_trajectories(extra_info_dir):
         return {}
     path = Path(extra_info_dir) / "selected_trajectories.json"
     if not path.exists():
-        raise FileNotFoundError(
-            f"Selected trajectories file not found at {path}. "
-            "Add selected_trajectories.json next to the raw dataset extra_info "
-            "(same directory as preprocess extra_info_dir / raw extra_info)."
-        )
+        raise FileNotFoundError(f"Selected trajectories file not found at {path}. "
+                                "Add selected_trajectories.json next to the raw dataset extra_info "
+                                "(same directory as preprocess extra_info_dir / raw extra_info).")
     with open(path) as f:
         return json.load(f)
 
 
 def create_dir_name(cfg_obj):
+    name_feat_str = f"_{cfg_obj.name_features}"
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else ''
-    miseslog_str = '_log' if cfg_obj.mises_log else ''
+    # miseslog_str = '_log' if cfg_obj.mises_log else ''
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
-    enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
-    enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_pos_displ else '_noxtm1'
-    enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
-    enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
-    enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
-    enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
-    enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
+    # enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
+    # enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_history else '_noxtm1'
+    # enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
+    # enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
+    # enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
+    # enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
+    # enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
     time_discr_str = "_centr" if cfg_obj.time_discretization_method == "second_order_central" else "_newmark"
-    processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
-                          f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
-                          f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+    # processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
+    #                       f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
+    #                       f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+    processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}"
     return processed_dir_name
 
 def selected_indices_for_split(selected_trajs, split):
@@ -91,6 +91,26 @@ def selected_limit_from_json(selected_trajs, default_limit):
     """
     timestep_limit = int(selected_trajs.get("selected_num_steps", selected_trajs["num_steps"]))
     return timestep_limit
+
+def _copy_trajectory_params_json(raw_graphs_dir, processed_split_dir):
+    """
+    Copy trajectory_params.json from the raw split directory (parent of graphs/) into the processed split directory.
+
+    Args:
+        raw_graphs_dir: str or Path
+            Path to raw split graphs folder, e.g. .../test/graphs.
+        processed_split_dir: str or Path
+            Processed split output directory, e.g. .../large/test.
+    return: None
+        Copies file when source exists; otherwise no-op.
+    """
+    src = Path(raw_graphs_dir).parent / "trajectory_params.json"
+    if not src.exists():
+        return
+    dst = Path(processed_split_dir) / "trajectory_params.json"
+    shutil.copy2(src, dst)
+    print(f"\tCopied trajectory_params.json -> {dst}")
+
 
 def create_preprocessor(split, cfg, save_dir_train, selected_indices, selected_limit):
     """
@@ -193,9 +213,11 @@ def main(cfg):
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
     print("\n" + "=" * 60 + "\nTest preprocessing"+ "\n" + "=" * 60)
     preprocessor_test.preprocess_data(cfg_obj, graphs_dir_test, save_dir_test)
+    _copy_trajectory_params_json(graphs_dir_test, save_dir_test)
     print("\n" + "=" * 60 + "\nPreprocessing complete!"+ "\n" + "=" * 60)
     print("\n" + "=" * 60 + "\nVal preprocessing"+ "\n" + "=" * 60)
     preprocessor_val.preprocess_data(cfg_obj, graphs_dir_val, save_dir_val)
+    _copy_trajectory_params_json(graphs_dir_val, save_dir_val)
     print("\n" + "=" * 60 + "\nPreprocessing complete!" + "\n" + "=" * 60)
 
 

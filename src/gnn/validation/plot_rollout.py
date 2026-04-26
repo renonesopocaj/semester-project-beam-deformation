@@ -1,5 +1,6 @@
 """
 plot_rollout.py
+
 Contains all files that plot metrics or diagnostics for rollout, in depth for each trajectory.
 Main access points: in_depth_plots()
 """
@@ -48,7 +49,7 @@ def _finite_coordinate_bounds_from_stack(all_coordinates):
         finite_coords = all_coordinates[mask]  # Only finite positions fed into axis limit computation.
         coordinate_min = finite_coords.min(axis=0).astype(np.float64)  # Per-axis min for set_xlim/ylim/zlim lower.
         coordinate_max = finite_coords.max(axis=0).astype(np.float64)  # Per-axis max for set_xlim/ylim/zlim upper.
-    eps = 1e-9  # Tiny extent so degenerate axis range still draws in 3D.
+    eps = 1e-10  # Tiny extent so degenerate axis range still draws in 3D.
     for axis in range(3):
         if not np.isfinite(coordinate_min[axis]) or not np.isfinite(coordinate_max[axis]):
             coordinate_min[axis] = -1.0  # Replace bad axis with symmetric default for stable camera box.
@@ -100,7 +101,7 @@ def _finite_scalar_max_from_arrays(arrays):
     return max_val  # Upper end of jet colormap for von Mises surface GIFs.
 
 
-def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
+def _plot_volume_change(pred_rollout, true_rollout, path, split_name, traj_metadata):
     """
     Plot volume change over time for predicted vs ground truth.
 
@@ -112,6 +113,8 @@ def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
         path: Path
         split_name: str
             string with split name
+        traj_metadata: dict or None
+            Trajectory metadata for a footnote textbox; skipped when None.
     """
     fig, ax = plt.subplots()  # Single 2D axes: x = timestep index, y = total mesh volume scalar.
     true_volumes_list, pred_volumes_list = [], []  # Series accumulated for two ax.plot lines.
@@ -139,6 +142,10 @@ def _plot_volume_change(pred_rollout, true_rollout, path, split_name):
     plt.ylabel("Volume")  # Vertical axis = summed absolute tet volumes (model units).
     ax.set_title(f"Volume Change\n[{split_name}, 1 sample, {len(pred_rollout)} timesteps]")  # Title encodes split + T.
     ax.legend()  # Distinguish true vs predicted traces.
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.18)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
     plt.savefig(path)  # Write static PNG to validation folder.
     plt.close()  # Release figure backend memory.
 
@@ -205,7 +212,8 @@ def update_surface_collection(ax, faces, coordinates, node_values, cmap, norm, p
     poly_collection.set_facecolors(face_colors)  # Refresh colors after verts (e.g. stress or error field changed).
     return poly_collection  # Same object reused next GIF frame.
 
-def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name):
+def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps, bbox_only_on_true, verbose, split_name,
+                              traj_metadata):
     """
     Create side-by-side comparison GIF of predicted vs ground truth.
     Each frame shows the timestep index as t = i / last (0-based).
@@ -226,6 +234,10 @@ def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps
         bbox_only_on_true: bool
             Whether to base bounding box on ground truth only
         verbose: bool
+        split_name: str
+            Split label for titles.
+        traj_metadata: dict or None
+            Trajectory metadata for a static footnote textbox; skipped when None.
 
     """
     assert len(pred_rollout) == len(true_rollout), ("Mismatch in predicted and ground truth frames.")
@@ -268,8 +280,15 @@ def _make_beam_comparison_gif(pred_rollout, true_rollout, L, W, D, gif_path, fps
 
     num_steps = len(pred_rollout)  # Number of animation frames equals rollout length.
     last_timestep = num_steps - 1  # Denominator for timestep overlay text (0-based last index).
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.18)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
+        timestep_y = 0.09
+    else:
+        timestep_y = 0.03
     timestep_label = fig.text(
-        0.5, 0.03, "", ha="center", va="bottom", fontsize=12, fontweight="bold")  # Bottom-center footer updated per frame.
+        0.5, timestep_y, "", ha="center", va="bottom", fontsize=12, fontweight="bold")  # Bottom-center footer updated per frame.
 
     polycoll_true = None  # Lazily created Poly3DCollection for left subplot; reused across frames.
     polycoll_pred = None  # Same for right subplot predicted mesh.
@@ -542,7 +561,7 @@ def _build_rollout_summary(true_rollout, pred_rollout):
     return summary  # Single structure reused to avoid recomputing concat per plot type.
 
 
-def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, num_timesteps):
+def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, num_timesteps, traj_metadata):
     """
     Args:
         rollout_summary: dict
@@ -553,6 +572,12 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
             Supported mode: `signed_relative`.
         output_path: Path
             Destination GIF path.
+        split_name: str
+            Split label for titles.
+        num_timesteps: int
+            Rollout length for titles.
+        traj_metadata: dict or None
+            Trajectory metadata for a static footnote textbox; skipped when None.
         return: None
             Saves the animated error mesh to disk.
     """
@@ -584,6 +609,10 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
     ax.set_zlabel("Z")
     ax.set_box_aspect(tuple(coordinate_span + padding))  # Physical proportions from span+pad (matches padded lims).
     ax.view_init(elev=30, azim=45)  # Fixed camera for GIF coherence.
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.14)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
 
     poly_collection = None  # Mutable 3D surface artist updated each timestep.
     frames = []  # RGB buffers for GIF writer.
@@ -611,7 +640,7 @@ def _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path,
     imageio.mimsave(output_path, frames, fps=4, loop=0)  # Save error-on-mesh animation at fixed 4 fps.
 
 
-def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps):
+def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_timesteps, traj_metadata):
     """
     Args:
         field_summary: dict
@@ -622,6 +651,8 @@ def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_
             Split label for the title.
         num_timesteps: int
             Number of timesteps for the title.
+        traj_metadata: dict or None
+            Trajectory metadata for a footnote textbox; skipped when None.
         return: None
             Saves the scatter plot to disk with sklearn.metrics.r2_score(target, prediction) annotated.
     """
@@ -640,6 +671,10 @@ def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_
         fig, ax = plt.subplots(figsize=(7, 7))  # Empty square figure for placeholder message.
         ax.text(0.5, 0.5, "No finite data", ha="center", va="center", transform=ax.transAxes)  # Centered notice in axes coords.
         ax.set_title(f"{field_summary['label']} Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]")
+        if traj_metadata is not None:
+            fig.subplots_adjust(bottom=0.18)
+            fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                     bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
         fig.tight_layout()  # Margins for title/text.
         fig.savefig(output_path)  # Still emit a PNG so downstream path.exists checks succeed.
         plt.close(fig)
@@ -657,6 +692,10 @@ def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_
     ax.text(0.03, 0.97, format_r2_text(r2), transform=ax.transAxes, fontsize=11, verticalalignment="top",
             bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))  # Upper-left R² label in axes-relative coords.
     ax.grid(True, alpha=0.3)  # Light grid behind dense scatter for readability.
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.18)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
     fig.tight_layout()  # Fit subplots within figure before save.
     fig.savefig(output_path)  # Write PNG scatter diagnostic.
     plt.close(fig)
@@ -751,7 +790,7 @@ def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_na
     plt.close(fig)
 
 
-def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
+def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name, traj_metadata):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
     which corresponds to the signed relative error
@@ -766,6 +805,10 @@ def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_p
             Directory where diagnostic artifacts will be saved.
         filename_prefix: str
             Prefix used for saved artifact names.
+        split_name: str
+            Split label for titles.
+        traj_metadata: dict or None
+            Trajectory metadata for error-mesh GIF footnotes; skipped when None.
         return: None
             Saves all requested validation plots.
     """
@@ -775,10 +818,11 @@ def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_p
     for field_name, field_label in TARGET_FIELDS:
         for error_mode in ["signed_relative"]:
             output_path = output_dir / f"{filename_prefix}_{field_name}_{error_mode}_error.gif"  # One GIF per field/mode.
-            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout))  # Render+save.
+            _render_error_mesh_gif(rollout_summary, field_name, error_mode, output_path, split_name, len(true_rollout),
+                                   traj_metadata)  # Render+save.
 
 
-def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_prefix, split_name):
+def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_prefix, split_name, traj_metadata):
     """
     Plot
     1. scatter plots: prediction vs target, where every point is one node
@@ -792,6 +836,10 @@ def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_pre
             Directory where diagnostic artifacts will be saved.
         filename_prefix: str
             Prefix used for saved artifact names.
+        split_name: str
+            Split label for titles.
+        traj_metadata: dict or None
+            Trajectory metadata for scatter PNG footnotes; skipped when None.
     return: None
         Saves all requested validation plots.
     """
@@ -802,7 +850,7 @@ def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_pre
     for field_name, field_label in TARGET_FIELDS:
         scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"  # Output scatter per field.
         field_summary = rollout_summary["fields"][field_name]  # Slice precomputed targets/preds for this quantity.
-        _plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps)  # Save nodal scatter PNG.
+        _plot_prediction_target_scatter(field_summary, scatter_path, split_name, num_timesteps, traj_metadata)  # Save nodal scatter PNG.
         # correlation_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
         # plot_edge_error_correlation(field_summary, correlation_path, split_name, num_timesteps)
 
@@ -820,7 +868,7 @@ def compute_coordinate_bounds(coordinates_per_step):
     return _finite_coordinate_bounds_from_stack(all_coordinates)  # Min/max/padding for 3D axis setup in GIFs.
 
 def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
-                   plot_diagnostics_advanced):
+                   plot_diagnostics_advanced, traj_metadata):
     """
     Generates all in-depth diagnostic plots for a single trajectory rollout.
     Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
@@ -837,8 +885,12 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
             Label used in plot titles, e.g. "traj0, test".
         filename_prefix: str
             Prefix for saved filenames, e.g. "traj0_test".
-        return: dict
-            Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
+        plot_diagnostics_advanced: boo;
+            boolean to plot more complex diagnostics
+        traj_metadata: dict or None
+            Per-trajectory metadata (fx, fy, fz, L, W, ood_features) for footnote textboxes; skipped when None.
+    return: dict
+        Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
     output_dir = Path(output_dir)  # Root folder for this trajectory’s validation artifacts.
     output_dir.mkdir(parents=True, exist_ok=True)  # Create hierarchy before any savefig/mimsave.
@@ -849,15 +901,18 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
     rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"  # MAE vs timestep PNG path.
 
     # Plots
-    _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name)  # 2D volume curves.
+    _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name,
+                        traj_metadata=traj_metadata)  # 2D volume curves.
     _make_beam_comparison_gif(pred_rollout=pred_rollout, true_rollout=true_rollout, L=1.0, W=0.1, D=0.04,
                               gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
-                              split_name=traj_split_name)  # Side-by-side 3D stress GIF.
+                              split_name=traj_split_name, traj_metadata=traj_metadata)  # Side-by-side 3D stress GIF.
     _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)  # Position MAE curve.
     _plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
-                              filename_prefix=filename_prefix, split_name=traj_split_name)  # Signed relative error mesh GIFs.
+                              filename_prefix=filename_prefix, split_name=traj_split_name,
+                              traj_metadata=traj_metadata)  # Signed relative error mesh GIFs.
     _plot_scatter_edge_corr(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
-                            filename_prefix=filename_prefix, split_name=traj_split_name)  # Per-field scatter PNGs.
+                            filename_prefix=filename_prefix, split_name=traj_split_name,
+                            traj_metadata=traj_metadata)  # Per-field scatter PNGs.
 
     if plot_diagnostics_advanced:
         try:

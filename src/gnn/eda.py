@@ -16,13 +16,13 @@ import gc
 from pathlib import Path
 
 import hydra
-from src.gnn.eda.eda_plot import plot_all_distributions
 from omegaconf import OmegaConf
+
+from src.gnn.eda_helpers.eda_plot import plot_all_distributions
+from src.gnn.eda_helpers.eda_preprocessor import EdaPreprocessor
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
 from src.gnn.preprocess import (load_selected_trajectories, selected_indices_for_split, selected_limit_from_json)
-from src.gnn.eda.eda_preprocessor import EdaPreprocessor
 
-EPS = 1e-6
 DEVICE = "cpu"
 
 
@@ -46,7 +46,7 @@ def _create_variant_cfg(base_cfg, normalizer_method, isotropic_normalizer):
 
 
 
-@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_single")
+@hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="eda_train_easiest_rotated")
 def main(cfg):
     """
     Args:
@@ -86,6 +86,7 @@ def main(cfg):
         preprocessor = EdaPreprocessor(variant_cfg, save_dir, run["name"], eda_cfg.gif_generation_mode,
                                        eda_cfg.gif_sample_percentage, eda_split, train_artifact_dir,
                                        selected_indices, selected_limit)
+        # Generate gifs is inside here
         preprocessor.preprocess_data(variant_cfg, graphs_dir, run["generate_gifs"])
         eda_obj_dict[run["name"]] = preprocessor.eda_obj
         del preprocessor

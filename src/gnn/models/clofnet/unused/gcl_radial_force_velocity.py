@@ -4,7 +4,7 @@ radial_force_velocity_gcl.py
 TODO: NOT USED BY US, JUST BASELINES
 """
 
-from src.gnn.models.clofnet.gcl.gcl import AbstractGCL, unsorted_segment_mean
+from src.gnn.models.clofnet.unused.gcl import AbstractGCL, unsorted_segment_mean
 import torch
 from torch import nn
 

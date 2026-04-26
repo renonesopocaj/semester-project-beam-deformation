@@ -1,13 +1,23 @@
+name_features: "all"
 # Processing target von mises
 mises_log: true
 # Both edge and node
 enable_absolute_pos: true
-enable_past_pos_displ: true
+enable_past_history: true
 # Node
 enable_node_norms: true
 # Edge
 enable_edge_velocity: true
 enable_force_edge: true
+enable_displ_edge: true
+enable_abs_pos_edge: true
+enable_abs_rest_pos_edge: true
+# Edge norms
+enable_abs_pos_edge_norm: true # note: displacement norm is not necessary (it's the same)
+enable_rest_pos_edge_norm: true
+enable_force_edge_norm: true
+enable_edge_velocity_norm: true
+# Stretch (edge)
 enable_stretch_edge: true
 # Rotation (edge)
 enable_rotation_angle: true
