@@ -1,6 +1,7 @@
 """
-Diagnostic prints for whole-mesh ClofNet scalarization invariance under SE(3).
+test_scalarization_clofnet_whole.py
 
+Diagnostic prints for whole-mesh ClofNet scalarization invariance under SE(3).
 Two meshes are used: one beam-like lattice, and one obtained by rotating the
 whole mesh and then translating it. After separate centroid centralization, all
 non-degenerate directed-edge scalarization coefficients should match.

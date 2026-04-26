@@ -1,6 +1,7 @@
 """
-Diagnostic prints for ClofNet-style scalarization (paper Eq. 2–3) on a beam-like lattice.
+test_scalarization_clofnet.py
 
+Diagnostic prints for ClofNet-style scalarization (paper Eq. 2–3) on a beam-like lattice.
 Uses paper-exact normalized frame (a, b, c) and six inner-product coefficients per directed edge.
 No assertions: prints coefficients, differences, and torch.allclose outcomes.
 """
@@ -155,9 +156,6 @@ def print_edge_block(title, x_centered, row, col, eps):
             Target node index.
         eps: float
             Stability epsilon for norms.
-
-    return:
-        None
     """
     a, b, cvec, coeff_row, coeff_col = frame_and_coeffs(x_centered, row, col, eps)
     print(title)
@@ -183,9 +181,6 @@ def print_comparison(label, u, v, rtol, atol):
             Relative tolerance for torch.allclose.
         atol: float
             Absolute tolerance for torch.allclose.
-
-    return:
-        None
     """
     diff = u - v
     ok = torch.allclose(u, v, rtol=rtol, atol=atol)
@@ -217,14 +212,11 @@ def run_case(title, x_raw, i, j, h, k, eps, rtol, atol):
             allclose rtol.
         atol: float
             allclose atol.
-
-    return:
-        None
     """
     x = centralize_positions(x_raw)
-    print("=" * 72)
+    print("\n" + "=" * 72)
     print(title)
-    print("indices i, j, h, k:", i, j, h, k)
+    print("\n" + "indices i, j, h, k:", i, j, h, k)
     seg_ij = torch.linalg.norm(x[i] - x[j])
     seg_hk = torch.linalg.norm(x[h] - x[k])
     print("||x_i - x_j|| (centered):", float(seg_ij))
@@ -248,12 +240,6 @@ def run_case(title, x_raw, i, j, h, k, eps, rtol, atol):
 def main():
     """
     Build lattice, run translation case and same-length case, print diagnostics.
-
-    Args:
-        None
-
-    return:
-        None
     """
     eps = 1e-8
     rtol = 1e-5
@@ -265,8 +251,6 @@ def main():
     width = 1.0
     height = 0.2
     x_raw = build_beam_lattice(nx, ny, nz, length, width, height)
-    dx = length / float(nx - 1)
-    dy = width / float(ny - 1)
     iy0 = 1
     iz0 = 1
     i = lattice_index(0, iy0, iz0, nx, ny)
@@ -276,8 +260,9 @@ def main():
     t_vec = x_raw[j] - x_raw[i]
     err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec))
     err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec))
-    run_case("Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).", x_raw, i, j, h, k, eps, rtol, atol)
-    print("sanity: ||x_h - (x_i + t)|| raw:", float(err_h), "||x_k - (x_j + t)|| raw:", float(err_k))
+    run_case("Case 1: (h,k) is a translation of (i,j) by one beam step along x (same mesh, local pair shift).",
+             x_raw, i, j, h, k, eps, rtol, atol)
+    print("Sanity: ||x_h - (x_i + t)|| raw:", float(err_h), "||x_k - (x_j + t)|| raw:", float(err_k))
     i2 = i
     j2 = j
     h2 = lattice_index(2, 0, 0, nx, ny)
@@ -286,18 +271,13 @@ def main():
     len_hk = torch.linalg.norm(x_raw[h2] - x_raw[k2])
     if not torch.isclose(len_ij, len_hk, rtol=rtol, atol=atol):
         print("WARNING Case 2 setup: edge lengths differ:", float(len_ij), float(len_hk))
-    run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).", x_raw, i2, j2, h2, k2, eps, rtol, atol)
+    run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).",
+             x_raw, i2, j2, h2, k2, eps, rtol, atol)
 
 
 def test_scalarization_diagnostic():
     """
     Pytest entry: run main so `pytest -s` shows prints.
-
-    Args:
-        None
-
-    return:
-        None
     """
     main()
 

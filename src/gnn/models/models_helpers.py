@@ -7,7 +7,7 @@ MLPs are ReLu activated.
 
 import torch.nn as nn
 
-def build_mlp_d(in_size, hidden_size, out_size, num_layers, layer_norm, use_sigmoid, use_softmax):
+def build_mlp_d(in_size, hidden_size, out_size, num_layers, layer_norm, use_sigmoid, use_softmax, dropout):
     """
     Build a multi-layer perceptron with optional layer normalization.
 
@@ -19,14 +19,17 @@ def build_mlp_d(in_size, hidden_size, out_size, num_layers, layer_norm, use_sigm
         layer_norm: bool
         use_sigmoid: bool
         use_softmax: bool
+        dropout: float
+            dropout percentage
     """
     if use_sigmoid and use_softmax: raise ValueError("Only one of use_sigmoid or use_softmax can be true.")
     # First layer
     layers = [nn.Linear(in_size, hidden_size), nn.ReLU()]
     # Add intermediate layers
-    for _ in range(num_layers - 1):
+    for i in range(num_layers - 1):
         layers.append(nn.Linear(hidden_size, hidden_size))
         layers.append(nn.ReLU())
+        layers.append(nn.Dropout(dropout))
     # Add the output layer
     layers.append(nn.Linear(hidden_size, out_size))
     module = nn.Sequential(*layers)

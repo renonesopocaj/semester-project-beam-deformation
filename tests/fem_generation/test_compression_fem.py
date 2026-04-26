@@ -4,8 +4,6 @@ test_compression_fem.py
 Runnable script (not a unittest): six FEA parameter sweeps with f_x=0, baseline from
 conf/fem_generation/fem_rotated_nu.yaml, graphs kept in memory (save patched), and a
 multi-panel PNG written under tests/fem_generation/compression_fem_output/.
-Run from repo root, FEniCS env recommended:
-                     python tests/fem_generation/test_compression_fem.py
 """
 
 from pathlib import Path
