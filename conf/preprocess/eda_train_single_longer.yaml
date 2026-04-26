@@ -1,6 +1,6 @@
 defaults:
-  - dataset: large # size only: large | medium | small
-  - paths: rotated_beam # rotated_beam | single_direction_beam
+  - size: large # size only: large | medium | small
+  - dataset_path: single_longer
   - normalizer: z_anisotropic
   - features: all # which feature augmentation use
   - _self_
@@ -11,9 +11,9 @@ seed: 42
 time_discretization_method: "second_order_central" # newmark vs second_order_central
 
 eda_split: train # Possible values: train | val | test
-gif_generation_mode: ALL # Possible values: ALL | UNIFORMLY_SAMPLED
+gif_generation_mode: UNIFORMLY_SAMPLED # Possible values: ALL | UNIFORMLY_SAMPLED
 gif_sample_percentage: 10.0
-generate_distributions: true
+generate_distributions: false
 
 normalization_runs:
   - name: none
@@ -21,21 +21,21 @@ normalization_runs:
     normalizer_method: "None"
     isotropic_normalizer: true
     generate_gifs: true
-  - name: z_isotr
-    label: "Z isotr."
-    normalizer_method: "z"
-    isotropic_normalizer: true
-    generate_gifs: false
+#  - name: z_isotr
+#    label: "Z isotr."
+#    normalizer_method: "z"
+#    isotropic_normalizer: true
+#    generate_gifs: false
 #  - name: z_anisotr
 #    label: "Z anisotr."
 #    normalizer_method: "z"
 #    isotropic_normalizer: false
 #    generate_gifs: false
-  - name: robust_isotr
-    label: "Robust isotr."
-    normalizer_method: "robust"
-    isotropic_normalizer: true
-    generate_gifs: false
+#  - name: robust_isotr
+#    label: "Robust isotr."
+#    normalizer_method: "robust"
+#    isotropic_normalizer: true
+#    generate_gifs: false
 #  - name: robust_anisotr
 #    label: "Robust anisotr."
 #    normalizer_method: "robust"

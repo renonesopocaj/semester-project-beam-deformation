@@ -1,4 +1,6 @@
 """
+test_gunet_forward.py
+
 Smoke tests for GUNet forward pass (PyG graph in, [N, 4] predictions out).
 """
 
@@ -121,17 +123,10 @@ def test_gunet_single_graph_output_shape():
     x = torch.randn(num_nodes, in_channels)
     edge_index = _ring_edge_index(num_nodes)
     graph = Data(x=x, edge_index=edge_index)
-    model = GUNet(
-        in_channels,
-        hidden_channels,
-        True,
-        depth,
-        pool_ratios,
-        True,
-        True,
-        2,
-        2,
-    )
+    dropout_encoder = 0.0
+    dropout_head = 0.05
+    model = GUNet(in_channels, hidden_channels, True, depth, pool_ratios, True, True,
+                  2, 2, dropout_encoder=dropout_encoder, dropout_head=dropout_head)
     pred = _forward_or_skip(model, graph)
     assert pred.shape == (num_nodes, 4)
 
@@ -186,21 +181,15 @@ def test_gunet_pyg_interface_and_output_dim_with_stub_unet():
     num_nodes = 12
     in_channels = 5
     hidden_channels = 11
+    dropout_encoder = 0.0
+    dropout_head = 0.05
     graph = Data(
         x=torch.randn(num_nodes, in_channels),
         edge_index=_ring_edge_index(num_nodes),
     )
-    model = GUNet(
-        in_channels,
-        hidden_channels,
-        False,
-        1,
-        [0.5],
-        True,
-        False,
-        2,
-        2,
-    )
+    model = GUNet(in_channels, hidden_channels,  False,  1,  [0.5],  True,
+                  False,  2,  2, dropout_encoder=dropout_encoder,
+                  dropout_head=dropout_head)
     model.graph_unet = _StubGraphUNet(hidden_channels)
     pred = model(graph)
     assert pred.shape == (num_nodes, 4)

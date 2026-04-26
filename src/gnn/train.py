@@ -142,7 +142,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
                             layer_norm_enable_processor=train_cfg.layer_norm_enable_processor,
                             num_layers_heads=train_cfg.num_layers_heads,
-                            num_layers_encoder=train_cfg.num_layers_encoder)
+                            num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
+                            dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     elif train_cfg.model_name == "gunet":
@@ -150,7 +151,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                      layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,
                      pool_ratios=train_cfg.pool_ratios, sum_res=train_cfg.sum_res,
                      enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
-                     decoder_layers=train_cfg.decoder_layers)
+                     decoder_layers=train_cfg.decoder_layers, dropout_encoder=train_cfg.dropout_encoder,
+                     dropout_head=train_cfg.dropout_head)
     elif train_cfg.model_name == "magnet":
         return MAGNet(preprocess_cfg.node_channels, 4, train_cfg.hidden_channels, train_cfg.num_poolings,
                       train_cfg.layers_per_level, train_cfg.window_size, train_cfg.pool_seed, train_cfg.pool_aggr,

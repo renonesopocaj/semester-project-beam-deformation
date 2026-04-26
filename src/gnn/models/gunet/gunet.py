@@ -18,7 +18,7 @@ from src.gnn.models.models_helpers import build_mlp_d
 class GUNet(torch.nn.Module):
 
     def __init__(self, in_channels, hidden_channels, layer_norm, depth, pool_ratios, sum_res,
-                 enable_embedder, encoder_layers, decoder_layers):
+                 enable_embedder, encoder_layers, decoder_layers, dropout_encoder, dropout_head):
         """
 
         Args:
@@ -38,21 +38,21 @@ class GUNet(torch.nn.Module):
             # [N, C_in] --> [N, H]
             self.encoder = build_mlp_d(in_size=in_channels, hidden_size=hidden_channels, out_size=hidden_channels,
                                        num_layers=encoder_layers, layer_norm=layer_norm, use_sigmoid=True,
-                                       use_softmax=False)
+                                       use_softmax=False, dropout=dropout_encoder)
             # NOte: Graph U-Net already has an initial GCN layer. [N, H] --> [N, H]
             self.graph_unet = GraphUNet(hidden_channels, hidden_channels, hidden_channels, depth, pool_ratios,
-                                        sum_res, "relu")
+                                        sum_res, act="relu")
         else:
             # [N, C_in] --> [N, H]
             self.graph_unet = GraphUNet(in_channels, hidden_channels, hidden_channels, depth, pool_ratios,
-                                        sum_res, "relu")
+                                        sum_res, act="relu")
         # Note: Graph U-Net already has a final decoder, here we append a head [N, H] --> [N, H]
         self.acc_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=3,
                                     num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
-                                    use_softmax=False)
+                                    use_softmax=False, dropout=dropout_head)
         self.mises_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=1,
                                     num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
-                                    use_softmax=False)
+                                    use_softmax=False, dropout=dropout_head)
 
     def forward(self, ingraph):
         """

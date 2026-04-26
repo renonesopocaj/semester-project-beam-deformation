@@ -194,6 +194,9 @@ class TrainYaml:
             self.hidden_processor_dim = flattened_cfg["latent_dim"]
             self.num_layers_heads = flattened_cfg["num_layers_heads"]
             self.num_layers_encoder = flattened_cfg["num_layers_encoder"]
+            self.dropout_encoder = flattened_cfg["dropout_encoder"]
+            self.dropout_head = flattened_cfg["dropout_head"]
+            self.dropout_processor = flattened_cfg["dropout_processor"]
         elif self.model_name == "gunet":
             self.hidden_channels = flattened_cfg["hidden_channels"]
             self.layer_norm = flattened_cfg["layer_norm"]
@@ -203,6 +206,8 @@ class TrainYaml:
             self.enable_embedder = flattened_cfg["enable_embedder"]
             self.encoder_layers = flattened_cfg["encoder_layers"]
             self.decoder_layers = flattened_cfg["decoder_layers"]
+            self.dropout_encoder = flattened_cfg["dropout_encoder"]
+            self.dropout_head = flattened_cfg["dropout_head"]
         elif self.model_name == "magnet":
             self.hidden_channels = flattened_cfg["hidden_channels"]
             self.num_poolings = flattened_cfg["num_poolings"]
@@ -211,6 +216,9 @@ class TrainYaml:
             self.pool_seed = flattened_cfg["pool_seed"]
             self.pool_aggr = flattened_cfg["pool_aggr"]
             self.activation = flattened_cfg["activation"]
+            self.dropout_encoder = flattened_cfg["dropout_encoder"]
+            self.dropout_head = flattened_cfg["dropout_head"]
+            self.dropout_processor = flattened_cfg["dropout_processor"]
 
 def _to_dict_flatten(data):
     """

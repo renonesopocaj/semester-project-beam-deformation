@@ -1,4 +1,6 @@
 """
+test_magnet_forward.py
+
 Smoke tests for MAGNet forward pass (PyG graph in, [N, 4] predictions out).
 """
 

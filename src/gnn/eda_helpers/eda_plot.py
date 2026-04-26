@@ -3,6 +3,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
+# FIXME: use a better device mechanism
+DEVICE = "cpu"
 
 def plot_all_distributions(eda_obj_dict, save_dir, scalar_run_names, vector_run_names, run_metadata,
                            scalar_feature_names, run_colors):
