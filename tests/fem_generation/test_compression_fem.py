@@ -308,7 +308,7 @@ def run_compression_sweeps_and_plot(output_dir):
         (path_3d_stretch_png, path_yz_component_png)
     """
 
-    output_dir = Path(output_dir)
+    output_dir = Path.cwd() / "tests_artifacts" / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = _load_fem_rotated_nu_config()

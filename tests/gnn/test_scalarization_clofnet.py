@@ -644,21 +644,8 @@ def main(output_dir, interactive):
     t_vec_case1 = x_raw[h] - x_raw[i]
     err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec_case1))
     err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec_case1))
-    run_case(
-        "Case 1: (h,k) is a pure translation of (i,j); edges span x,y,z (all deltas nonzero).",
-        x_raw,
-        i,
-        j,
-        h,
-        k,
-        t_vec_case1,
-        eps,
-        rtol,
-        atol,
-        output_dir,
-        "case1",
-        interactive,
-    )
+    run_case("Case 1: (h,k) is a pure translation of (i,j); edges span x,y,z (all deltas nonzero).",
+             x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1", interactive,)
     print("sanity Case1: ||x_h - (x_i + t)|| raw:", _fmt_sci_scalar(err_h), "||x_k - (x_j + t)|| raw:",
           _fmt_sci_scalar(err_k))
     i2 = lattice_index(0, 0, 1, nx, ny)
@@ -673,21 +660,8 @@ def main(output_dir, interactive):
     print("Case 2 dot((j-i), (k-h)) (0 if orthogonal):", _fmt_sci_scalar(dot_ij_hk))
     print("Case 2 ||cross((j-i), (k-h))|| (0 if parallel):", _fmt_sci_scalar(cross_ij_hk))
     t_vec_case2 = x_raw[h2] - x_raw[i2]
-    run_case(
-        "Case 2: both edges span x,y,z (all deltas nonzero); not parallel and not orthogonal.",
-        x_raw,
-        i2,
-        j2,
-        h2,
-        k2,
-        t_vec_case2,
-        eps,
-        rtol,
-        atol,
-        output_dir,
-        "case2",
-        interactive,
-    )
+    run_case("Case 2: both edges span x,y,z (all deltas nonzero); not parallel and not orthogonal.", x_raw, i2,
+             j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2", interactive)
     if interactive:
         print("Interactive plots are open. Close the figure windows to finish the script.")
         plt.show(block=True)
@@ -697,9 +671,9 @@ def test_scalarization_diagnostic():
     """
     Pytest entry: run main so `pytest -s` shows prints.
     """
-    out = Path.cwd() / "scalarization_clofnet_plots"
+    out = Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots"
     main(out, False)
 
 
 if __name__ == "__main__":
-    main(Path.cwd() / "scalarization_clofnet_plots", True)
+    main(Path.cwd() / "tests_artifacts" / "scalarization_clofnet_plots", True)

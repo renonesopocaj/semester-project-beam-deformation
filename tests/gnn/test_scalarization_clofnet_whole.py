@@ -160,9 +160,6 @@ def rotation_matrix():
     """
     Construct a deterministic proper 3D rotation matrix.
 
-    Args:
-        None
-
     return:
         torch.Tensor
             Rotation matrix of shape [3, 3] with determinant 1.
@@ -277,9 +274,6 @@ def print_summary(coeffs_a, coeffs_b, kept_edges, skipped_edges, rtol, atol):
             Relative tolerance for torch.allclose.
         atol: float
             Absolute tolerance for torch.allclose.
-
-    return:
-        None
     """
     diff = coeffs_a - coeffs_b
     abs_diff = torch.abs(diff)
@@ -310,12 +304,6 @@ def print_summary(coeffs_a, coeffs_b, kept_edges, skipped_edges, rtol, atol):
 def main():
     """
     Build the two meshes, scalarize all valid directed edges, and print diagnostics.
-
-    Args:
-        None
-
-    return:
-        None
     """
     eps = 1e-8
     degenerate_tol = 1e-10
@@ -333,6 +321,7 @@ def main():
     x_centered = centralize_positions(pos)
     transformed_centered = centralize_positions(transformed_pos)
     kept_edges, coeffs_a, skipped_edges = scalarize_all_edges(x_centered, directed_edges, eps, degenerate_tol)
+    print("\n")
     transformed_kept_edges, coeffs_b, transformed_skipped_edges = scalarize_all_edges(transformed_centered, directed_edges, eps, degenerate_tol)
     if kept_edges != transformed_kept_edges:
         print("WARNING: kept edge lists differ after transformation")
@@ -346,12 +335,6 @@ def main():
 def test_scalarization_whole_mesh_diagnostic():
     """
     Pytest entry: run main so `pytest -s` shows the diagnostic prints.
-
-    Args:
-        None
-
-    return:
-        None
     """
     main()
 
