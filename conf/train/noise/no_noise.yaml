@@ -4,4 +4,4 @@ noise_gamma: 1.0
 noise_seed: 42
 noise_also_prev: false
 noise_prev_scale_train: 0.00001
-noise_feature_update_mode: exact
+noise_feature_update_mode: exact # exact | taylor

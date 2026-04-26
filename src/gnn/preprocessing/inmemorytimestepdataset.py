@@ -239,7 +239,7 @@ class _NoisedMixin:
         # NOTE: eventually, noise also previous time step x[t-1], but much less in scale
         x_pos_tm1_prev = data.x_pos_tm1_prev.clone()
         noise_added_prev_tm1 = None
-        if self.noise_also_prev and self.preprocess_cfg.enable_past_pos_displ:
+        if self.noise_also_prev and self.preprocess_cfg.enable_past_history:
             noise_generator_tm1 = torch.Generator(device=data.x_pos_t.device)
             noise_generator_tm1.manual_seed(_fold_torch_seed(seed_tm1))
             noise_added_prev_tm1 = self.noise_prev_scale * torch.randn(data.x_pos_tm1_prev.shape,

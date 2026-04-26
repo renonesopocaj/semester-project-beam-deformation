@@ -104,13 +104,22 @@ class PreprocessYaml:
         if "save_dir_val" in flattened_cfg:
             self.save_dir_val = flattened_cfg["save_dir_val"]
         self.extra_info_dir = flattened_cfg["extra_info_dir"]
+        # Features enablers
+        self.name_features = flattened_cfg["name_features"]
         self.enable_edge_velocity = flattened_cfg["enable_edge_velocity"]
         self.enable_absolute_pos = flattened_cfg["enable_absolute_pos"]
         self.enable_node_norms = flattened_cfg["enable_node_norms"]
         self.enable_stretch_edge = flattened_cfg["enable_stretch_edge"]
-        self.enable_past_pos_displ = flattened_cfg["enable_past_pos_displ"]
+        self.enable_past_history = flattened_cfg["enable_past_history"]
         self.enable_force_edge = flattened_cfg["enable_force_edge"]
         self.enable_rotation_angle = flattened_cfg["enable_rotation_angle"]
+        self.enable_displ_edge = flattened_cfg["enable_displ_edge"]
+        self.enable_abs_pos_edge = flattened_cfg["enable_abs_pos_edge"]
+        self.enable_abs_rest_pos_edge = flattened_cfg["enable_abs_rest_pos_edge"]
+        self.enable_abs_pos_edge_norm = flattened_cfg["enable_abs_pos_edge_norm"]
+        self.enable_rest_pos_edge_norm = flattened_cfg["enable_rest_pos_edge_norm"]
+        self.enable_force_edge_norm = flattened_cfg["enable_force_edge_norm"]
+        self.enable_edge_velocity_norm = flattened_cfg["enable_edge_velocity_norm"]
 
 class TrainYaml:
     """
@@ -185,6 +194,8 @@ class TrainYaml:
             self.layer_norm_enable_decoder = flattened_cfg["layer_norm_enable_decoder"]
             self.num_messages = flattened_cfg["num_messages"]
             self.hidden_processor_dim = flattened_cfg["latent_dim"]
+            self.num_layers_heads = flattened_cfg["num_layers_heads"]
+            self.num_layers_encoder = flattened_cfg["num_layers_encoder"]
         elif self.model_name == "gunet":
             self.hidden_channels = flattened_cfg["hidden_channels"]
             self.layer_norm = flattened_cfg["layer_norm"]

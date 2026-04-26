@@ -5,3 +5,5 @@ num_layers_graphnetblock: 2
 layer_norm_enable_encoder: True
 layer_norm_enable_processor: True
 layer_norm_enable_decoder: False
+num_layers_heads: 3
+num_layers_encoder: 3

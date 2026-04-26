@@ -40,20 +40,22 @@ def load_selected_trajectories(extra_info_dir):
 
 
 def create_dir_name(cfg_obj):
+    name_feat_str = f"_{cfg_obj.name_features}"
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else ''
-    miseslog_str = '_log' if cfg_obj.mises_log else ''
+    # miseslog_str = '_log' if cfg_obj.mises_log else ''
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
-    enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
-    enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_pos_displ else '_noxtm1'
-    enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
-    enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
-    enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
-    enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
-    enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
+    # enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
+    # enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_history else '_noxtm1'
+    # enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
+    # enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
+    # enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
+    # enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
+    # enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
     time_discr_str = "_centr" if cfg_obj.time_discretization_method == "second_order_central" else "_newmark"
-    processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
-                          f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
-                          f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+    # processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
+    #                       f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
+    #                       f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+    processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}"
     return processed_dir_name
 
 def selected_indices_for_split(selected_trajs, split):
