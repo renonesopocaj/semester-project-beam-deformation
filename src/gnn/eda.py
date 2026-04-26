@@ -18,6 +18,7 @@ from pathlib import Path
 import hydra
 from omegaconf import OmegaConf
 
+from src.gnn.eda_helpers.eda_features_helpers import build_scalar_feature_names
 from src.gnn.eda_helpers.eda_plot import plot_all_distributions
 from src.gnn.eda_helpers.eda_preprocessor import EdaPreprocessor
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, EdaYaml
@@ -92,7 +93,7 @@ def main(cfg):
     if eda_cfg.generate_distributions:
         print("\n\n" + "=" * 60 + "Starting to plot all distributions..." + "=" * 60 + "\n")
         plot_all_distributions(eda_obj_dict, save_dir, eda_cfg.scalar_run_names, eda_cfg.vector_run_names,
-                               run_metadata, eda_cfg.scalar_feature_names, eda_cfg.run_colors)
+                               run_metadata, build_scalar_feature_names(base_cfg), eda_cfg.run_colors)
     else:
         print("\n\nDistribution generation is disabled, skipping.\n")
     del eda_obj_dict

@@ -3,7 +3,8 @@ eda_features_helpers.py
 
 Feature names for EDA plots must stay aligned with build_node_features / build_edge_features in
 src/gnn/preprocessing/build_features.py. Use verify_eda_feature_names_match_builders() (runs
-probe_feature_layout) to fail fast on drift.
+probe_feature_layout) to fail fast on drift. Scalar routing for distribution plots uses
+build_scalar_feature_names() so it stays aligned with the same builders (single-channel columns only).
 """
 
 
@@ -96,6 +97,30 @@ def build_edge_feature_names(cfg):
         names.append("edge_direction_cosine")
         if cfg.enable_past_history:
             names.append("edge_direction_cosine_past")
+    return names
+
+
+def build_scalar_feature_names(cfg):
+    """
+    Single-channel EDA feature names for plot routing (scalar vs vector normalization runs).
+    von_mises is the scalar stress target; node/edge scalars are every build_* name that is not an xyz triplet.
+
+    Args:
+        cfg: object
+            EDA/preprocess config with the same feature toggles as build_features.
+
+    return: list[str]
+        Stable order: von_mises, then node scalar columns, then edge scalar columns.
+    """
+    names = ["von_mises"]
+    for n in build_node_feature_names(cfg):
+        if n.endswith("_x") or n.endswith("_y") or n.endswith("_z"):
+            continue
+        names.append(n)
+    for n in build_edge_feature_names(cfg):
+        if n.endswith("_x") or n.endswith("_y") or n.endswith("_z"):
+            continue
+        names.append(n)
     return names
 
 

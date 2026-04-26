@@ -12,6 +12,24 @@ def compute_mean_relative_mae(pred, target):
 def compute_relative_mae(pred, target):
     return torch.abs(pred - target) / torch.clamp(torch.abs(target), min=1e-12)
 
+
+def relative_mae_sum_and_count(pred, target):
+    """
+    Sum of elementwise relative MAE and element count for pooling across batches or timesteps.
+
+    Args:
+        pred: torch.Tensor
+            Predictions (same shape as target).
+        target: torch.Tensor
+            Targets (same shape as pred).
+    return: (torch.Tensor, torch.Tensor)
+        Scalar sum of |pred-target|/max(|target|,1e-12), and scalar count = numel for weighting.
+    """
+    rel = compute_relative_mae(pred, target)
+    n = rel.numel()
+    return rel.sum(), torch.as_tensor(n, device=rel.device, dtype=rel.dtype)
+
+
 def to_numpy(value):
     """
     Args:

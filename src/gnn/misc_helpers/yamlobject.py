@@ -40,7 +40,6 @@ class EdaYaml:
     run_colors: dict
     vector_run_names: list
     scalar_run_names: list
-    scalar_feature_names: list
 
     def __init__(self, cfg):
         """
@@ -61,7 +60,6 @@ class EdaYaml:
         self.run_colors = _extract_nested(cfg, "run_colors")
         self.vector_run_names = _extract_nested(cfg, "vector_run_names")
         self.scalar_run_names = _extract_nested(cfg, "scalar_run_names")
-        self.scalar_feature_names = _extract_nested(cfg, "scalar_feature_names")
 
 
 class PreprocessYaml:
