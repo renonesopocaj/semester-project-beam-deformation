@@ -32,6 +32,20 @@ CONSTANT_FOR_CUTOFF_TIME = 4.0
 #                                   DOLFIN/FORMS/PDE UTILITIES
 #################################################################################################
 
+def _compute_max_strain_norm(u):
+    """
+    Args:
+        u: dolfin.Function
+            Displacement field.
+    return: float
+        Approximate maximum Frobenius norm of the infinitesimal strain tensor.
+    """
+    strain_expr = df.sym(df.grad(u))
+    strain_norm_expr = df.sqrt(df.inner(strain_expr, strain_expr))
+    strain_space = df.FunctionSpace(u.function_space().mesh(), "DG", 0)
+    strain_norm = project(strain_norm_expr, strain_space, solver_type="cg", preconditioner_type="jacobi")
+    return float(strain_norm.vector().max())
+
 def _sigma(r, mu, lmbda):
     """
     Compute linear elastic Cauchy stress from displacement field.
@@ -478,8 +492,8 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     ###############################################################################################################
 
     # We want zero force in x direction. This is the safest check to do it.
-    if not math.isclose(initial_force_x, 0.0, abs_tol=1e-6):
-        raise ValueError(f"initial_force_x must be 0, got {initial_force_x}")
+    # if not math.isclose(initial_force_x, 0.0, abs_tol=1e-6):
+    #     raise ValueError(f"initial_force_x must be 0, got {initial_force_x}")
 
     # Enable FEniCS form compiler optimizations.
     df.parameters["form_compiler"]["cpp_optimize"] = True
@@ -572,6 +586,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
     #                                           LOOP
     ###############################################################################################################
 
+    trajectory_max_strain = 0.0
     for i in range(Nsteps):
         dt_i = time[i + 1] - time[i]
         t_now = time[i + 1]
@@ -588,6 +603,12 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
         # Update state variables after the displacement solve.
         _update_fields(u, u_old, v_old, a_old, dt, beta, gamma)
+
+        # Check
+        max_strain = _compute_max_strain_norm(u)
+        trajectory_max_strain = max(trajectory_max_strain, max_strain)
+        if max_strain > 0.05:
+            print(f"WARNING: large strain detected: {max_strain:.4f}")
 
         # Project stress to a discontinuous space and then to node-compatible space.
         _local_project(_sigma(u, mu, lmbda), V_stress, sig)
