@@ -307,7 +307,7 @@ class LitModule(L.LightningModule):
             split_name: str
                 Prefix used for test logging.
             traj_metadata: dict
-                Map from trajectory index to metadata dict (fx, fy, fz, L, W, ood_features) for plot subtitles.
+                Map from trajectory index to metadata dict (fx, fy, fz, L, W, D, ood_features) for plot subtitles.
         """
         self.test_dataset = test_dataset
         self.eval_split_name = split_name

@@ -37,3 +37,4 @@ old_venv
 hydra
 compression_fem_output
 tests_artifacts
+dataset_izar

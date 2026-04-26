@@ -251,12 +251,12 @@ if __name__ == "__main__":
     # config = "conf/fem_generation/triax/fem_triax_longer.yaml"
     # config = "conf/fem_generation/triax/fem_triax_allgeoms.yaml"
     configs_list = [
-        # "conf/fem_generation/single/fem_single_longer.yaml",
+        "conf/fem_generation/single/fem_single_longer.yaml",
         # "conf/fem_generation/single/fem_single_allgeoms.yaml",
-        # "conf/fem_generation/biax/fem_biax_longer.yaml",
+        "conf/fem_generation/biax/fem_biax_longer.yaml",
         # "conf/fem_generation/biax/fem_biax_allgeoms.yaml",
-        "conf/fem_generation/triax/fem_triax_longer.yaml",
-        "conf/fem_generation/triax/fem_triax_allgeoms.yaml",
+        # "conf/fem_generation/triax/fem_triax_longer.yaml",
+        # "conf/fem_generation/triax/fem_triax_allgeoms.yaml",
     ]
     MODES = ("train", "val", "test")
     for config in configs_list:

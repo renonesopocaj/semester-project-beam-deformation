@@ -351,9 +351,10 @@ def _format_traj_metadata_text(traj_metadata):
     fz = traj_metadata.get("fz", "?")  # Load force z component text.
     beam_L = traj_metadata.get("L", "?")  # Beam length label in subtitle.
     beam_W = traj_metadata.get("W", "?")  # Beam width label in subtitle.
+    beam_D = traj_metadata.get("D", "?")  # Beam depth/thickness label in subtitle.
     ood = traj_metadata.get("ood_features", [])  # List of OOD tags to summarize on figure.
     ood_str = ", ".join(ood) if ood else "none"  # Comma-separated OOD list or literal “none” for display.
-    return (f"fx={fx}  fy={fy}  fz={fz}  |  L={beam_L}  W={beam_W}"
+    return (f"fx={fx}  fy={fy}  fz={fz}  |  L={beam_L}  W={beam_W}  D={beam_D}"
             f"  |  OOD: {ood_str}")  # One string drawn with fig.text (not axis title).
 
 
@@ -888,7 +889,7 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
         plot_diagnostics_advanced: boo;
             boolean to plot more complex diagnostics
         traj_metadata: dict or None
-            Per-trajectory metadata (fx, fy, fz, L, W, ood_features) for footnote textboxes; skipped when None.
+            Per-trajectory metadata (fx, fy, fz, L, W, D, ood_features) for footnote textboxes; skipped when None.
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """

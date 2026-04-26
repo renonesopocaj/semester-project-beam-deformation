@@ -29,7 +29,7 @@ train:
   force_x: { start: 0, stop: 0, n: 1 }
   force_y: { start: -1.0, stop: 1.0, n: 6 }
   force_z: { start: -1.0, stop: 1.0, n: 6 }
-  lengths: { start: 1.0, stop: 2.0, n: 3 }
+  lengths: { start: 1.5, stop: 3.0, n: 3 }
   widths:  { start: 0.06, stop: 0.14, n: 3 }
   depths: { start: 0.05, stop: 0.15, n: 3 }
 
@@ -45,8 +45,8 @@ test_ood_ranges:
     below: { start: -1.5, stop: -1.1 }
     above: { start: 1.1, stop: 1.5 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 2.1, stop: 2.5 }
+    below: { start: 0.01, stop: 1.4 }
+    above: { start: 3.1, stop: 3.5 }
   widths:
     below: { start: 0.01, stop: 0.04 }
     above: { start: 0.16, stop: 0.3 }
