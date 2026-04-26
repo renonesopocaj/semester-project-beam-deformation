@@ -1,0 +1,34 @@
+# L, W, D train and OOD from large *_allgeoms configs.
+name: allgeoms
+train:
+  lengths:
+    start: 0.2
+    stop: 1.0
+  widths:
+    start: 0.2
+    stop: 1.0
+  depths:
+    start: 0.2
+    stop: 1.0
+test_ood_ranges:
+  lengths:
+    below:
+      start: 0.1
+      stop: 0.19
+    above:
+      start: 1.1
+      stop: 1.5
+  widths:
+    below:
+      start: 0.1
+      stop: 0.19
+    above:
+      start: 1.1
+      stop: 1.5
+  depths:
+    below:
+      start: 0.1
+      stop: 0.19
+    above:
+      start: 1.1
+      stop: 1.5

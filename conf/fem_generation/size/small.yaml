@@ -1,0 +1,53 @@
+# Grid counts n only (matches former *_small.yaml per force_axes x geometry). Selected trajectories: small set.
+name: small
+selected_trajs:
+  selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
+  selected_test_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
+  selected_total_time: 32
+  num_steps: 400
+n_by_combo:
+  single:
+    longer:
+      force_x: 1
+      force_y: 6
+      force_z: 1
+      lengths: 4
+      widths: 3
+      depths: 3
+    allgeoms:
+      force_x: 1
+      force_y: 5
+      force_z: 1
+      lengths: 5
+      widths: 3
+      depths: 3
+  biax:
+    longer:
+      force_x: 1
+      force_y: 4
+      force_z: 4
+      lengths: 3
+      widths: 3
+      depths: 2
+    allgeoms:
+      force_x: 1
+      force_y: 4
+      force_z: 3
+      lengths: 3
+      widths: 3
+      depths: 2
+  triax:
+    longer:
+      force_x: 3
+      force_y: 3
+      force_z: 3
+      lengths: 2
+      widths: 2
+      depths: 2
+    allgeoms:
+      force_x: 3
+      force_y: 3
+      force_z: 3
+      lengths: 2
+      widths: 2
+      depths: 2

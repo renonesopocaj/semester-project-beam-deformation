@@ -1,0 +1,30 @@
+# Hydra entry for FEM dataset generation. Compose force_axes, geometry, size.
+# Idea: 1) f_y, f_z != 0 where applicable 2) longer geometry: L > W  NOTE: L, W, D = X, Y, Z
+defaults:
+  - force_axes: biax
+  - geometry: longer
+  - size: small
+  - _self_
+
+output_root: "./fem_dataset_generation/${force_axes.name}_${geometry.name}/${size.name}"
+only_json: False
+
+# NL, NW, ND: fixed int (BoxMesh cells along L, W, D) or ratio: { ratio: r } -> max(1, round(dim * r)).
+simulation_defaults:
+  NL: 8
+  NW: 4
+  ND: 4
+  E: 1000.0
+  nu: 0.3
+  rho: 1.0
+  eta_m: 0.01
+  eta_k: 0.01
+  alpha_m: 0.0
+  alpha_f: 0.0
+  total_time: 4.0
+  cutoff_time_factor: 0.2
+  num_steps: 50
+  linear_solver: krylov
+
+val_fraction: 0.1
+test_fraction: 0.1
