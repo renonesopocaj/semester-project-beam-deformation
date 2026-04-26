@@ -213,7 +213,8 @@ semester-project/
 
 #### `src/gnn/models/mag/`
 
-- `__init__.py`: placeholder package marker for a future MAG implementation.
+- `__init__.py`: exports `MAGNet`.
+- `mag.py`: fixed-topology PyTorch MAgNET graph U-Net with MAg, clique pooling, unpooling, and skip concatenations.
 
 ### `src/gnn/preprocessing/`
 
@@ -319,7 +320,7 @@ The default training preset uses:
 - message-passing blocks: `8`
 - loss: `mse`
 
-Other architectures exist in the codebase (`CLOFNet`, placeholders for `GUNet` and `MAG`), but the current `train.py` path instantiates only `MeshGraphNet`.
+Other architectures exist in the codebase (`CLOFNet`, `GUNet`, `MAGNet`); `train.py` instantiates the model selected by Hydra `model_name` (e.g. `MGN`, `gunet`, `magnet`).
 
 ### Metrics
 
