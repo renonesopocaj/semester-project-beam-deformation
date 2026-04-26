@@ -540,7 +540,7 @@ def run_case(title, x_raw, i, j, h, k, t_vec, eps, rtol, atol, output_dir, case_
 
 def main(output_dir, interactive):
     """
-    Build lattice, run translation case and same-length case, print diagnostics, write plots.
+    Build lattice, run Case 1 (pure translation) and Case 2 (oblique edge directions), print diagnostics, write plots.
 
     Args:
         output_dir: pathlib.Path
@@ -560,30 +560,60 @@ def main(output_dir, interactive):
     width = 1.0
     height = 0.2
     x_raw = build_beam_lattice(nx, ny, nz, length, width, height)
-    iy0 = 0
-    iz0 = 1
-    i = lattice_index(0, iy0, iz0, nx, ny)
-    j = lattice_index(1, iy0, iz0, nx, ny)
-    h = lattice_index(0, iy0 + 1, iz0, nx, ny)
-    k = lattice_index(1, iy0 + 1, iz0, nx, ny)
+    i = lattice_index(0, 0, 0, nx, ny)
+    j = lattice_index(1, 1, 1, nx, ny)
+    h = lattice_index(0, 1, 0, nx, ny)
+    k = lattice_index(1, 2, 1, nx, ny)
+    v1_ij = x_raw[j] - x_raw[i]
+    v1_hk = x_raw[k] - x_raw[h]
+    print("Case 1 raw edge vectors: (j-i) =", _fmt_sci(v1_ij), "(k-h) =", _fmt_sci(v1_hk))
     t_vec_case1 = x_raw[h] - x_raw[i]
     err_h = torch.linalg.norm(x_raw[h] - (x_raw[i] + t_vec_case1))
     err_k = torch.linalg.norm(x_raw[k] - (x_raw[j] + t_vec_case1))
-    run_case("Case 1: (h,k) is a pure translation of (i,j), with four distinct nodes i, j, h, k.",
-        x_raw, i, j, h, k, t_vec_case1, eps, rtol, atol, output_dir, "case1", interactive)
+    run_case(
+        "Case 1: (h,k) is a pure translation of (i,j); edges span x,y,z (all deltas nonzero).",
+        x_raw,
+        i,
+        j,
+        h,
+        k,
+        t_vec_case1,
+        eps,
+        rtol,
+        atol,
+        output_dir,
+        "case1",
+        interactive,
+    )
     print("sanity Case1: ||x_h - (x_i + t)|| raw:", _fmt_sci_scalar(err_h), "||x_k - (x_j + t)|| raw:",
           _fmt_sci_scalar(err_k))
-    i2 = i
-    j2 = j
+    i2 = lattice_index(0, 0, 1, nx, ny)
+    j2 = lattice_index(1, 1, 2, nx, ny)
     h2 = lattice_index(2, 0, 0, nx, ny)
-    k2 = lattice_index(2, 1, 0, nx, ny)
-    len_ij = torch.linalg.norm(x_raw[i2] - x_raw[j2])
-    len_hk = torch.linalg.norm(x_raw[h2] - x_raw[k2])
-    if not torch.isclose(len_ij, len_hk, rtol=rtol, atol=atol):
-        print("WARNING Case 2 setup: edge lengths differ:", _fmt_sci_scalar(len_ij), _fmt_sci_scalar(len_hk))
+    k2 = lattice_index(3, 2, 1, nx, ny)
+    v_ij = x_raw[j2] - x_raw[i2]
+    v_hk = x_raw[k2] - x_raw[h2]
+    dot_ij_hk = torch.dot(v_ij, v_hk)
+    cross_ij_hk = torch.linalg.norm(torch.linalg.cross(v_ij, v_hk))
+    print("Case 2 raw edge vectors: (j-i) =", _fmt_sci(v_ij), "(k-h) =", _fmt_sci(v_hk))
+    print("Case 2 dot((j-i), (k-h)) (0 if orthogonal):", _fmt_sci_scalar(dot_ij_hk))
+    print("Case 2 ||cross((j-i), (k-h))|| (0 if parallel):", _fmt_sci_scalar(cross_ij_hk))
     t_vec_case2 = x_raw[h2] - x_raw[i2]
-    run_case("Case 2: ||x_h - x_k|| == ||x_i - x_j|| only (different direction and location; y-edge vs x-edge).",
-        x_raw, i2, j2, h2, k2, t_vec_case2, eps, rtol, atol, output_dir, "case2", interactive)
+    run_case(
+        "Case 2: both edges span x,y,z (all deltas nonzero); not parallel and not orthogonal.",
+        x_raw,
+        i2,
+        j2,
+        h2,
+        k2,
+        t_vec_case2,
+        eps,
+        rtol,
+        atol,
+        output_dir,
+        "case2",
+        interactive,
+    )
     if interactive:
         print("Interactive plots are open. Close the figure windows to finish the script.")
         plt.show(block=True)
