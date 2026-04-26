@@ -4,6 +4,7 @@ defaults:
   - force_axes: biax
   - geometry: longer
   - size: small
+  - resolution: default
   - _self_
 
 output_root: "./fem_dataset_generation/${force_axes.name}_${geometry.name}/${size.name}"
@@ -11,9 +12,6 @@ only_json: False
 
 # NL, NW, ND: fixed int (BoxMesh cells along L, W, D) or ratio: { ratio: r } -> max(1, round(dim * r)).
 simulation_defaults:
-  NL: 8
-  NW: 4
-  ND: 4
   E: 1000.0
   nu: 0.3
   rho: 1.0
