@@ -1,9 +1,12 @@
 num_workers: 0
-batch_size: 4
+batch_size: 1
 # Lightning: 32-true (CPU / no AMP), bf16-mixed or 16-mixed on CUDA Tensor Core GPUs
 precision: 32-true
-torch_compile: True
+torch_compile: False
 profiling: False # disabled because it worsens computational efficiency
-fused_adam: True
+fused_adam: False # should not rellt matter but whatever
 pin_memory: True
 rollout_batch_size: 1
+accumulate_grad_batches: 1
+activation_checkpointing: true
+foreach_optim: False

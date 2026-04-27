@@ -7,3 +7,6 @@ profiling: False # disabled because it worsens computational efficiency
 fused_adam: True
 pin_memory: True
 rollout_batch_size: 1
+accumulate_grad_batches: 1
+activation_checkpointing: False
+foreach_optim: False

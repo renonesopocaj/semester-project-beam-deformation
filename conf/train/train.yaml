@@ -1,10 +1,10 @@
 defaults:
   - computational: default
-  - model: mgn_small
+  - model: mgn_smallest
   - training: default # contains .total_epochs
   - noise: default
   - loss: default
-  - validation: validation
+  - validation: default
   - data: default
   - lr_scheduler: step
   - residuals: default

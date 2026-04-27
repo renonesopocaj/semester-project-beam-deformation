@@ -1,5 +1,6 @@
 """
 train.py
+
 Main training script.
 Final test/validation media may include scatter plots with R^2 from scikit-learn (see validation/plot_rollout.py).
 """
@@ -26,7 +27,8 @@ from src.gnn.models.gunet.gunet import GUNet
 from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
-from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
+from src.gnn.misc_helpers.misc import (human_readable_storage, module_param_and_buffer_storage_bytes,
+                                       pyg_data_tensor_storage_bytes)
 from src.gnn.dataloaders.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.preprocess import load_selected_trajectories
@@ -142,7 +144,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             layer_norm_enable_processor=train_cfg.layer_norm_enable_processor,
                             num_layers_heads=train_cfg.num_layers_heads,
                             num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
-                            dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,)
+                            dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
+                            activation_checkpointing=train_cfg.activation_checkpointing)
     elif train_cfg.model_name == "clofnet":
         raise NotImplementedError("CLOFNet not implemented")
     elif train_cfg.model_name == "gunet":
