@@ -13,8 +13,7 @@ from pathlib import Path
 
 import hydra
 import lightning as L
-from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
-from lightning.pytorch.strategies import DDPStrategy
+from lightning.pytorch.profilers import SimpleProfiler
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
@@ -28,7 +27,7 @@ from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
-from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
+from src.gnn.dataloaders.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max, assert_stats_finite
 from src.gnn.preprocess import load_selected_trajectories
 from src.gnn.training.scheduler import scheduler_factory
