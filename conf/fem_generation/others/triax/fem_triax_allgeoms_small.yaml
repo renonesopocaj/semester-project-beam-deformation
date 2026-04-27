@@ -1,5 +1,5 @@
 # Idea of this config file: 1) f_y, f_z != 0 2) no constraints on geometry 3) a bit more data
-output_root: "./fem_dataset_generation/biax_allgeoms/large"
+output_root: "./fem_dataset_generation/triax_allgeoms/small"
 only_json: False
 
 defaults:
@@ -24,38 +24,39 @@ val_fraction: 0.1
 test_fraction: 0.1
 
 # Training ranges — all force axes vary independently.
-# Forces are combined via Cartesian product: 1 x 5 x 5 x 4 x 4 x 3 = 1200
+# Forces are combined via Cartesian product: 3 x 3 x 3 x 2 x 2 x 2 = 216
 train:
-  force_x: { start: 0, stop: 0, n: 1 }
-  force_y: { start: -0.9, stop: 1.0, n: 5 }
-  force_z: { start: -0.9, stop: 1.0, n: 5 }
-  lengths: { start: 0.05, stop: 1.0, n: 4 }
-  widths:  { start: 0.05, stop: 1.0, n: 4 }
-  depths: { start: 0.05, stop: 1.0, n: 3 }
+  force_x: { start: -0.7, stop: 0.7, n: 3 }
+  force_y: { start: -0.7, stop: 0.7, n: 3 }
+  force_z: { start: -0.7, stop: 0.7, n: 3 }
+  lengths: { start: 0.2, stop: 1.0, n: 2 }
+  widths:  { start: 0.2, stop: 1.0, n: 2 }
+  depths: { start: 0.2, stop: 1.0, n: 2 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
 test_ood_ranges:
-  force_x: { }
+  below: { start: -1.2, stop: -0.8 }
+  above: { start: 0.8, stop: 1.2 }
   force_y:
-    below: { start: -1.5, stop: -1.1 }
-    above: { start: 1.1, stop: 1.5 }
+    below: { start: -1.2, stop: -0.8 }
+    above: { start: 0.8, stop: 1.2 }
   force_z:
-    below: { start: -1.5, stop: -1.1 }
-    above: { start: 1.1, stop: 1.5 }
+    below: { start: -1.2, stop: -0.8 }
+    above: { start: 0.8, stop: 1.2 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
 
 selected_trajs:
-  selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]
-  selected_test_trajectories: [3, 8, 12, 25, 32, 49, 51, 77, 84, 109, 124]
+  selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
+  selected_test_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]
   selected_total_time: 32
   num_steps: 400

@@ -1,5 +1,5 @@
-# Idea of this config file: 1) f_y, f_z != 0 2) no constraints on geometry 3) a bit more data
-output_root: "./fem_dataset_generation/triax_longer/small"
+# Idea of this config file: 1) f_y, f_z != 0 2) geometry is always longer than wider NOTE: L, W, D = X, Y, Z
+output_root: "./fem_dataset_generation/biax_longer/small"
 only_json: False
 
 defaults:
@@ -24,37 +24,35 @@ val_fraction: 0.1
 test_fraction: 0.1
 
 # Training ranges — all force axes vary independently.
-# Forces are combined via Cartesian product: 3 x 3 x 3 x 2 x 2 x 2 = 216
+# Forces are combined via Cartesian product: 4 x 4 x 3 x 2 x 2 = 288
 train:
-  force_x: { start: -0.7, stop: 0.7, n: 3 }
-  force_y: { start: -0.7, stop: 0.7, n: 3 }
-  force_z: { start: -0.7, stop: 0.7, n: 3 }
-  lengths: { start: 1.0, stop: 2.0, n: 2 }
-  widths:  { start: 0.05, stop: 0.15, n: 2 }
-  depths: { start: 0.05, stop: 0.15, n: 2 }
+  force_x: { start: 0, stop: 0, n: 1 }
+  force_y: { start: -1.0, stop: 1.0, n: 4 }
+  force_z: { start: -1.0, stop: 1.0, n: 4 }
+  lengths: { start: 1.0, stop: 2.0, n: 3 }
+  widths:  { start: 0.2, stop: 0.3, n: 3 }
+  depths: { start: 0.2, stop: 0.3, n: 2 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
 # Omit a sub-key (or use {}) if the axis has no OOD range in that direction.
 test_ood_ranges:
-  force_x:
-    below: { start: -1.2, stop: -0.8 }
-    above: { start: 0.8, stop: 1.2 }
+  force_x: {}
   force_y:
-    below: { start: -1.2, stop: -0.8 }
-    above: { start: 0.8, stop: 1.2 }
-  force_z:
-    below: { start: -1.2, stop: -0.8 }
-    above: { start: 0.8, stop: 1.2 }
-  lengths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: -1.5, stop: -1.1 }
     above: { start: 1.1, stop: 1.5 }
+  force_z:
+    below: { start: -1.5, stop: -1.1 }
+    above: { start: 1.1, stop: 1.5 }
+  lengths:
+    below: { start: 0.5, stop: 0.9 }
+    above: { start: 2.1, stop: 2.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.31, stop: 0.4 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 0.31, stop: 0.4 }
 
 selected_trajs:
   selected_validation_trajectories: [1, 2, 4, 6, 8, 9, 11, 14, 16, 17]

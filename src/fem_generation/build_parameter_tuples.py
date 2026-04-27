@@ -90,6 +90,83 @@ def _resolve_n_cells(spec, dim_value, axis_name):
     return int(spec)
 
 
+def _normalize_cfg_resolutions(raw):
+    """
+    Validate the Hydra resolution list: non-empty list of triples [NL, NW, ND].
+
+    Args:
+        raw: object
+            value of resolution.resolution from composed Hydra config
+    return: list of list of int
+        copy-safe list of [NL, NW, ND] triples with positive integers
+    """
+    if raw is None:
+        raise ValueError(
+            "Hydra FEM config must set resolution.resolution to a non-empty list of [NL, NW, ND] triples."
+        )
+    if not isinstance(raw, (list, tuple)) or len(raw) == 0:
+        raise ValueError(
+            "resolution.resolution must be a non-empty list of [NL, NW, ND] triples, "
+            "got %r." % (raw,)
+        )
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, (list, tuple)) or len(item) != 3:
+            raise ValueError(
+                "resolution.resolution[%d] must be a length-3 list [NL, NW, ND], got %r."
+                % (i, item)
+            )
+        triple = []
+        for j, axis_label in enumerate(("NL", "NW", "ND")):
+            try:
+                iv = int(item[j])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "resolution.resolution[%d][%d] (%s) must be an int, got %r."
+                    % (i, j, axis_label, item[j])
+                )
+            if iv < 1:
+                raise ValueError(
+                    "resolution.resolution[%d][%d] (%s) must be >= 1, got %d."
+                    % (i, j, axis_label, iv)
+                )
+            triple.append(iv)
+        out.append(triple)
+    return out
+
+
+def _mesh_cells_for_trajectory(cfg, defaults, traj_idx, L, W, D):
+    """
+    Resolve BoxMesh cell counts (NL, NW, ND) for one trajectory index.
+    If cfg contains a non-empty resolutions list, pick triple round-robin;
+    otherwise resolve defaults["NL"/"NW"/"ND"] (legacy int or ratio dict).
+
+    Args:
+        cfg: dict
+            flat run config (may include key resolutions)
+        defaults: dict
+            simulation defaults including NL, NW, ND when not using resolutions
+        traj_idx: int
+            trajectory index within the split (0-based)
+        L: float
+            beam length
+        W: float
+            beam width
+        D: float
+            beam depth
+    return: (NL, NW, ND)
+        three positive ints
+    """
+    res_list = cfg.get("resolutions")
+    if res_list is not None and len(res_list) > 0:
+        tri = res_list[int(traj_idx) % len(res_list)]
+        return int(tri[0]), int(tri[1]), int(tri[2])
+    nl = _resolve_n_cells(defaults["NL"], L, "NL")
+    nw = _resolve_n_cells(defaults["NW"], W, "NW")
+    nd = _resolve_n_cells(defaults["ND"], D, "ND")
+    return nl, nw, nd
+
+
 def linspace_list(start, stop, n):
     """
     Return a list from np.linspace with the specified parameters.
@@ -850,7 +927,7 @@ def build_all_splits(cfg):
 #  Zero-force guard
 # ---------------------------------------------------------------------------
 
-def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
+def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges, cfg):
     """
     Build and save trajectory_params.json mapping each .pt filename to its
     simulation parameters and OOD feature list.
@@ -864,6 +941,8 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
             directory of the split (e.g. output_root / "train")
         train_ranges: dict
             dict mapping feature name to (min, max) from the train config
+        cfg: dict
+            flat run config (resolutions list for varying mesh, optional for legacy)
     """
     graphs_dir = split_dir / "graphs"
     params_dict = {}
@@ -872,9 +951,10 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
         p["L"] = L
         p["W"] = W
         p["D"] = D
-        p["NL"] = _resolve_n_cells(defaults["NL"], L, "NL")
-        p["NW"] = _resolve_n_cells(defaults["NW"], W, "NW")
-        p["ND"] = _resolve_n_cells(defaults["ND"], D, "ND")
+        nl, nw, nd = _mesh_cells_for_trajectory(cfg, defaults, idx, L, W, D)
+        p["NL"] = nl
+        p["NW"] = nw
+        p["ND"] = nd
         p["fx"] = fx
         p["fy"] = fy
         p["fz"] = fz
@@ -882,7 +962,10 @@ def _build_trajectory_params_json(combos, defaults, split_dir, train_ranges):
         ood_features = _list_ood_feature_names(((fx, fy, fz), L, W, D), train_ranges)
         params_dict[filename] = {
             "traj_idx": idx, "fx": fx, "fy": fy, "fz": fz,
-            "L": L, "W": W, "D": D, "ood_features": ood_features,
+            "L": L, "W": W, "D": D,
+            "NL": nl, "NW": nw, "ND": nd,
+            "resolution": [nl, nw, nd],
+            "ood_features": ood_features,
         }
     split_dir.mkdir(parents=True, exist_ok=True)
     json_path = split_dir / "trajectory_params.json"

@@ -1,5 +1,5 @@
 # Idea of this config file: 1) f_y, f_z != 0 2) no constraints on geometry 3) a bit more data
-output_root: "./fem_dataset_generation/triax_longer/large"
+output_root: "./fem_dataset_generation/triax_allgeoms/large"
 only_json: False
 
 defaults:
@@ -29,9 +29,9 @@ train:
   force_x: { start: -0.7, stop: 0.7, n: 3 }
   force_y: { start: -0.7, stop: 0.7, n: 4 }
   force_z: { start: -0.7, stop: 0.7, n: 4 }
-  lengths: { start: 1.0, stop: 2.0, n: 3 }
-  widths:  { start: 0.05, stop: 0.15, n: 3 }
-  depths: { start: 0.05, stop: 0.15, n: 3 }
+  lengths: { start: 0.2, stop: 1.0, n: 3 }
+  widths:  { start: 0.2, stop: 1.0, n: 3 }
+  depths: { start: 0.2, stop: 1.0, n: 3 }
 
 # Out-of-distribution ranges used for test set generation.
 # Each axis can have a "below" and/or "above" OOD sub-range.
@@ -47,14 +47,14 @@ test_ood_ranges:
     below: { start: -1.2, stop: -0.8 }
     above: { start: 0.8, stop: 1.2 }
   lengths:
-    below: { start: 0.01, stop: 0.04 }
+    below: { start: 0.1, stop: 0.19 }
     above: { start: 1.1, stop: 1.5 }
   widths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 1.1, stop: 1.5 }
   depths:
-    below: { start: 0.01, stop: 0.04 }
-    above: { start: 0.16, stop: 0.3 }
+    below: { start: 0.1, stop: 0.19 }
+    above: { start: 1.1, stop: 1.5 }
 
 selected_trajs:
   selected_validation_trajectories: [1, 11, 24, 34, 46, 45, 76, 93, 111, 120]

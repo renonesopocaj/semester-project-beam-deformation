@@ -1,0 +1,34 @@
+# Train / test OOD force ranges from large triax_allgeoms (canonical); n comes from size.
+name: triax
+train:
+  force_x:
+    start: -0.7
+    stop: 0.8
+  force_y:
+    start: -0.7
+    stop: 0.8
+  force_z:
+    start: -0.7
+    stop: 0.8
+test_ood_ranges:
+  force_x:
+    below:
+      start: -1.2
+      stop: -0.8
+    above:
+      start: 0.9
+      stop: 1.2
+  force_y:
+    below:
+      start: -1.2
+      stop: -0.8
+    above:
+      start: 0.9
+      stop: 1.2
+  force_z:
+    below:
+      start: -1.2
+      stop: -0.8
+    above:
+      start: 0.9
+      stop: 1.2

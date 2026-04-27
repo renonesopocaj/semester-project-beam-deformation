@@ -1,0 +1,34 @@
+# L, W, D train and OOD from large *_longer configs; width/depth OOD above uses 0.31..0.4 (non-overlap with train).
+name: longer
+train:
+  lengths:
+    start: 1.0
+    stop: 2.0
+  widths:
+    start: 0.2
+    stop: 0.3
+  depths:
+    start: 0.2
+    stop: 0.3
+test_ood_ranges:
+  lengths:
+    below:
+      start: 0.5
+      stop: 0.9
+    above:
+      start: 2.1
+      stop: 2.5
+  widths:
+    below:
+      start: 0.1
+      stop: 0.19
+    above:
+      start: 0.31
+      stop: 0.4
+  depths:
+    below:
+      start: 0.1
+      stop: 0.19
+    above:
+      start: 0.31
+      stop: 0.4
