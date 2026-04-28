@@ -1,0 +1,11 @@
+model_name: "transolver"
+transolver_n_layers: 5
+transolver_n_hidden: 256
+transolver_dropout: 0.0
+transolver_n_head: 8
+transolver_time_input: false
+transolver_act: "gelu"
+transolver_mlp_ratio: 1
+transolver_slice_num: 32
+transolver_ref: 8
+transolver_unified_pos: false
