@@ -4,12 +4,14 @@ meshgraphnet.py
 MeshGraphNet model, encoder (embedding of nodes and edges) - processor (message passing layer updating both nodes and
 edges/messages) - decoder (head for final prediction).
 MLPs are ReLu activated.
+import torch.utils.checkpoint as checkpoint_utils
 """
 
 import torch
 from src.gnn.models.models_helpers import build_mlp_d
 import torch.nn as nn
 from torch_scatter import scatter_add
+import torch.utils.checkpoint as checkpoint_utils
 
 class Encoder(torch.nn.Module):
     """
@@ -151,7 +153,7 @@ class MeshGraphNet(nn.Module):
     def __init__(self, node_channels, edge_channels, encoder_latent_size, encoder_decoder_latent_size,
                  processor_latent_size, num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder,
                  layer_norm_enable_decoder, layer_norm_enable_processor, num_layers_heads, num_layers_encoder,
-                 dropout_encoder, dropout_head, dropout_processor):
+                 dropout_encoder, dropout_head, dropout_processor, activation_checkpointing):
         """
         Args:
             node_channels: int
@@ -195,6 +197,7 @@ class MeshGraphNet(nn.Module):
         # Decoder: takes in input [N, H] and outputs [N, 4] (acceleration and von Mises stress)
         self.decoder = Decoder(in_and_latent_size=processor_latent_size, enable_layer_norm=layer_norm_enable_decoder,
                                num_layers_heads=num_layers_heads, dropout=dropout_head)
+        self.activation_checkpointing = activation_checkpointing
 
     def forward(self, ingraph):
         """
@@ -208,7 +211,13 @@ class MeshGraphNet(nn.Module):
         node_embedding, edge_embedding = self.encoder(node_features, edge_features)
         # Process through message-passing layers. Nodes: [N, 2H] --> [N, H] | Edges [E, 3H] --> [E, H]
         for processor in self.processer_list:
-            node_embedding, edge_embedding = processor(edge_index, node_embedding, edge_embedding) # [N, H], [E, H]
+            if self.training and self.activation_checkpointing:
+                # [N, H], [E, H]
+                node_embedding, edge_embedding = checkpoint_utils.checkpoint(processor, edge_index,
+                                                                             node_embedding, edge_embedding,
+                                                                             use_reentrant=False)
+            else:
+                node_embedding, edge_embedding = processor(edge_index, node_embedding, edge_embedding) # [N, H], [E, H]
         # Decode (prediction head)
         pred = self.decoder(node_embedding) # [N, 4]
         return pred

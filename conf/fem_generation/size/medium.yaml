@@ -1,0 +1,53 @@
+# Grid counts n only (matches former *_large.yaml without _small suffix). Selected trajectories: large set.
+name: medium
+selected_trajs:
+  selected_validation_trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+  selected_test_trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+  selected_total_time: 32
+  num_steps: 400
+n_by_combo:
+  single:
+    longer:
+      force_x: 1
+      force_y: 7
+      force_z: 1
+      lengths: 5
+      widths: 5
+      depths: 3
+    allgeoms:
+      force_x: 1
+      force_y: 7
+      force_z: 1
+      lengths: 5
+      widths: 5
+      depths: 3
+  biax:
+    longer:
+      force_x: 1
+      force_y: 5
+      force_z: 5
+      lengths: 3
+      widths: 3
+      depths: 3
+    allgeoms:
+      force_x: 1
+      force_y: 5
+      force_z: 5
+      lengths: 3
+      widths: 3
+      depths: 2
+  triax:
+    longer:
+      force_x: 4
+      force_y: 4
+      force_z: 4
+      lengths: 2
+      widths: 2
+      depths: 2
+    allgeoms:
+      force_x: 4
+      force_y: 4
+      force_z: 4
+      lengths: 2
+      widths: 2
+      depths: 2

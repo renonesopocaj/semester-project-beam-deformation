@@ -9,16 +9,16 @@ n_by_combo:
   single:
     longer:
       force_x: 1
-      force_y: 10
+      force_y: 9
       force_z: 1
       lengths: 6
       widths: 6
       depths: 3
     allgeoms:
       force_x: 1
-      force_y: 10
+      force_y: 9
       force_z: 1
-      lengths: 5
+      lengths: 6
       widths: 5
       depths: 4
   biax:

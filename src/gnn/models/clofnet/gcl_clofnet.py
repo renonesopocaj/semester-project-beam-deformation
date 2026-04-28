@@ -101,6 +101,14 @@ class ClofMPBlock(nn.Module):
                                              nn.Linear(hidden_dim, hidden_dim),
                                              act_fn)
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
+        # diff: h^(l+1) used in MLP vel instead of h^(l)
+        self.eq1 = False if eq_clof != 1 else True
+        # diff: eq1 + m_ij explicitly passed
+        self.eq2 = False if eq_clof != 2 else True
+        # diff: eq2 + explicit updating of v via v_i := v_i + 1/N * \sum _{j \in N(i)} v_j
+        self.eq3 = False if eq_clof != 3 else True
+        # diff: eq2 + nonlinearities
+        self.eq4 = False if eq_clof != 4 else True
 
     def coord2localframe(self, edge_index, coord_xi):
         """
@@ -288,9 +296,8 @@ class ClofMPBlock(nn.Module):
         # Node forward pass
         h, _ = self.node_model_forward(h, edge_index, embedded_mij)
         # Add velocity to coordinates
-        # FIXME: why does the MLP embed only h and not also vel?
         if self.enable_vel:
-            coord_xi = coord_xi + self.vel_mlp(h) * vel
+            coord_xi = coord_xi + self.vel_mlp(torch.concat(h, eij_sij_embed)) * vel
         # node feat + add skip connection + layer norm, i.e. h <-- h + phi_h(h, sum_j m_ij)
         h = residue + h
         h = self.layer_norm_h(h)
