@@ -63,6 +63,102 @@ def compute_angle_feat(coord_frame_xi, coord_frame_xj, EPS):
     pseudo_angle = torch.cat([sin_sim, cosine_sim], dim=-1) # [E, 2]
     return pseudo_angle # [E, 2]
 
+def split_node_features(x, split_idx_node):
+    """
+    Split PyG node tensor into boundary flag, stacked R^3-valued chunks, and remaining scalars.
+
+    Args:
+        x: torch.Tensor
+            Full node features of shape [N, C] with layout [bc | vec (3k) | scalars].
+        split_idx_node: int
+            Width of the vector-valued block (must be divisible by 3); starts at column index 1 after bc.
+    return: (bc, vec_chunks, scalars)
+        bc: torch.Tensor [N, 1]
+        vec_chunks: torch.Tensor [N, k, 3] with k = split_idx_node // 3
+        scalars: torch.Tensor [N, C - 1 - split_idx_node]
+    """
+    bc = x[:, 0:1]
+    vec_flat = x[:, 1 : 1 + split_idx_node]
+    scalars = x[:, 1 + split_idx_node :]
+    num_triplets = split_idx_node // 3
+    vec_chunks = vec_flat.reshape(x.shape[0], num_triplets, 3)
+    return bc, vec_chunks, scalars
+
+
+def split_edge_features(edge_attr, split_idx_edge):
+    """
+    Split edge attribute tensor into stacked R^3-valued chunks and remaining scalars.
+
+    Args:
+        edge_attr: torch.Tensor
+            Edge features of shape [E, C_e].
+        split_idx_edge: int
+            Leading width of vector triplets (must be divisible by 3).
+    return: (vec_chunks, scalars)
+        vec_chunks: torch.Tensor [E, k, 3] with k = split_idx_edge // 3
+        scalars: torch.Tensor [E, C_e - split_idx_edge]
+    """
+    vec_flat = edge_attr[:, :split_idx_edge]
+    scalars = edge_attr[:, split_idx_edge:]
+    num_triplets = split_idx_edge // 3
+    vec_chunks = vec_flat.reshape(edge_attr.shape[0], num_triplets, 3)
+    return vec_chunks, scalars
+
+
+def frame_basis_from_edges(coord_diff_e3, coord_cross_e3, coord_vertical_e3):
+    """
+    Stack three edge-local basis directions into a matrix suitable for torch.matmul.
+
+    Args:
+        coord_diff_e3: torch.Tensor
+            First basis, shape [E, 3].
+        coord_cross_e3: torch.Tensor
+            Second basis, shape [E, 3].
+        coord_vertical_e3: torch.Tensor
+            Third basis, shape [E, 3].
+    return: torch.Tensor
+        Basis matrix of shape [E, 3, 3] (rows are a_ij, b_ij, c_ij per edge).
+    """
+    return torch.stack([coord_diff_e3, coord_cross_e3, coord_vertical_e3], dim=1)
+
+
+def scalarize_node_endpoints(edges, frame_basis_e33, vec_node_n3):
+    """
+    Project one per-node equivariant vector on both edge endpoints in the local frame.
+
+    Args:
+        edges: tuple[torch.Tensor, torch.Tensor]
+            Directed edges (row, col).
+        frame_basis_e33: torch.Tensor
+            Frame matrix of shape [E, 3, 3].
+        vec_node_n3: torch.Tensor
+            Node vectors of shape [N, 3].
+    return: torch.Tensor
+        Concatenated coefficients [E, 6] = [coeff_i (3), coeff_j (3)].
+    """
+    row, col = edges
+    vi = vec_node_n3[row]
+    vj = vec_node_n3[col]
+    coeff_i = torch.matmul(frame_basis_e33, vi.unsqueeze(-1)).squeeze(-1)
+    coeff_j = torch.matmul(frame_basis_e33, vj.unsqueeze(-1)).squeeze(-1)
+    return torch.cat([coeff_i, coeff_j], dim=-1)
+
+
+def scalarize_edge_vector(frame_basis_e33, vec_edge_e3):
+    """
+    Project one per-edge equivariant vector onto the local frame.
+
+    Args:
+        frame_basis_e33: torch.Tensor
+            Frame matrix of shape [E, 3, 3].
+        vec_edge_e3: torch.Tensor
+            Edge vectors of shape [E, 3].
+    return: torch.Tensor
+        Coefficients of shape [E, 3].
+    """
+    return torch.matmul(frame_basis_e33, vec_edge_e3.unsqueeze(-1)).squeeze(-1)
+
+
 def forward_pass_generic(model, x, h, n_nodes, edges_index, edge_attr_eij, vel, node_attr):
     """
     Run the ClofNet stack and return updated coordinates.

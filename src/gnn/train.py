@@ -26,6 +26,9 @@ from torch_geometric.loader import DataLoader
 from src.gnn.models.gunet.gunet import GUNet
 from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
+from src.gnn.models.clofnet.clofnet import (ClofNetDirectAcceleration, ClofNetExtraLayer, ClofNetRecurrent,
+                                            ClofNetSeparateMessages)
+from src.gnn.preprocessing.build_features import probe_feature_layout
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
 from src.gnn.misc_helpers.misc import human_readable_storage, module_param_and_buffer_storage_bytes, pyg_data_tensor_storage_bytes
 from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
@@ -145,7 +148,47 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
                             dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,)
     elif train_cfg.model_name == "clofnet":
-        raise NotImplementedError("CLOFNet not implemented")
+        _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
+        act_name = str(train_cfg.clofnet_activation).lower()
+        if act_name == "silu":
+            act_fn = torch.nn.SiLU()
+        elif act_name == "leakyrelu":
+            act_fn = torch.nn.LeakyReLU(negative_slope=float(train_cfg.leakyrelu_negative_slope))
+        elif act_name == "relu":
+            act_fn = torch.nn.ReLU()
+        else:
+            raise ValueError("Unknown clofnet_activation: %s" % train_cfg.clofnet_activation)
+        in_dim_node_embed = int(preprocess_cfg.node_channels) - int(split_idx_node)
+        in_dim_edge_scalars = int(preprocess_cfg.edge_channels) - int(split_idx_edge)
+        common_kwargs = {
+            "in_dim_node_embed": in_dim_node_embed,
+            "in_dim_edge_scalars": in_dim_edge_scalars,
+            "hidden_dim": int(train_cfg.hidden_dim),
+            "fuse_hid_dim": int(train_cfg.embedding_edge_dim),
+            "act_fn": act_fn,
+            "n_layers": int(train_cfg.n_layers),
+            "coords_weight": float(train_cfg.coords_weight),
+            "recurrent": bool(train_cfg.recurrent),
+            "enable_norm_diff": bool(train_cfg.enable_norm_diff),
+            "tanh": bool(train_cfg.tanh),
+            "attention_enable": bool(train_cfg.attention_enable),
+            "clamp_enable": bool(train_cfg.clamp_enable),
+            "vel_mlp_dim_out": int(train_cfg.out_coord_mlp_dim),
+            "split_idx_node": int(split_idx_node),
+            "split_idx_edge": int(split_idx_edge),
+            "node_channels": int(preprocess_cfg.node_channels),
+            "edge_channels": int(preprocess_cfg.edge_channels),
+        }
+        variant = str(train_cfg.clofnet_variant).lower()
+        if variant == "recurrent":
+            return ClofNetRecurrent(**common_kwargs)
+        if variant == "separate":
+            return ClofNetSeparateMessages(**common_kwargs)
+        if variant == "extra_layer":
+            return ClofNetExtraLayer(**common_kwargs)
+        if variant in {"direct", "version5", "v5"}:
+            return ClofNetDirectAcceleration(**common_kwargs)
+        raise ValueError("Unknown clofnet_variant: %s" % train_cfg.clofnet_variant)
     elif train_cfg.model_name == "gunet":
         return GUNet(in_channels=preprocess_cfg.node_channels, hidden_channels=train_cfg.hidden_channels,
                      layer_norm=train_cfg.layer_norm, depth=train_cfg.depth,

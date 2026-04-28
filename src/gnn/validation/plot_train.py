@@ -3,10 +3,13 @@ plot_train.py
 Contains functions for plotting training history specific stuff.
 """
 
+import zlib
+from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 def _save_dual_axis_loss_rollout(train_epochs, train_loss, val_epochs, val_loss, rollout_error, output_path):
     """
@@ -175,6 +178,133 @@ def _draw_epoch_curve(ax, train_epochs, train_values, val_epochs, val_values, ti
     ax.set_title(f"{title}\n[training]")
     ax.grid(True, alpha=0.3)
     ax.legend()
+
+
+_MAX_GLOBAL_SAMPLES = 2000000
+
+
+def _finite_parameter_flat_numpy(param):
+    """
+    Args:
+        param: torch.nn.Parameter
+            One model parameter tensor.
+    return: np.ndarray
+        1D float64 array of finite values (CPU), possibly empty.
+    """
+    arr = param.detach().float().cpu().numpy().ravel()
+    if arr.size == 0:
+        return arr.astype(np.float64)
+    mask = np.isfinite(arr)
+    if not np.any(mask):
+        return np.array([], dtype=np.float64)
+    return arr[mask].astype(np.float64)
+
+
+def _subsample_uniform_1d(values, max_count, seed):
+    """
+    Args:
+        values: np.ndarray
+            1D array.
+        max_count: int
+            Maximum number of samples to return.
+        seed: int
+            RNG seed for reproducibility when subsampling is needed.
+    return: np.ndarray
+        Either values unchanged or max_count values chosen without replacement when len(values) > max_count.
+    """
+    n = int(values.size)
+    if n <= max_count:
+        return values
+    rng = np.random.RandomState(seed)
+    idx = rng.choice(n, size=max_count, replace=False)
+    return values[idx]
+
+
+def _collect_global_and_prefix_samples(model):
+    """
+    Builds a pooled sample of all parameter values (capped) and per–top-level-module concatenations.
+
+    Args:
+        model: torch.nn.Module
+            Network whose named_parameters are read.
+    return: (np.ndarray, dict)
+        Global subsampled 1D values, and mapping top_level_prefix -> 1D concatenated finite values per prefix.
+    """
+    prefix_chunks = defaultdict(list)
+    concat_parts = []
+    for name, param in model.named_parameters():
+        flat = _finite_parameter_flat_numpy(param)
+        if flat.size == 0:
+            continue
+        concat_parts.append(flat)
+        top = name.split(".", 1)[0]
+        prefix_chunks[top].append(flat)
+    if len(concat_parts) == 0:
+        return np.array([], dtype=np.float64), {}
+    pooled = np.concatenate(concat_parts)
+    pooled = _subsample_uniform_1d(pooled, _MAX_GLOBAL_SAMPLES, seed=0)
+    per_prefix = {}
+    for top, parts in prefix_chunks.items():
+        merged = np.concatenate(parts)
+        seed = zlib.adler32(top.encode("utf-8")) & 0x7FFFFFFF
+        per_prefix[top] = _subsample_uniform_1d(merged, _MAX_GLOBAL_SAMPLES, seed)
+    return pooled, per_prefix
+
+
+def plot_final_parameter_distributions(model, output_path):
+    """
+    Saves a figure with one histogram over all learned parameters (subsampled if huge) and one histogram
+    per top-level submodule prefix (first segment of each parameter name).
+
+    Args:
+        model: torch.nn.Module
+            Trained model to visualize.
+        output_path: Path
+            PNG path; parent directories are created if missing.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    global_vals, per_prefix = _collect_global_and_prefix_samples(model)
+    prefix_names = sorted(per_prefix.keys())
+    n_extra = len(prefix_names)
+    n_panels = 1 + n_extra
+    if n_panels == 1 and global_vals.size == 0:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.text(0.5, 0.5, "No parameters to plot", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        fig.suptitle("Learned parameter distributions [after training]", fontsize=12)
+        fig.tight_layout()
+        fig.savefig(output_path)
+        plt.close(fig)
+        return
+    ncols = 3
+    nrows = int(np.ceil(n_panels / float(ncols)))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.0 * ncols, 3.8 * nrows))
+    axes_flat = np.atleast_1d(axes).ravel()
+    for j in range(len(axes_flat)):
+        if j >= n_panels:
+            axes_flat[j].set_axis_off()
+    ax0 = axes_flat[0]
+    if global_vals.size > 0:
+        ax0.hist(global_vals, bins=80, density=True, color="steelblue", alpha=0.85)
+    ax0.set_title("All parameters (pooled)")
+    ax0.set_xlabel("Value")
+    ax0.set_ylabel("Density")
+    ax0.grid(True, alpha=0.3)
+    for i, pname in enumerate(prefix_names):
+        ax = axes_flat[1 + i]
+        vals = per_prefix[pname]
+        if vals.size > 0:
+            ax.hist(vals, bins=60, density=True, color="coral", alpha=0.85)
+        ax.set_title(pname[:48] + ("…" if len(pname) > 48 else ""))
+        ax.set_xlabel("Value")
+        ax.set_ylabel("Density")
+        ax.grid(True, alpha=0.3)
+    fig.suptitle("Learned parameter distributions [after training]", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(output_path)
+    plt.close(fig)
+
 
 def _save_epoch_curve(train_epochs, train_values, val_epochs, val_values, title, ylabel, output_path,
                       train_label="Train", val_label="Validation"):

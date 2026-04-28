@@ -27,6 +27,7 @@ from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
 from src.gnn.validation.plot_overall import overall_plot
+from src.gnn.validation.plot_train import plot_final_parameter_distributions
 
 class LitModule(L.LightningModule):
     # Model, optimizer
@@ -243,8 +244,22 @@ class LitModule(L.LightningModule):
 
     def on_fit_end(self):
         """
-        Called at the end of fit. Unwatches model to prevent memory leaks.
+        Called at the end of fit. Writes final parameter distribution plot, logs it to W&B when enabled,
+        and unwatches the model to prevent memory leaks.
         """
+        if self.trainer is not None and self.trainer.is_global_zero:
+            out_path = self.training_plots_dir / "final_parameter_distributions.png"
+            plot_final_parameter_distributions(self.model, out_path)
+            if self._has_wandb_logger():
+                epoch_step = self._current_wandb_epoch()
+                self.logger.experiment.log(
+                    {
+                        "epoch": epoch_step,
+                        "train/final_parameter_distributions": wandb.Image(str(out_path)),
+                    },
+                    step=epoch_step,
+                    commit=True,
+                )
         if self._has_wandb_logger() and self.trainer.is_global_zero and self.enable_wandb_watch:
             self.logger.experiment.unwatch(self.model)
 

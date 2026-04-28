@@ -1,198 +1,387 @@
 """
 clofnet.py
 
-Implements the ClofNet architecture as a whole, using the ClofGCL Block as message passing block
-- The basis vectors are "soft-normalized" with denominators like sqrt(radial) + 1 rather than exact unit normalization
-    with a tiny epsilon. This is a stability choice present in the original code.
-- The scalarization does more than the paper's minimal coefficient tuple: it also computes a pseudo-angle
-    feature from the projected coefficients.
-   This enriches the invariant edge descriptor passed to the message-passing block.
+ClofNet variants for predicting acceleration (equivariant) and von Mises stress (scalar) from PyG batches.
+Base class handles scalarization of stacked R^3 node/edge features using split_idx_node / split_idx_edge,
+a fixed EquiFrame from input positions, fused edge embeddings, and a stress head.
 """
 
 import numpy as np
 import torch
+from abc import ABC, abstractmethod
 from torch import nn
-from src.gnn.models.clofnet.gcl_clofnet import ClofMPBlock
-from src.gnn.models.clofnet.clof_helpers import compute_angle_feat, forward_pass_generic, coord2localframe
 
-class ClofNet(nn.Module):
+from src.gnn.models.clofnet.clof_helpers import (
+    compute_angle_feat,
+    coord2localframe,
+    frame_basis_from_edges,
+    scalarize_edge_vector,
+    scalarize_node_endpoints,
+    split_edge_features,
+    split_node_features,
+)
+from src.gnn.models.clofnet.mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock, RecurrentMPBlock,
+                                              SingleVectorizeMPBlock)
+
+
+class ClofNetBase(nn.Module, ABC):
     """
-    Local-frame ClofNet: without explicit velocity scalarization, and with MLP edge encoding.
-
-    High-level pipeline:
-        1. Embed node attributes.
-        2. Center coordinates per graph to remove global translation.
-        3. Build an edge-local complete frame F_ij.
-        4. Scalarize geometry into invariant edge features.
-        5. Pass invariant features through stacked Clof_GCL blocks.
-        6. Add the graph centroid back.
-
-    Relative to the paper, this class implements the "Scalarize -> invariant message passing -> Vectorize" recipe
-    from Eq. (9), but the actual vectorization happens inside Clof_GCL.coord_model rather than in this file.
+    Shared ClofNet acceleration pipeline: slice features, embed invariants, build frame from positions,
+    scalarize equivariant chunks + running acceleration into s_ij, fuse with edge scalars, stress head.
     """
 
-    def __init__(self, in_dim_node, in_dim_edge, hidden_dim,
-                 act_fn,
-                 n_layers,
-                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, out_coord_mlp_dim, clamp_enable,
-                 embedding_edge_dim):
-        """
-        Initializes the model
-        Def: out_dim_edge_emb=8
+    hidden_dim: int
+    n_layers: int
+    split_idx_node: int
+    split_idx_edge: int
+    enable_norm_diff: bool
 
-        Args:
-            in_dim_node: int
-                Input dimensionality of node features h.
-            in_dim_edge: int
-                Input dimensionality of edge attributes e_ij.
-            hidden_dim: int
-                Hidden dimensionality used across embeddings and Clof_GCL.
-            device: torch.device or str
-                Device where the module is moved.
-            act_fn: torch.nn.Module
-                Activation used in the small edge/node MLPs.
-            n_layers: int
-                Number of stacked Clof_GCL blocks.
-            coords_weight: float
-                Multiplicative factor applied to coordinate updates inside
-                Clof_GCL.
-            recurrent: bool
-                Whether the feature update uses residual accumulation.
-            enable_norm_diff: bool
-                Whether to normalize edge-local frame directions.
-            tanh: bool
-                Whether Clof_GCL should bound coordinate coefficients with tanh.
-        """
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels):
         super().__init__()
-        # message passing layers info
-        self.graph_mp_block_list = []
-        self.n_layers = n_layers
-        # info about hidden dimension in general
         self.hidden_dim = hidden_dim
-        self.embedding_edge_dim = embedding_edge_dim
-        self.in_dim_edge_mlp = self.hidden_dim // 2
-        self.hiddendim_fuse_mlp = self.hidden_dim // 2
-        # Concatenated with the 2-dim edge_attr used in the original code path.
-        edge_embed_dim = in_dim_edge + 8 # 2 pseudo-angle scalars + 3 coeffs for x_i + 3 coeffs for x_j = 8.
-        self.fuse_in_dim = edge_embed_dim
-        # Embedding layers mlp
-        self.embedding_node_mlp = nn.Linear(in_dim_node, self.hidden_dim)
-        # NOTE: this function is not used because edges are embedded directly together with scalarized coords via
-        #   fuse_mlp
-        # self.embedding_edge_mlp = nn.Sequential(nn.Linear(in_dim_edge, self.embedding_edge_dim),
-        #                                         act_fn)
-        # Additional MLP to embed coefficients of projected x_i, x_j on frame F_ij + pseudo angles AND e_ij edge attr
-        self.fuse_mlp_embed = nn.Sequential(nn.Linear(self.fuse_in_dim, self.hiddendim_fuse_mlp),
-                                            act_fn,
-                                            nn.Linear(self.hiddendim_fuse_mlp, self.hiddendim_fuse_mlp),
-                                            act_fn)
+        self.n_layers = n_layers
+        self.split_idx_node = split_idx_node
+        self.split_idx_edge = split_idx_edge
         self.enable_norm_diff = enable_norm_diff
-        # Initialize the ClofGCL layers (message passing layers)
-        for i in range(0, self.n_layers):
-            self.graph_mp_block_list.append(
-                ClofMPBlock(in_node_mlp_dim=self.hidden_dim, output_node_dim=self.hidden_dim,
-                            hidden_dim=self.hidden_dim, in_mij_mlp_dim=self.in_dim_edge_mlp,
-                            act_fn=act_fn,
-                            recurrent=recurrent,
-                            coords_weight=coords_weight, attention=attention_enable, norm_diff=enable_norm_diff,
-                            tanh=tanh, vel_mlp_dim_out=out_coord_mlp_dim, out_basis_dim=3, clamp=clamp_enable,
-                            enable_vel=False))
-        # Print model params
+        self.coords_weight = coords_weight
+        self.recurrent = recurrent
+        self.tanh = tanh
+        self.attention_enable = attention_enable
+        self.clamp_enable = clamp_enable
+        self.vel_mlp_dim_out = vel_mlp_dim_out
+        self.node_channels = node_channels
+        self.edge_channels = edge_channels
+        self.in_dim_edge_mlp = fuse_hid_dim
+        num_node_triplets = split_idx_node // 3
+        num_edge_triplets = split_idx_edge // 3
+        pseudo_dim = 2
+        self.s_ij_dim = pseudo_dim + (num_node_triplets + 1) * 6 + num_edge_triplets * 3
+        self.fuse_in_dim = in_dim_edge_scalars + self.s_ij_dim
+        self.embedding_node_mlp = nn.Linear(in_dim_node_embed, self.hidden_dim)
+        self.fuse_mlp_embed = nn.Sequential(nn.Linear(self.fuse_in_dim, fuse_hid_dim), act_fn,
+                                            nn.Linear(fuse_hid_dim, fuse_hid_dim), act_fn)
+        stress_in_dim = 2 * self.hidden_dim + 3
+        self.stress_mlp = nn.Sequential(nn.Linear(stress_in_dim, self.hidden_dim), act_fn,
+                                        nn.Linear(self.hidden_dim, 1))
+        self.mp_blocks = self._build_mp_blocks()
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
         params = sum([np.prod(p.size()) for p in model_parameters])
         print("Network Size", params)
 
-    def coord2localframe(self, edge_index, coord_xi):
+    @abstractmethod
+    def _build_mp_blocks(self):
         """
-        Build the three edge-local basis directions used by ClofNet.
+        return: nn.ModuleList
+            Stacked message-passing blocks for this variant.
+        """
+        raise NotImplementedError
 
-        Paper correspondence:
-            This is the implementation analogue of Eq. (2):
-                a_ij = normalized(x_i - x_j)
-                b_ij = normalized(x_i x x_j)
-                c_ij = a_ij x b_ij
-
-        Practical variant:
-            The original implementation divides by sqrt(radial) + 1 and
-            ||cross|| + 1 rather than by a strict norm + epsilon. That makes
-            the frame less sensitive to tiny distances and keeps training more
-            stable, but it also means these are not exact unit vectors.
+    @abstractmethod
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered):
+        """
+        Run the variant-specific message-passing stack.
 
         Args:
-            edge_index: tuple[torch.Tensor, torch.Tensor]
-                Edge list as (row, col), with one entry per directed edge.
-            coord_xi: torch.Tensor
-                Coordinates of shape [N, 3].
-        return: (coord_diff, coord_cross, coord_vertical)
-            coord_diff: torch.Tensor
-                First basis direction, shape [E, 1, 3].
-            coord_cross: torch.Tensor
-                Second basis direction, shape [E, 1, 3].
-            coord_vertical: torch.Tensor
-                Third basis direction, shape [E, 1, 3].
+            h0: torch.Tensor
+                Initial node embeddings [N, H].
+            a0: torch.Tensor
+                Initial acceleration field [N, 3] (zeros).
+            v0: torch.Tensor
+                Initial velocity [N, 3].
+            x0: torch.Tensor
+                Initial equivariant position copy [N, 3] (centered per graph).
+            node_vec_chunks: torch.Tensor
+                Static valued node vectors [N, K, 3] from batch.x.
+            edge_vec_chunks: torch.Tensor
+                Static edge vectors [E, K, 3] from edge_attr.
+            edge_scalars: torch.Tensor
+                Invariant edge scalars [E, S_e].
+            frame_e33: torch.Tensor
+                Local frame [E, 3, 3].
+            radial: torch.Tensor
+                Squared distances [E, 1].
+            edge_index_tuple: tuple
+                (row, col) directed edges.
+            x_pos_centered: torch.Tensor
+                Centered positions used only where subclasses need to refresh frame (unused for fixed frame).
+        return: (h_L, a_L, v_L, x_L, m_agg_L)
+            Final states and per-node aggregated messages for the stress head [N, H].
         """
-        # These tensors ar [E, 3]
-        radial, coord_diff, coord_cross, coord_vertical = coord2localframe(edge_index, coord_xi,
-                                                                           enable_norm_diff=self.enable_norm_diff,
-                                                                           crossdim1=True)
-        return coord_diff.unsqueeze(1), coord_cross.unsqueeze(1), coord_vertical.unsqueeze(1) # (E, 1, 3)
+        raise NotImplementedError
 
-    def scalarization(self, edges, x, vel):
+    def _build_s_ij(self, acceleration_n3, node_vec_chunks, edge_vec_chunks, frame_e33, edge_index_tuple):
         """
-        Project endpoint coordinates onto the edge-local frame.
-        What this implementation returns:
-                        coff_feat = [pseudo_sin, pseudo_cos, coff_i, coff_j]
-        where:
-                        coord_frame_xi = [<a_ij, x_i>, <b_ij, x_i>, <c_ij, x_i>]
-                        coord_frame_xj = [<a_ij, x_j>, <b_ij, x_j>, <c_ij, x_j>]
-        The extra pseudo-angle feature is not explicitly written as one of the paper's numbered equations.
+        Concatenate invariant scalarizations of all static node edge-vector triplets, acceleration, and edge vectors.
 
         Args:
-            edges: tuple[torch.Tensor, torch.Tensor]
-                Edge list as (row, col).
-            x: torch.Tensor
-                Coordinates of shape [N, 3].
+            acceleration_n3: torch.Tensor
+                Current acceleration estimate [N, 3] (used for endpoint projections and pseudo-angle).
+            node_vec_chunks: torch.Tensor
+                [N, K, 3] static vectors from node features.
+            edge_vec_chunks: torch.Tensor
+                [E, K, 3] static vectors from edge features.
+            frame_e33: torch.Tensor
+                [E, 3, 3] basis matrix per edge.
+            edge_index_tuple: tuple
+                (row, col).
         return: torch.Tensor
-            Invariant edge features of shape [E, 8].
+            s_ij tensor [E, s_ij_dim] before concatenation with edge scalars.
         """
-        EPS = 1e-5
-        coord_diff_aij, coord_cross_bij, coord_vertical_cij = self.coord2localframe(edges, x) # [E, 1, 3]
-        row, col = edges
-        # Concatenate the basis vectors
-        frame_basis_fij = torch.cat([coord_diff_aij, coord_cross_bij, coord_vertical_cij], dim=1) # [E, 3, 3]
-        x_i, x_j = x[row], x[col] # [E, 3]
-        # PROJECT x_i and x_j on the frame basis f_ij and obtain fram coefficient
-        # note: dimension is E because the frame f_ij is for each (i,j) connected by an edge
-        coord_frame_xi = torch.matmul(frame_basis_fij, x_i.unsqueeze(-1)).squeeze(-1) # [E, 3]
-        coord_frame_xj = torch.matmul(frame_basis_fij, x_j.unsqueeze(-1)).squeeze(-1) # [E, 3]
-        # Additional invariant angle-like descriptor built from the projected coefficient triplets.
-        pseudo_angle = compute_angle_feat(coord_frame_xi, coord_frame_xj, EPS)  # [E, 2]
-        # Concatenate everything
-        coords_frame_xij = torch.cat([pseudo_angle, coord_frame_xi, coord_frame_xj], dim=-1)
-        return coords_frame_xij # [E, 8]
+        eps = 1e-5
+        parts = []
+        num_k = int(node_vec_chunks.shape[1])
+        for t in range(num_k):
+            parts.append(scalarize_node_endpoints(edge_index_tuple, frame_e33, node_vec_chunks[:, t, :]))
+        acc_end = scalarize_node_endpoints(edge_index_tuple, frame_e33, acceleration_n3)
+        parts.append(acc_end)
+        coeff_i_a = acc_end[:, 0:3]
+        coeff_j_a = acc_end[:, 3:6]
+        pseudo = compute_angle_feat(coeff_i_a, coeff_j_a, eps)
+        num_ek = int(edge_vec_chunks.shape[1])
+        for t in range(num_ek):
+            parts.append(scalarize_edge_vector(frame_e33, edge_vec_chunks[:, t, :]))
+        rest = torch.cat(parts, dim=-1)
+        return torch.cat([pseudo, rest], dim=-1)
 
-    def forward(self, h, x, edges, vel, edge_attr, node_attr, n_nodes):
+    def _fuse_embed(self, acceleration_n3, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
+                    edge_index_tuple):
         """
-        Run the ClofNet stack and return updated coordinates.
-        node_attr=None, n_nodes=5
+        Build s_ij from the current acceleration estimate and fuse with invariant edge scalars.
 
         Args:
-            h: torch.Tensor
-                Node features of shape [N, in_node_nf].
-            x: torch.Tensor
-                Coordinates of shape [N, 3].
-            edges: tuple[torch.Tensor, torch.Tensor]
-                Directed edge index tuple (row, col).
-            vel: torch.Tensor
-                Velocity tensor of shape [N, 3]. Included only for API compatibility with the other variants.
-            edge_attr: torch.Tensor
-                Edge attributes of shape [E, in_edge_nf].
-            node_attr: torch.Tensor or None
-                Optional node-side attributes concatenated inside Clof_GCL.
-            n_nodes: int
-                Number of particles per graph in the batch. Needed to recover graphwise centroids after flattening.
+            acceleration_n3: torch.Tensor [N, 3]
+            node_vec_chunks: torch.Tensor [N, K, 3]
+            edge_vec_chunks: torch.Tensor [E, K, 3]
+            edge_scalars: torch.Tensor [E, S_e]
+            frame_e33: torch.Tensor [E, 3, 3]
+            edge_index_tuple: tuple
         return: torch.Tensor
-            Updated coordinates of shape [N, 3].
+            fuse_embed [E, fuse_hid_dim]
         """
-        x = forward_pass_generic(self, x, h, n_nodes, edges, edge_attr, vel, node_attr)
-        return x # [N, 3]
+        s_ij = self._build_s_ij(acceleration_n3, node_vec_chunks, edge_vec_chunks, frame_e33, edge_index_tuple)
+        fused = torch.cat([edge_scalars, s_ij], dim=-1)
+        return self.fuse_mlp_embed(fused)
+
+    def _stress_out(self, h_final, m_agg, a_l, v_l, x_l):
+        """
+        Predict scalar stress from final h, aggregated messages, and norms of equivariant fields.
+
+        Args:
+            h_final: torch.Tensor [N, H]
+            m_agg: torch.Tensor [N, H]
+            a_l, v_l, x_l: torch.Tensor [N, 3]
+        return: torch.Tensor [N, 1]
+        """
+        na = torch.norm(a_l, dim=1, keepdim=True)
+        nv = torch.norm(v_l, dim=1, keepdim=True)
+        nx = torch.norm(x_l, dim=1, keepdim=True)
+        inp = torch.cat([h_final, m_agg, na, nv, nx], dim=-1)
+        return self.stress_mlp(inp)
+
+    def forward(self, batch):
+        """
+        Predict normalized acceleration (first 3) and stress (last 1) for each node.
+
+        Args:
+            batch: torch_geometric.data.Data or Batch
+                Must provide x, edge_attr, edge_index, x_pos_t, x_vel_t, num_graphs, and optionally ptr.
+        return: torch.Tensor
+            Predictions [N, 4] = concat(acceleration, stress_scalar).
+        """
+        x_full = batch.x
+        edge_attr = batch.edge_attr
+        edge_index = batch.edge_index
+        x_pos = batch.x_pos_t
+        v_phy = batch.x_vel_t
+        row, col = edge_index[0], edge_index[1]
+        edge_index_tuple = (row, col)
+        assert int(x_full.shape[1]) == int(self.node_channels)
+        assert int(edge_attr.shape[1]) == int(self.edge_channels)
+        _, node_vec_chunks, node_scalars = split_node_features(x_full, self.split_idx_node)
+        edge_vec_chunks, edge_scalars = split_edge_features(edge_attr, self.split_idx_edge)
+        bc = x_full[:, 0:1]
+        h0 = self.embedding_node_mlp(torch.cat([bc, node_scalars], dim=-1))
+        num_nodes = int(x_pos.shape[0])
+        a0 = torch.zeros(num_nodes, 3, device=x_pos.device, dtype=x_pos.dtype)
+        v0 = v_phy
+        if hasattr(batch, "ptr") and batch.ptr is not None:
+            n_per = int(batch.ptr[1] - batch.ptr[0])
+            num_graphs = int(batch.num_graphs) if hasattr(batch, "num_graphs") else 1
+        else:
+            n_per = num_nodes
+            num_graphs = 1
+        x_resh = x_pos.reshape(num_graphs, n_per, 3)
+        centroid = torch.mean(x_resh, dim=1, keepdim=True)
+        x_centered = (x_resh - centroid).reshape(-1, 3)
+        x0 = x_centered
+        radial, cd, cc, cv = coord2localframe(edge_index_tuple, x_centered, self.enable_norm_diff, False)
+        frame_e33 = frame_basis_from_edges(cd, cc, cv)
+        h_l, a_l, v_l, x_l, m_agg_l = self._run_mp_loop(h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks,
+                                                        edge_scalars, frame_e33, radial, edge_index_tuple,
+                                                        x_centered)
+        stress = self._stress_out(h_l, m_agg_l, a_l, v_l, x_l)
+        return torch.cat([a_l, stress], dim=-1)
+
+
+class ClofNetRecurrent(ClofNetBase):
+    """
+    Variant 6: recurrent messages m_ij^{l+1} depend on m_ij^l; s_ij recomputed each layer from current acceleration;
+    only a is updated (no explicit v/x evolution).
+    """
+
+    def _build_mp_blocks(self):
+        in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp + self.hidden_dim
+        blocks = []
+        for _ in range(self.n_layers):
+            blocks.append(RecurrentMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
+                                           hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
+                                           act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                           coords_weight=self.coords_weight, attention=self.attention_enable,
+                                           tanh=self.tanh, clamp=self.clamp_enable))
+        return nn.ModuleList(blocks)
+
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels):
+        self._stored_act_fn = act_fn
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                         coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
+                         vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
+
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered):
+        h = h0
+        a = a0
+        num_edges = int(edge_index_tuple[0].shape[0])
+        m_ij = torch.zeros(num_edges, self.hidden_dim, device=h.device, dtype=h.dtype)
+        m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
+        for block in self.mp_blocks:
+            fuse_embed = self._fuse_embed(a, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
+                                         edge_index_tuple)
+            cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+            h, a, m_ij, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, m_ij, a)
+        return h, a, v0, x0, m_agg_last
+
+
+class ClofNetSeparateMessages(ClofNetBase):
+    """
+    Variant 4: separate message MLPs for a, v, x channels; fused s_ij fixed from zero acceleration; phi_vel on a.
+    """
+
+    def _build_mp_blocks(self):
+        in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp
+        blocks = []
+        for _ in range(self.n_layers):
+            blocks.append(MultiHeadMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
+                                           hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
+                                           act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                           coords_weight=self.coords_weight, attention=self.attention_enable,
+                                           tanh=self.tanh, clamp=self.clamp_enable,
+                                           vel_mlp_dim_out=self.vel_mlp_dim_out))
+        return nn.ModuleList(blocks)
+
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels):
+        self._stored_act_fn = act_fn
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                         coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
+                         vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
+
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered):
+        h = h0
+        a = a0
+        v = v0
+        x = x0
+        fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
+                                      edge_index_tuple)
+        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
+        for block in self.mp_blocks:
+            h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
+        return h, a, v, x, m_agg_last
+
+
+class ClofNetExtraLayer(ClofNetBase):
+    """
+    Variant 3: single message m_ij; three vectorization heads; phi_vel on a; fixed s_ij from zero acceleration.
+    """
+
+    def _build_mp_blocks(self):
+        in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp
+        blocks = []
+        for _ in range(self.n_layers):
+            blocks.append(SingleVectorizeMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
+                                                 hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
+                                                 act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                                 coords_weight=self.coords_weight, attention=self.attention_enable,
+                                                 tanh=self.tanh, clamp=self.clamp_enable,
+                                                 vel_mlp_dim_out=self.vel_mlp_dim_out))
+        return nn.ModuleList(blocks)
+
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels):
+        self._stored_act_fn = act_fn
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                         coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
+                         vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
+
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered):
+        h = h0
+        a = a0
+        v = v0
+        x = x0
+        fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
+                                      edge_index_tuple)
+        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
+        for block in self.mp_blocks:
+            h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
+        return h, a, v, x, m_agg_last
+
+
+class ClofNetDirectAcceleration(ClofNetBase):
+    """
+    Version 5: fixed s_ij, no extra velocity layer, no velocity/position update.
+    Acceleration receives vectorized messages plus direct gates from h^l times frozen velocity and position.
+    """
+
+    def _build_mp_blocks(self):
+        in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp
+        blocks = []
+        for _ in range(self.n_layers):
+            blocks.append(DirectAccelerationMPBlock(in_node_mlp_dim=2 * self.hidden_dim,
+                                                    output_node_dim=self.hidden_dim,
+                                                    hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
+                                                    act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                                    coords_weight=self.coords_weight,
+                                                    attention=self.attention_enable, tanh=self.tanh,
+                                                    clamp=self.clamp_enable,
+                                                    vel_mlp_dim_out=self.vel_mlp_dim_out))
+        return nn.ModuleList(blocks)
+
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels):
+        self._stored_act_fn = act_fn
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+                         coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
+                         vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
+
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered):
+        h = h0
+        a = a0
+        fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
+                                      edge_index_tuple)
+        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
+        for block in self.mp_blocks:
+            h, a, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v0, x0)
+        return h, a, v0, x0, m_agg_last

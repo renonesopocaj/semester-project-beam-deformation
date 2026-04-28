@@ -219,6 +219,20 @@ class TrainYaml:
             self.dropout_encoder = flattened_cfg["dropout_encoder"]
             self.dropout_head = flattened_cfg["dropout_head"]
             self.dropout_processor = flattened_cfg["dropout_processor"]
+        elif self.model_name == "clofnet":
+            self.clofnet_variant = flattened_cfg["clofnet_variant"]
+            self.hidden_dim = flattened_cfg["hidden_dim"]
+            self.n_layers = flattened_cfg["n_layers"]
+            self.coords_weight = flattened_cfg["coords_weight"]
+            self.recurrent = flattened_cfg["recurrent"]
+            self.enable_norm_diff = flattened_cfg["enable_norm_diff"]
+            self.tanh = flattened_cfg["tanh"]
+            self.attention_enable = flattened_cfg["attention_enable"]
+            self.clamp_enable = flattened_cfg["clamp_enable"]
+            self.out_coord_mlp_dim = flattened_cfg["out_coord_mlp_dim"]
+            self.embedding_edge_dim = flattened_cfg["embedding_edge_dim"]
+            self.clofnet_activation = flattened_cfg["clofnet_activation"]
+            self.leakyrelu_negative_slope = flattened_cfg["leakyrelu_negative_slope"]
 
 def _to_dict_flatten(data):
     """
