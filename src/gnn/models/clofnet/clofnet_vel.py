@@ -166,5 +166,5 @@ class ClofNetVel(nn.Module):
         return: torch.Tensor
             Updated coordinates of shape [N, 3].
         """
-        x = forward_pass_generic(self, h, x, n_nodes, edges, edge_attr, vel, node_attr)
+        x = forward_pass_generic(self, x, h, n_nodes, edges, edge_attr, vel, node_attr)
         return x
