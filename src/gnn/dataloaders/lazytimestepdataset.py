@@ -4,7 +4,6 @@ lazytimestepdataset.py
 Lazy (on-disk) counterparts to InMemoryTimeStepDataset and InMemoryNoisedDataset.
 Data is loaded from disk on demand with a file-level LRU cache, keeping only
 cache_size trajectory files in RAM at once instead of the full dataset.
-
 Two versions:
 - LazyTimeStepDataset: on-demand loading with LRU file cache, drop-in for InMemoryTimeStepDataset.
 - LazyNoisedDataset: adds the same per-epoch Gaussian noise injection as InMemoryNoisedDataset,
@@ -16,7 +15,7 @@ import collections
 import os
 import torch
 from torch_geometric.data import Dataset
-from src.gnn.preprocessing.inmemorytimestepdataset import _NoisedMixin
+from src.gnn.dataloaders.inmemorytimestepdataset import _NoisedMixin
 
 
 class LazyTimeStepDataset(Dataset):
@@ -60,7 +59,7 @@ class LazyTimeStepDataset(Dataset):
         if not self.file_paths:
             raise FileNotFoundError(f"No graph_*.pt files found in {sample_dir}")
         print(f"\tFound {len(self.file_paths)} sample files")
-        # Scan phase: load each file to record its length, then immediately discard to free RAM.
+        # Load each file to record its length, then immediately discard to free RAM.
         lengths = []
         for path in self.file_paths:
             traj_data = torch.load(path, map_location="cpu", weights_only=False)
@@ -70,11 +69,9 @@ class LazyTimeStepDataset(Dataset):
         self._cumulative_lengths = [0]
         for length in lengths:
             self._cumulative_lengths.append(self._cumulative_lengths[-1] + length)
-        # trajectory_boundaries mirrors InMemoryTimeStepDataset: list of (start, end) flat indices.
-        self.trajectory_boundaries = [
-            (self._cumulative_lengths[i], self._cumulative_lengths[i + 1])
-            for i in range(len(self.file_paths))
-        ]
+        # list of (start, end) indices.
+        self.trajectory_boundaries = \
+            [(self._cumulative_lengths[i], self._cumulative_lengths[i + 1]) for i in range(len(self.file_paths))]
         total = self._cumulative_lengths[-1]
         print(f"\tLazy dataset indexed: {total} samples ({self.num_trajectories} trajectories), "
               f"cache_size={cache_size}")

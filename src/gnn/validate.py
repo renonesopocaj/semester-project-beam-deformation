@@ -17,7 +17,7 @@ import yaml
 from torch_geometric.loader import DataLoader
 
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
-from src.gnn.preprocessing.inmemorytimestepdataset import InMemoryTimeStepDataset
+from src.gnn.dataloaders.inmemorytimestepdataset import InMemoryTimeStepDataset
 from src.gnn.preprocessing.stats import load_stats, load_theta_max
 from src.gnn.train import create_model, resolve_trainer_precision, _load_traj_metadata
 from src.gnn.training.scheduler import scheduler_factory

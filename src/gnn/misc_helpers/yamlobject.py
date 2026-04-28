@@ -185,6 +185,9 @@ class TrainYaml:
         self.stress_weight = flattened_cfg["stress_weight"]
         # Misc
         self.protect_from_oom = flattened_cfg["protect_from_oom"]
+        self.activation_checkpointing = flattened_cfg["activation_checkpointing"]
+        self.foreach_optim = flattened_cfg["foreach_optim"]
+        # Models
         if self.model_name == "MGN":
             self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
             self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
