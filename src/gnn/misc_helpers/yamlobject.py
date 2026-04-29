@@ -236,6 +236,17 @@ class TrainYaml:
             self.embedding_edge_dim = flattened_cfg["embedding_edge_dim"]
             self.clofnet_activation = flattened_cfg["clofnet_activation"]
             self.leakyrelu_negative_slope = flattened_cfg["leakyrelu_negative_slope"]
+        elif self.model_name == "transolver":
+            self.transolver_n_layers = flattened_cfg["transolver_n_layers"]
+            self.transolver_n_hidden = flattened_cfg["transolver_n_hidden"]
+            self.transolver_dropout = flattened_cfg["transolver_dropout"]
+            self.transolver_n_head = flattened_cfg["transolver_n_head"]
+            self.transolver_time_input = flattened_cfg["transolver_time_input"]
+            self.transolver_act = flattened_cfg["transolver_act"]
+            self.transolver_mlp_ratio = flattened_cfg["transolver_mlp_ratio"]
+            self.transolver_slice_num = flattened_cfg["transolver_slice_num"]
+            self.transolver_ref = flattened_cfg["transolver_ref"]
+            self.transolver_unified_pos = flattened_cfg["transolver_unified_pos"]
 
 def _to_dict_flatten(data):
     """

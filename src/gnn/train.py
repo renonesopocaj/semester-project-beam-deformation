@@ -26,6 +26,7 @@ from torch_geometric.loader import DataLoader
 from src.gnn.models.gunet.gunet import GUNet
 from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
+from src.gnn.models.transolver.transolvernet import TransolverNet
 from src.gnn.models.clofnet.clofnet import (ClofNetDirectAcceleration, ClofNetExtraLayer, ClofNetRecurrent,
                                             ClofNetSeparateMessages)
 from src.gnn.preprocessing.build_features import probe_feature_layout
@@ -203,7 +204,20 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                       train_cfg.layers_per_level, train_cfg.window_size, train_cfg.pool_seed, train_cfg.pool_aggr,
                       train_cfg.activation, graph_template)
     elif train_cfg.model_name == "transolver":
-        raise NotImplementedError("Transolver not implemented")
+        return TransolverNet(
+            graph_template,
+            preprocess_cfg.node_channels,
+            train_cfg.transolver_n_layers,
+            train_cfg.transolver_n_hidden,
+            train_cfg.transolver_dropout,
+            train_cfg.transolver_n_head,
+            train_cfg.transolver_time_input,
+            train_cfg.transolver_act,
+            train_cfg.transolver_mlp_ratio,
+            train_cfg.transolver_slice_num,
+            train_cfg.transolver_ref,
+            train_cfg.transolver_unified_pos,
+        )
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 

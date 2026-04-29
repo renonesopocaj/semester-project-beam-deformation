@@ -337,14 +337,16 @@ class Model(nn.Module):
         """
         # x: B N 2
         # grid_ref
+        dev = x.device
+        dtype = x.dtype
         # 1D linspace along x for ref samples in [0,1].
-        gridx = torch.tensor(np.linspace(0, 1, self.ref), dtype=torch.float)
+        gridx = torch.tensor(np.linspace(0, 1, self.ref), dtype=dtype, device=dev)
         # Broadcast to (B, ref, ref, 1): x coordinate of ref grid corners.
         gridx = gridx.reshape(1, self.ref, 1, 1).repeat([batchsize, 1, self.ref, 1])
-        gridy = torch.tensor(np.linspace(0, 1, self.ref), dtype=torch.float)
+        gridy = torch.tensor(np.linspace(0, 1, self.ref), dtype=dtype, device=dev)
         gridy = gridy.reshape(1, 1, self.ref, 1).repeat([batchsize, self.ref, 1, 1])
-        # Stack xy -> reference points (B, ref^2, 2); .cuda() matches original repo device choice.
-        grid_ref = torch.cat((gridx, gridy), dim=-1).cuda().reshape(batchsize, self.ref * self.ref, 2)  # B (ref^2) 2
+        # Stack xy -> reference points (B, ref^2, 2) on the same device as node coordinates.
+        grid_ref = torch.cat((gridx, gridy), dim=-1).reshape(batchsize, self.ref * self.ref, 2)
 
         # Euclidean distance from each mesh node to each ref point -> ref^2 scalars per node (unified position).
         pos = torch.sqrt(torch.sum((x[:, :, None, :] - grid_ref[:, None, :, :]) ** 2, dim=-1)). \
