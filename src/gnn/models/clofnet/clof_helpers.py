@@ -23,8 +23,8 @@ def coord2localframe(edge_index, coord_xi, enable_norm_diff, crossdim1):
             normalize the difference
         crossdim1: bool
             distinguish between two different implementations
-    return: (coord_diff, coord_cross, coord_vertical)
-        Edge-local basis tensors, each with shape [E, 3]. (then unsqueezed)
+    return: (radial_rij, coord_diff, coord_cross, coord_vertical)
+        radial_rij: squared edge lengths [E, 1]; the three frame directions each [E, 3].
     """
     EPS = 1 # note =1 it's a heavy choice, TODO: try EPS=1e-5
     row, col = edge_index

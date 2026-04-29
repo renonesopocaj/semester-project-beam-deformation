@@ -154,11 +154,15 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
         _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
         act_name = str(train_cfg.clofnet_activation).lower()
         if act_name == "silu":
-            act_fn = torch.nn.SiLU()
+            def clofnet_act_fn_factory():
+                return torch.nn.SiLU()
         elif act_name == "leakyrelu":
-            act_fn = torch.nn.LeakyReLU(negative_slope=float(train_cfg.leakyrelu_negative_slope))
+            neg_slope = float(train_cfg.leakyrelu_negative_slope)
+            def clofnet_act_fn_factory():
+                return torch.nn.LeakyReLU(negative_slope=neg_slope)
         elif act_name == "relu":
-            act_fn = torch.nn.ReLU()
+            def clofnet_act_fn_factory():
+                return torch.nn.ReLU()
         else:
             raise ValueError("Unknown clofnet_activation: %s" % train_cfg.clofnet_activation)
         in_dim_node_embed = int(preprocess_cfg.node_channels) - int(split_idx_node)
@@ -168,7 +172,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             "in_dim_edge_scalars": in_dim_edge_scalars,
             "hidden_dim": int(train_cfg.hidden_dim),
             "fuse_hid_dim": int(train_cfg.embedding_edge_dim),
-            "act_fn": act_fn,
+            "act_fn_factory": clofnet_act_fn_factory,
             "n_layers": int(train_cfg.n_layers),
             "coords_weight": float(train_cfg.coords_weight),
             "recurrent": bool(train_cfg.recurrent),

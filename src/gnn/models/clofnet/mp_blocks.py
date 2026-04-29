@@ -21,7 +21,7 @@ class RecurrentMPBlock(nn.Module):
     tanh: bool
     clamp: bool
 
-    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn, recurrent,
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp):
         super().__init__()
         self.coords_weight = coords_weight
@@ -29,20 +29,20 @@ class RecurrentMPBlock(nn.Module):
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
-        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn,
+        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
         linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
         torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn, linlayer_final]
+        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
         if self.tanh:
             vec_layers.append(nn.Tanh())
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         self.vectorization_mlp = nn.Sequential(*vec_layers)
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn)
+        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
 
     def forward(self, h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, m_prev, a):
@@ -104,7 +104,7 @@ class MultiHeadMPBlock(nn.Module):
     tanh: bool
     clamp: bool
 
-    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn, recurrent,
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out):
         super().__init__()
         self.coords_weight = coords_weight
@@ -112,13 +112,13 @@ class MultiHeadMPBlock(nn.Module):
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
-        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn,
+        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
 
         def make_vec_mlp():
             linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
             torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn, linlayer_final]
+            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
             if self.tanh:
                 layers.append(nn.Tanh())
             return nn.Sequential(*layers)
@@ -132,18 +132,18 @@ class MultiHeadMPBlock(nn.Module):
             self.att_mlp_a = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
             self.att_mlp_v = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
             self.att_mlp_x = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.message_mij_mlp_a = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                                 nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                                 nn.Linear(hidden_dim, hidden_dim), act_fn)
-        self.message_mij_mlp_v = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                               nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                               nn.Linear(hidden_dim, hidden_dim), act_fn)
-        self.message_mij_mlp_x = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                               nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                               nn.Linear(hidden_dim, hidden_dim), act_fn)
-        self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.message_mij_mlp_a = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                                 nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                                 nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        self.message_mij_mlp_v = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                               nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                               nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        self.message_mij_mlp_x = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                               nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                               nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
-        self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
 
@@ -218,7 +218,7 @@ class SingleVectorizeMPBlock(nn.Module):
     tanh: bool
     clamp: bool
 
-    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn, recurrent,
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out):
         super().__init__()
         self.coords_weight = coords_weight
@@ -226,13 +226,13 @@ class SingleVectorizeMPBlock(nn.Module):
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
-        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn,
+        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
 
         def make_vec_mlp():
             linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
             torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn, linlayer_final]
+            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
             if self.tanh:
                 layers.append(nn.Tanh())
             return nn.Sequential(*layers)
@@ -244,12 +244,12 @@ class SingleVectorizeMPBlock(nn.Module):
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn)
-        self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
-        self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
 
@@ -305,7 +305,7 @@ class DirectAccelerationMPBlock(nn.Module):
     tanh: bool
     clamp: bool
 
-    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn, recurrent,
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out):
         super().__init__()
         self.coords_weight = coords_weight
@@ -313,23 +313,23 @@ class DirectAccelerationMPBlock(nn.Module):
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
-        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn,
+        self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
         linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
         torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn, linlayer_final]
+        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
         if self.tanh:
             vec_layers.append(nn.Tanh())
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         self.vectorization_mlp = nn.Sequential(*vec_layers)
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn,
-                                             nn.Linear(hidden_dim, hidden_dim), act_fn)
-        self.phi_vel = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
+                                             nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        self.phi_vel = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                      nn.Linear(hidden_dim, vel_mlp_dim_out))
-        self.phi_pos = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn,
+        self.phi_pos = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                      nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
 

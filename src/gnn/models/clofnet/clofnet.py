@@ -29,11 +29,13 @@ class ClofNetBase(nn.Module, ABC):
     split_idx_node: int
     split_idx_edge: int
     enable_norm_diff: bool
+    act_fn_factory: object
 
-    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels):
         super().__init__()
+        self.act_fn_factory = act_fn_factory
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
         self.split_idx_node = split_idx_node
@@ -54,10 +56,10 @@ class ClofNetBase(nn.Module, ABC):
         self.s_ij_dim = pseudo_dim + (num_node_triplets + 1) * 6 + num_edge_triplets * 3
         self.fuse_in_dim = in_dim_edge_scalars + self.s_ij_dim
         self.embedding_node_mlp = nn.Linear(in_dim_node_embed, self.hidden_dim)
-        self.fuse_mlp_embed = nn.Sequential(nn.Linear(self.fuse_in_dim, fuse_hid_dim), act_fn,
-                                            nn.Linear(fuse_hid_dim, fuse_hid_dim), act_fn)
+        self.fuse_mlp_embed = nn.Sequential(nn.Linear(self.fuse_in_dim, fuse_hid_dim), act_fn_factory(),
+                                            nn.Linear(fuse_hid_dim, fuse_hid_dim), act_fn_factory())
         stress_in_dim = 2 * self.hidden_dim + 3
-        self.stress_mlp = nn.Sequential(nn.Linear(stress_in_dim, self.hidden_dim), act_fn,
+        self.stress_mlp = nn.Sequential(nn.Linear(stress_in_dim, self.hidden_dim), act_fn_factory(),
                                         nn.Linear(self.hidden_dim, 1))
         self.mp_blocks = self._build_mp_blocks()
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
@@ -232,16 +234,15 @@ class ClofNetRecurrent(ClofNetBase):
         for _ in range(self.n_layers):
             blocks.append(RecurrentMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
                                            hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
-                                           act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                           act_fn_factory=self.act_fn_factory, recurrent=self.recurrent,
                                            coords_weight=self.coords_weight, attention=self.attention_enable,
                                            tanh=self.tanh, clamp=self.clamp_enable))
         return nn.ModuleList(blocks)
 
-    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels):
-        self._stored_act_fn = act_fn
-        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
 
@@ -255,7 +256,7 @@ class ClofNetRecurrent(ClofNetBase):
         for block in self.mp_blocks:
             fuse_embed = self._fuse_embed(a, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                          edge_index_tuple)
-            cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+            _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
             h, a, m_ij, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, m_ij, a)
         return h, a, v0, x0, m_agg_last
 
@@ -271,17 +272,16 @@ class ClofNetSeparateMessages(ClofNetBase):
         for _ in range(self.n_layers):
             blocks.append(MultiHeadMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
                                            hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
-                                           act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                           act_fn_factory=self.act_fn_factory, recurrent=self.recurrent,
                                            coords_weight=self.coords_weight, attention=self.attention_enable,
                                            tanh=self.tanh, clamp=self.clamp_enable,
                                            vel_mlp_dim_out=self.vel_mlp_dim_out))
         return nn.ModuleList(blocks)
 
-    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels):
-        self._stored_act_fn = act_fn
-        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
 
@@ -293,7 +293,7 @@ class ClofNetSeparateMessages(ClofNetBase):
         x = x0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
             h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
@@ -311,17 +311,16 @@ class ClofNetExtraLayer(ClofNetBase):
         for _ in range(self.n_layers):
             blocks.append(SingleVectorizeMPBlock(in_node_mlp_dim=2 * self.hidden_dim, output_node_dim=self.hidden_dim,
                                                  hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
-                                                 act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                                 act_fn_factory=self.act_fn_factory, recurrent=self.recurrent,
                                                  coords_weight=self.coords_weight, attention=self.attention_enable,
                                                  tanh=self.tanh, clamp=self.clamp_enable,
                                                  vel_mlp_dim_out=self.vel_mlp_dim_out))
         return nn.ModuleList(blocks)
 
-    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels):
-        self._stored_act_fn = act_fn
-        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
 
@@ -333,7 +332,7 @@ class ClofNetExtraLayer(ClofNetBase):
         x = x0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
             h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
@@ -353,18 +352,17 @@ class ClofNetDirectAcceleration(ClofNetBase):
             blocks.append(DirectAccelerationMPBlock(in_node_mlp_dim=2 * self.hidden_dim,
                                                     output_node_dim=self.hidden_dim,
                                                     hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
-                                                    act_fn=self._stored_act_fn, recurrent=self.recurrent,
+                                                    act_fn_factory=self.act_fn_factory, recurrent=self.recurrent,
                                                     coords_weight=self.coords_weight,
                                                     attention=self.attention_enable, tanh=self.tanh,
                                                     clamp=self.clamp_enable,
                                                     vel_mlp_dim_out=self.vel_mlp_dim_out))
         return nn.ModuleList(blocks)
 
-    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels):
-        self._stored_act_fn = act_fn
-        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn, n_layers,
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels)
 
@@ -374,7 +372,7 @@ class ClofNetDirectAcceleration(ClofNetBase):
         a = a0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
             h, a, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v0, x0)
