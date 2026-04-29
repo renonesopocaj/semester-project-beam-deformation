@@ -1,3 +1,14 @@
 model_name: "clofnet"
-activation: "leakyrelu"
+clofnet_variant: "recurrent" # recurrent | separate | extra_layer | direct
+hidden_dim: 256
+n_layers: 8
+coords_weight: 1.0
+recurrent: true
+enable_norm_diff: true
+tanh: false
+attention_enable: true
+clamp_enable: false
+out_coord_mlp_dim: 3
+embedding_edge_dim: 256
+clofnet_activation: "silu"
 leakyrelu_negative_slope: 0.2

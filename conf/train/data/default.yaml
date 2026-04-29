@@ -1,4 +1,4 @@
-dataset_dir: "dataset/processed/single_longer/z_isotr_centr_all/small"
+dataset_dir: "/Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/single_longer/z_isotr_centr_all/small"
 train_dir: ${data.dataset_dir}/train
 val_dir: ${data.dataset_dir}/val
 test_dir: ${data.dataset_dir}/test

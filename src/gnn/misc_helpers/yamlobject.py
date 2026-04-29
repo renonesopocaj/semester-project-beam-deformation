@@ -222,6 +222,31 @@ class TrainYaml:
             self.dropout_encoder = flattened_cfg["dropout_encoder"]
             self.dropout_head = flattened_cfg["dropout_head"]
             self.dropout_processor = flattened_cfg["dropout_processor"]
+        elif self.model_name == "clofnet":
+            self.clofnet_variant = flattened_cfg["clofnet_variant"]
+            self.hidden_dim = flattened_cfg["hidden_dim"]
+            self.n_layers = flattened_cfg["n_layers"]
+            self.coords_weight = flattened_cfg["coords_weight"]
+            self.recurrent = flattened_cfg["recurrent"]
+            self.enable_norm_diff = flattened_cfg["enable_norm_diff"]
+            self.tanh = flattened_cfg["tanh"]
+            self.attention_enable = flattened_cfg["attention_enable"]
+            self.clamp_enable = flattened_cfg["clamp_enable"]
+            self.out_coord_mlp_dim = flattened_cfg["out_coord_mlp_dim"]
+            self.embedding_edge_dim = flattened_cfg["embedding_edge_dim"]
+            self.clofnet_activation = flattened_cfg["clofnet_activation"]
+            self.leakyrelu_negative_slope = flattened_cfg["leakyrelu_negative_slope"]
+        elif self.model_name == "transolver":
+            self.transolver_n_layers = flattened_cfg["transolver_n_layers"]
+            self.transolver_n_hidden = flattened_cfg["transolver_n_hidden"]
+            self.transolver_dropout = flattened_cfg["transolver_dropout"]
+            self.transolver_n_head = flattened_cfg["transolver_n_head"]
+            self.transolver_time_input = flattened_cfg["transolver_time_input"]
+            self.transolver_act = flattened_cfg["transolver_act"]
+            self.transolver_mlp_ratio = flattened_cfg["transolver_mlp_ratio"]
+            self.transolver_slice_num = flattened_cfg["transolver_slice_num"]
+            self.transolver_ref = flattened_cfg["transolver_ref"]
+            self.transolver_unified_pos = flattened_cfg["transolver_unified_pos"]
 
 def _to_dict_flatten(data):
     """
