@@ -327,6 +327,7 @@ class TrainPreprocessor(Preprocessor):
         self.out_graphs.append(Data(y_acc_t=_a, # TARGET feature acceleration
                                     # Helpers for rollout or other tasks
                                     edge_index=graph.edge_index,  # global index
+                                    x_element_connectivity=graph.x_element_connectivity,
                                     t=graph.time,  # global t attribute
                                     # Features (input, x)
                                     x_pos_t=_x, # FEATURE position

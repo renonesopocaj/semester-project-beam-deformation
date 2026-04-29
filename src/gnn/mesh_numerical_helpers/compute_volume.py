@@ -29,6 +29,51 @@ def volume(V, T):
     vols = -torch.sum(torch.mul(a - d, torch.cross(b - c, c - d, dim=1)), dim=1) / 6.0
     return vols
 
+
+def total_absolute_volume(V, T):
+    """
+    Compute total absolute mesh volume from vertex positions and tetra connectivity.
+
+    Args:
+        V: torch.Tensor
+            Vertex positions with shape (num_nodes, 3).
+        T: torch.Tensor
+            Tetrahedra connectivity with shape (num_tets, 4).
+    return: torch.Tensor
+        Scalar tensor equal to sum(abs(signed_tetra_volumes)).
+    """
+    return torch.abs(volume(V, T)).sum()
+
+
+def batched_total_absolute_volumes(V, T_batched, batch_ptr, tet_slices):
+    """
+    Compute one total absolute volume value per graph for a PyG-collated batch.
+
+    Args:
+        V: torch.Tensor
+            Batched vertex positions with shape (total_nodes, 3).
+        T_batched: torch.Tensor
+            Concatenated tetra indices from all graphs, shape (total_tets, 4), local per-graph indexing.
+        batch_ptr: torch.Tensor
+            Node pointer vector with shape (num_graphs + 1,), where ptr[i] is first node index of graph i.
+        tet_slices: torch.Tensor
+            Pointer vector for tetra connectivity with shape (num_graphs + 1,).
+    return: torch.Tensor
+        Per-graph total absolute volumes with shape (num_graphs,).
+    """
+    volumes_per_graph = []
+    num_graphs = int(batch_ptr.numel()) - 1
+    for graph_idx in range(num_graphs):
+        node_offset = int(batch_ptr[graph_idx].item())
+        tet_start = int(tet_slices[graph_idx].item())
+        tet_end = int(tet_slices[graph_idx + 1].item())
+        local_tets = T_batched[tet_start:tet_end]
+        global_tets = local_tets + node_offset
+        volumes_per_graph.append(total_absolute_volume(V, global_tets))
+    if len(volumes_per_graph) == 0:
+        return V.new_zeros((0,))
+    return torch.stack(volumes_per_graph, dim=0)
+
 def compute_final_volumes(all_true_rollouts, all_pred_rollouts):
     """
     Computes the total mesh volume at the final rollout timestep for each trajectory.

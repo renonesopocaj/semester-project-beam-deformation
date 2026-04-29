@@ -44,6 +44,7 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
+MAX_SELECTED_TIMESTEPS = 400
 
 
 def _load_traj_metadata(split_dir, extra_info_dir):
@@ -83,6 +84,22 @@ def _load_traj_metadata(split_dir, extra_info_dir):
     for key_str, ood_list in ood_raw.items():
         by_idx[int(key_str)] = {"ood_features": ood_list}
     return by_idx
+
+
+def _selected_eval_rollout_limit(selected_trajs, fallback_limit):
+    """
+    Resolve the selected trajectory rollout length used in final evaluation and cap it to MAX_SELECTED_TIMESTEPS.
+
+    Args:
+        selected_trajs: dict
+            Parsed selected_trajectories.json.
+        fallback_limit: int
+            Fallback value when selected trajectory step information is not present.
+    return: int
+        Max number of rollout steps for selected trajectories in final evaluation.
+    """
+    raw_steps = selected_trajs.get("selected_num_steps", selected_trajs.get("num_steps", fallback_limit))
+    return min(int(raw_steps), MAX_SELECTED_TIMESTEPS)
 
 
 def resolve_trainer_precision(accelerator, configured_precision):
@@ -256,6 +273,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     if "curvature" in train_cfg.residual_list:
         theta_max = load_theta_max(train_cfg.train_dir) + THETA_MAX_MARGIN
         print(f"\tLoaded theta_max threshold = {theta_max}")
+    if "volume" in train_cfg.residual_list:
+        print(f"\tVolume residual enabled with weight = {train_cfg.volume_loss_weight}")
 
     # ========================= Dataset stuff ===================
     validation_dataset = None
@@ -455,10 +474,14 @@ def main(cfg):
         train_cfg.selected_validation_trajectories = selected_trajs.get("selected_validation_trajectories", [])
     if train_cfg.selected_test_trajectories is None:
         train_cfg.selected_test_trajectories = selected_trajs.get("selected_test_trajectories", [])
+    train_cfg.selected_eval_rollout_limit = _selected_eval_rollout_limit(
+        selected_trajs, fallback_limit=MAX_SELECTED_TIMESTEPS
+    )
     if train_cfg.selected_validation_trajectories:
         print(f"Selected validation trajectories: {train_cfg.selected_validation_trajectories}")
     if train_cfg.selected_test_trajectories:
         print(f"Selected test trajectories: {train_cfg.selected_test_trajectories}")
+    print(f"Selected trajectory final-eval rollout limit: {train_cfg.selected_eval_rollout_limit}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not torch.cuda.is_available() and train_cfg.training_type == "slurm":

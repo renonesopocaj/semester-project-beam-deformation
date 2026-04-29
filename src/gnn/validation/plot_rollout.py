@@ -346,16 +346,40 @@ def _format_traj_metadata_text(traj_metadata):
     return: str
         Formatted text for the GIF subtitle.
     """
-    fx = traj_metadata.get("fx", "?")  # Load force x for subtitle string under 3D plot.
-    fy = traj_metadata.get("fy", "?")  # Load force y component text.
-    fz = traj_metadata.get("fz", "?")  # Load force z component text.
-    beam_L = traj_metadata.get("L", "?")  # Beam length label in subtitle.
-    beam_W = traj_metadata.get("W", "?")  # Beam width label in subtitle.
-    beam_D = traj_metadata.get("D", "?")  # Beam depth/thickness label in subtitle.
+    fx = _format_metadata_scalar(traj_metadata.get("fx", "?"))  # Load/format force x for subtitle string under 3D plot.
+    fy = _format_metadata_scalar(traj_metadata.get("fy", "?"))  # Load/format force y component text.
+    fz = _format_metadata_scalar(traj_metadata.get("fz", "?"))  # Load/format force z component text.
+    beam_L = _format_metadata_scalar(traj_metadata.get("L", "?"))  # Load/format beam length label in subtitle.
+    beam_W = _format_metadata_scalar(traj_metadata.get("W", "?"))  # Load/format beam width label in subtitle.
+    beam_D = _format_metadata_scalar(traj_metadata.get("D", "?"))  # Load/format beam depth/thickness label in subtitle.
     ood = traj_metadata.get("ood_features", [])  # List of OOD tags to summarize on figure.
     ood_str = ", ".join(ood) if ood else "none"  # Comma-separated OOD list or literal “none” for display.
     return (f"fx={fx}  fy={fy}  fz={fz}  |  L={beam_L}  W={beam_W}  D={beam_D}"
             f"  |  OOD: {ood_str}")  # One string drawn with fig.text (not axis title).
+
+
+def _format_metadata_scalar(value):
+    """
+    Format metadata scalars shown in plot footnote textboxes.
+
+    Args:
+        value: Any
+            Scalar-like metadata value (number/string/placeholder).
+    return: str
+        Readable scalar string with bounded float precision.
+    """
+    if isinstance(value, bool):
+        return str(value)
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not np.isfinite(scalar):
+        return str(value)
+    formatted = f"{scalar:.4f}".rstrip("0").rstrip(".")
+    if formatted in {"", "-0"}:
+        return "0"
+    return formatted
 
 
 def make_ground_truth_gif(trajectory_graphs, L, W, D, gif_path, fps, verbose, split_name, traj_idx,

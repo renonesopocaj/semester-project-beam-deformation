@@ -22,12 +22,14 @@ from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
 from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
-from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises
+from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises, volume_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.validation.plot_rollout import in_depth_plots
 from src.gnn.validation.plot_overall import overall_plot
 from src.gnn.validation.plot_train import plot_final_parameter_distributions
+
+MAX_SELECTED_TIMESTEPS = 400
 
 class LitModule(L.LightningModule):
     # Model, optimizer
@@ -63,6 +65,7 @@ class LitModule(L.LightningModule):
     # Which trajectories get in-depth plots
     selected_validation_trajectories: list[int]
     selected_test_trajectories: list[int]
+    selected_eval_rollout_limit: int
     test_traj_metadata: dict
     noise_feature_update_mode: str
 
@@ -99,6 +102,7 @@ class LitModule(L.LightningModule):
         self.residual_list = set(train_cfg.residual_list)
         self.theta_max = theta_max
         self.curvature_loss_weight = train_cfg.curvature_loss_weight
+        self.volume_loss_weight = train_cfg.volume_loss_weight
         if "curvature" in self.residual_list and self.theta_max is None:
             raise ValueError("Curvature residual requested but theta_max was not provided.")
         # training id
@@ -137,6 +141,10 @@ class LitModule(L.LightningModule):
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
+        self.selected_eval_rollout_limit = min(
+            int(getattr(train_cfg, "selected_eval_rollout_limit", MAX_SELECTED_TIMESTEPS)),
+            MAX_SELECTED_TIMESTEPS
+        )
         self.rollout_batch_size = train_cfg.rollout_batch_size
         # performance stuff
         self.rollout_num_workers = train_cfg.num_workers
@@ -365,10 +373,13 @@ class LitModule(L.LightningModule):
         if "curvature" in self.residual_list:
             curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max,
                                                 self.time_discretizer)
+            metrics["train/curvature_residual"] = curvature_residual
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
         if "volume" in self.residual_list:
-            # TODO: implement volume loss
-            raise NotImplementedError("Volume loss is not implemented.")
+            volume_loss_value = volume_residual(pred, target, batch, self.target_stats, self.dt,
+                                                self.time_discretizer, self.loss_fn)
+            metrics["train/volume_residual"] = volume_loss_value
+            total_loss = total_loss + self.volume_loss_weight * volume_loss_value
         metrics["train/loss"] = total_loss
         return metrics
 
@@ -484,8 +495,14 @@ class LitModule(L.LightningModule):
         # Metrics collected: only train loss (for now)
         metrics = self._collect_train_batch_metrics_noroll(pred, target, batch)
         lw = self._train_loss_log_weight(batch, pred)
-        self._log_metrics(metrics, prog_bar_keys=["train/loss"], metric_weights={"train/loss": lw},
-                          sync_dist_keys=["train/loss"])
+        metric_weights = {}
+        for metric_name in metrics.keys():
+            if metric_name == "train/volume_residual":
+                metric_weights[metric_name] = int(batch.num_graphs)
+            else:
+                metric_weights[metric_name] = lw
+        self._log_metrics(metrics, prog_bar_keys=["train/loss"], metric_weights=metric_weights,
+                          sync_dist_keys=list(metrics.keys()))
         # on_train_epoch_end
         # 1. Steps the custom LR scheduler using the epoch loss
         # 2. Halts training early if the scheduler signals stop.
@@ -574,8 +591,8 @@ class LitModule(L.LightningModule):
         all_final_roll_err_pos = []
         weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(self.validation_dataset.num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
-            _, _, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
+            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
+            _, _, final_roll_err_pos, n_pos = self._run_rollout(traj_loader, rollout_steps=999999)
             all_final_roll_err_pos.append(final_roll_err_pos)
             weighted_sum += final_roll_err_pos * n_pos
             weight_total += n_pos
@@ -587,7 +604,7 @@ class LitModule(L.LightningModule):
         self.log("val/final_roll_err_pos", avg_final_roll_err_pos_tensor, prog_bar=True,
                  logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
-    def _get_trajectory_loader(self, dataset, traj_idx):
+    def _get_trajectory_loader(self, dataset, traj_idx, max_timesteps):
         """
         Creates a DataLoader for a single trajectory by slicing the dataset. Used for all rollouts operations,
         since I cannot use "batches" to execute evaluation in parallel due to the sequential nature of autoregressive
@@ -599,14 +616,36 @@ class LitModule(L.LightningModule):
                 Dataset with trajectory_boundaries.
             traj_idx: int
                 Index of the trajectory to extract.
+            max_timesteps: int or None
+                Optional maximum number of timesteps kept from the trajectory.
         return: DataLoader
             DataLoader yielding graphs for the single trajectory in order.
         """
         start, end = dataset.trajectory_boundaries[traj_idx]
-        subset = Subset(dataset, range(start, end))
+        if max_timesteps is not None:
+            capped_end = min(end, start + int(max_timesteps))
+        else:
+            capped_end = end
+        subset = Subset(dataset, range(start, capped_end))
         dataloader_traj = DataLoader(subset, batch_size=self.rollout_batch_size, shuffle=False,
                                      num_workers=self.rollout_num_workers, pin_memory=self.pin_memory)
         return dataloader_traj
+
+    def _rollout_steps_for_trajectory(self, traj_idx):
+        """
+        Return rollout horizon for one trajectory in final evaluation.
+
+        Args:
+            traj_idx: int
+                Index of the trajectory.
+        return: int
+            Maximum rollout length for the trajectory.
+        """
+        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
+                    else self.selected_validation_trajectories)
+        if traj_idx in selected:
+            return int(self.selected_eval_rollout_limit)
+        return 999999
 
 
     #################################################################################################################
@@ -654,8 +693,12 @@ class LitModule(L.LightningModule):
         # FIXME: add pbar
         weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
-            true_rollout, pred_rollout, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
+            rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
+            max_timesteps = rollout_steps if rollout_steps != 999999 else None
+            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx, max_timesteps=max_timesteps)
+            true_rollout, pred_rollout, final_roll_err_pos, n_pos = self._run_rollout(
+                traj_loader, rollout_steps=rollout_steps
+            )
             all_true_rollouts[traj_idx] = true_rollout
             all_pred_rollouts[traj_idx] = pred_rollout
             all_final_roll_err_pos.append(final_roll_err_pos)
@@ -690,9 +733,10 @@ class LitModule(L.LightningModule):
                 continue
             per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
                                                                        all_pred_rollouts[traj_idx], traj_idx)
-        # 6. Single wandb logging call
-        log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
-                            self._has_wandb_logger(), self._current_wandb_epoch())
+        # 6. Single wandb logging call (guard: logger may be False when use_wandb=false; do not touch .experiment)
+        if self._has_wandb_logger():
+            log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
+                                True, self._current_wandb_epoch())
 
     def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
         """
@@ -718,7 +762,7 @@ class LitModule(L.LightningModule):
                    f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
         return metrics
 
-    def _run_rollout(self, traj_loader):
+    def _run_rollout(self, traj_loader, rollout_steps):
         """
         Executes a full autoregressive rollout over a single-trajectory loader and returns ground-truth/predicted
         trajectories plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error.
@@ -726,6 +770,8 @@ class LitModule(L.LightningModule):
         Args:
             traj_loader: DataLoader
                 Single-trajectory dataloader used for rollout evaluation.
+            rollout_steps: int
+                Maximum number of rollout steps to run.
             return: (list, list, float, int)
                 Ground-truth rollout, predicted rollout, final-step rollout MAE (mean abs over positions),
                 and numel of final position tensor for cross-trajectory weighting.
@@ -733,7 +779,7 @@ class LitModule(L.LightningModule):
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats, dt=self.dt,
-                                                device=self.device, skip_first_num=0, rollout_steps=999999,
+                                                device=self.device, skip_first_num=0, rollout_steps=rollout_steps,
                                                 normalizer=self.used_dataset_normalizer,
                                                 preprocess_cfg=self.preprocess_cfg,
                                                 time_discretizer=self.time_discretizer,
@@ -759,7 +805,9 @@ class LitModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
-                traj_loader = self._get_trajectory_loader(dataset, traj_idx)
+                rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
+                max_timesteps = rollout_steps if rollout_steps != 999999 else None
+                traj_loader = self._get_trajectory_loader(dataset, traj_idx, max_timesteps=max_timesteps)
                 acc_sum, acc_cnt = 0.0, 0.0
                 stress_sum, stress_cnt = 0.0, 0.0
                 for batch in traj_loader:

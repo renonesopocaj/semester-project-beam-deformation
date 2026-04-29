@@ -27,6 +27,7 @@ from src.fem_generation.visualization_fea import plot_check
 # Use a non-interactive backend so plots can be generated in headless environments.
 matplotlib.use("agg")
 CONSTANT_FOR_CUTOFF_TIME = 4.0
+MAX_SELECTED_TIMESTEPS = 400
 
 ################################################################################################
 #                                   DOLFIN/FORMS/PDE UTILITIES
@@ -529,7 +530,14 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     # Time discretization parameters
     T = total_time
-    Nsteps = num_steps
+    if int(num_steps) <= 0:
+        raise ValueError(f"num_steps must be positive, got {num_steps}.")
+    effective_num_steps = int(num_steps)
+    if mode in {"val", "test"} and effective_num_steps > MAX_SELECTED_TIMESTEPS:
+        effective_num_steps = MAX_SELECTED_TIMESTEPS
+        if verbose:
+            print(f"Capped {mode} simulation num_steps to {effective_num_steps}.")
+    Nsteps = effective_num_steps
     dt = df.Constant(T / Nsteps)
 
     # Define external traction
@@ -672,7 +680,7 @@ def fea_simulation(L, W, D, NL, NW, ND, elastic_params, density, damping_params,
 
     save_path_graph, simulation_name = _save_graphs_and_plot(L, W, D, NL, NW, ND, density, initial_force_x,
                                                              initial_force_y, initial_force_z, cutoff_time_factor,
-                                                             total_time, eta_m_val, eta_k_val, E, nu, num_steps, mode,
+                                                             total_time, eta_m_val, eta_k_val, E, nu, effective_num_steps, mode,
                                                              output_root, time, u_tip, energies, lst_graph_tstep)
 
     return lst_graph_tstep, save_path_graph, simulation_name

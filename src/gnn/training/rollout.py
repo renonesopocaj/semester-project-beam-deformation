@@ -53,6 +53,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
     """
     if not hasattr(normalizer, "normalize") or not hasattr(normalizer, "denormalize"):
         raise TypeError("Rollout expects a normalizer implementing normalize() and denormalize().")
+    rollout_steps = int(rollout_steps)
+    if rollout_steps < 0:
+        raise ValueError(f"rollout_steps must be non-negative, got {rollout_steps}.")
     with torch.no_grad():
         true_rollout, pred_rollout = [], []
         rest_pos = None
@@ -71,7 +74,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             if t < skip_first_num:
                 # skip all steps before this
                 continue
-            if t > rollout_steps:
+            if t >= rollout_steps:
                 break
             if t == skip_first_num:
                 # First prediction t=0: the input graph_ground_truth is the same as the ground truth graph_ground_truth
