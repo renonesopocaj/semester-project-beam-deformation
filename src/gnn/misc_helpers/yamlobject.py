@@ -124,6 +124,11 @@ class TrainYaml:
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
     """
 
+    wandb_run_name: str | None
+    wandb_group: str | None
+    wandb_project: str
+    wandb_offline: bool
+
     def __init__(self, cfg):
         """
         Args:
@@ -133,6 +138,11 @@ class TrainYaml:
                 Creates attributes on self dynamically.
         """
         flattened_cfg = _to_dict_flatten(cfg)
+        self.wandb_run_name = flattened_cfg.get("wandb_run_name")
+        self.wandb_group = flattened_cfg.get("wandb_group")
+        self.wandb_project = flattened_cfg.get("wandb_project", "beam_deformation")
+        offline_raw = flattened_cfg.get("wandb_offline")
+        self.wandb_offline = True if offline_raw is None else bool(offline_raw)
         self.seed = flattened_cfg["seed"]
         self.use_wandb = flattened_cfg["use_wandb"]
         self.batch_size = flattened_cfg["batch_size"]

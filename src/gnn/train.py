@@ -18,6 +18,7 @@ from lightning.pytorch.profilers import SimpleProfiler
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
+import wandb
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger
@@ -242,6 +243,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
+
 def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     """
     Args:
@@ -361,8 +363,16 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # One important detail for your snippet: in Lightning, WandbLogger(log_model=True) or
         # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
         # MisconfigurationException.
-        logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False, offline=True, config=cfg_for_wandb(train_dict))
+        wb_run_display_name = training_id if train_cfg.wandb_run_name is None else train_cfg.wandb_run_name
+        wb_offline_flag = train_cfg.wandb_offline
+        if train_cfg.wandb_group is not None:
+            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name, group=train_cfg.wandb_group,
+                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
+                                 config=cfg_for_wandb(train_dict))
+        else:
+            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
+                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
+                                 config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
@@ -447,8 +457,19 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader
 
 
-@hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
-def main(cfg):
+def run_train_pipeline(cfg):
+    """
+    Same flow as CLI main(...) but returns metrics when called from hyperparameter tooling (Optuna).
+
+    Args:
+        cfg: omegaconf.DictConfig
+
+    return: tuple
+        (best_val_relative_mae, final_metrics_plain_dict, wandb_run_id)
+        First element is checkpoint-best val/overall_relative_mae from ModelCheckpoint;
+        Second maps keys like final_validation/acc_all_rel_mae ... to floats after val+test phases;
+        Third is W&B run id when use_wandb else None.
+    """
     # Print train cfg
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
@@ -514,6 +535,37 @@ def main(cfg):
     lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
                                        traj_metadata=test_traj_metadata)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
+
+    best_val_relative_mae = float("nan")
+    if train_cfg.enable_val:
+        for chk in fit_trainer.checkpoint_callbacks:
+            monitored = getattr(chk, "monitor", "")
+            if monitored == "val/overall_relative_mae":
+                best_score_tensor = chk.best_model_score
+                if best_score_tensor is not None:
+                    best_val_relative_mae = float(best_score_tensor.detach().item())
+                break
+
+    final_metrics_plain = {}
+    for key, value in fit_trainer.callback_metrics.items():
+        if not (str(key).startswith("final_validation/") or str(key).startswith("final_test/")):
+            continue
+        if hasattr(value, "detach"):
+            final_metrics_plain[str(key)] = float(value.detach().item())
+        else:
+            final_metrics_plain[str(key)] = float(value)
+
+    wandb_run_id = None
+    if train_cfg.use_wandb:
+        wandb_run_id = str(lightning_module.logger.experiment.id)
+        wandb.finish()
+
+    return best_val_relative_mae, final_metrics_plain, wandb_run_id
+
+
+@hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
+def main(cfg):
+    run_train_pipeline(cfg)
 
 if __name__ == "__main__":
     main()

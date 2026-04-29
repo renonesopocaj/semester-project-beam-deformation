@@ -1,0 +1,93 @@
+# Hyperparameter study driver: edit `sweeps` below to change what is swept (no code changes).
+# Each sweep runs every option once (grid); the override set that wins is carried into the next sweep.
+# Training uses the same Hydra config as `src/gnn/train.py` (config_name=train under conf/train).
+
+study_name: hp_opt_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+
+# Minimize this (must match ModelCheckpoint monitor in train); value comes from checkpoint best score.
+optimization_metric: val/overall_relative_mae
+
+# Axes for the Pareto plot (keys in the dict returned after val+test; use final_test/... if you prefer test).
+pareto_x_metric: final_validation/acc_all_rel_mae
+pareto_y_metric: final_validation/stress_rel_mae
+
+wandb_project: beam_deformation
+wandb_offline: true
+
+sweeps:
+  - name: dataset
+    fixed_overrides:
+      - noise=no_noise
+    options:
+      - label: all
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/dataset_all_features/small
+      - label: nonlin
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/dataset_nonlin/small
+      - label: edges_w_norms
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/dataset_edges_w_norms/small
+
+  - name: noise
+    fixed_overrides: []
+    options:
+      - label: offline_s1
+        overrides:
+          - noise.noise_scale_train=0.0001
+          - noise.noise_per_epoch=false
+      - label: offline_s2
+        overrides:
+          - noise.noise_scale_train=0.0003
+          - noise.noise_per_epoch=false
+      - label: online_s1
+        overrides:
+          - noise.noise_scale_train=0.0001
+          - noise.noise_per_epoch=true
+      - label: online_s2
+        overrides:
+          - noise.noise_scale_train=0.0003
+          - noise.noise_per_epoch=true
+      - label: online_s3
+        overrides:
+          - noise.noise_scale_train=0.001
+          - noise.noise_per_epoch=true
+
+  - name: forces
+    fixed_overrides: []
+    options:
+      - label: biax
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/biax_longer/...
+      - label: single
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/single_longer/...
+      - label: triax
+        overrides:
+          - data.dataset_dir=/absolute/path/to/processed/triax_longer/...
+
+  - name: gamma
+    fixed_overrides: []
+    options:
+      - label: g_0.5
+        overrides:
+          - noise.noise_gamma=0.5
+      - label: g_0.8
+        overrides:
+          - noise.noise_gamma=0.8
+      - label: g_1.0
+        overrides:
+          - noise.noise_gamma=1.0
+      - label: g_1.2
+        overrides:
+          - noise.noise_gamma=1.2
+      - label: g_1.5
+        overrides:
+          - noise.noise_gamma=1.5
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
