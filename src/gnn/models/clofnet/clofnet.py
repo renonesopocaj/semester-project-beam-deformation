@@ -11,15 +11,9 @@ import torch
 from abc import ABC, abstractmethod
 from torch import nn
 
-from src.gnn.models.clofnet.clof_helpers import (
-    compute_angle_feat,
-    coord2localframe,
-    frame_basis_from_edges,
-    scalarize_edge_vector,
-    scalarize_node_endpoints,
-    split_edge_features,
-    split_node_features,
-)
+from src.gnn.models.clofnet.clof_helpers import (compute_angle_feat, coord2localframe, frame_basis_from_edges,
+                                                 scalarize_edge_vector, scalarize_node_endpoints, split_edge_features,
+                                                 split_node_features)
 from src.gnn.models.clofnet.mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock, RecurrentMPBlock,
                                               SingleVectorizeMPBlock)
 
@@ -112,18 +106,18 @@ class ClofNetBase(nn.Module, ABC):
         """
         raise NotImplementedError
 
-    def _build_s_ij(self, acceleration_n3, node_vec_chunks, edge_vec_chunks, frame_e33, edge_index_tuple):
+    def _build_s_ij(self, a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge_index_tuple):
         """
         Concatenate invariant scalarizations of all static node edge-vector triplets, acceleration, and edge vectors.
 
         Args:
-            acceleration_n3: torch.Tensor
+            a_i: torch.Tensor
                 Current acceleration estimate [N, 3] (used for endpoint projections and pseudo-angle).
             node_vec_chunks: torch.Tensor
                 [N, K, 3] static vectors from node features.
             edge_vec_chunks: torch.Tensor
                 [E, K, 3] static vectors from edge features.
-            frame_e33: torch.Tensor
+            local_frame_basis_ij: torch.Tensor
                 [E, 3, 3] basis matrix per edge.
             edge_index_tuple: tuple
                 (row, col).
@@ -134,15 +128,15 @@ class ClofNetBase(nn.Module, ABC):
         parts = []
         num_k = int(node_vec_chunks.shape[1])
         for t in range(num_k):
-            parts.append(scalarize_node_endpoints(edge_index_tuple, frame_e33, node_vec_chunks[:, t, :]))
-        acc_end = scalarize_node_endpoints(edge_index_tuple, frame_e33, acceleration_n3)
+            parts.append(scalarize_node_endpoints(edge_index_tuple, local_frame_basis_ij, node_vec_chunks[:, t, :]))
+        acc_end = scalarize_node_endpoints(edge_index_tuple, local_frame_basis_ij, a_i)
         parts.append(acc_end)
         coeff_i_a = acc_end[:, 0:3]
         coeff_j_a = acc_end[:, 3:6]
         pseudo = compute_angle_feat(coeff_i_a, coeff_j_a, eps)
         num_ek = int(edge_vec_chunks.shape[1])
         for t in range(num_ek):
-            parts.append(scalarize_edge_vector(frame_e33, edge_vec_chunks[:, t, :]))
+            parts.append(scalarize_edge_vector(local_frame_basis_ij, edge_vec_chunks[:, t, :]))
         rest = torch.cat(parts, dim=-1)
         return torch.cat([pseudo, rest], dim=-1)
 
