@@ -168,6 +168,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
                             dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
                             activation_checkpointing=train_cfg.activation_checkpointing)
+
     elif train_cfg.model_name == "clofnet":
         _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
         act_name = str(train_cfg.clofnet_activation).lower()
@@ -454,7 +455,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
                     val_dataloaders=validation_dataloader, ckpt_path=train_cfg.resume_from)
 
-    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader
+    return (lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset,
+            validation_dataloader)
 
 
 def run_train_pipeline(cfg):
@@ -495,9 +497,9 @@ def run_train_pipeline(cfg):
         train_cfg.selected_validation_trajectories = selected_trajs.get("selected_validation_trajectories", [])
     if train_cfg.selected_test_trajectories is None:
         train_cfg.selected_test_trajectories = selected_trajs.get("selected_test_trajectories", [])
-    train_cfg.selected_eval_rollout_limit = _selected_eval_rollout_limit(
-        selected_trajs, fallback_limit=MAX_SELECTED_TIMESTEPS
-    )
+    train_cfg.selected_eval_rollout_limit = _selected_eval_rollout_limit(selected_trajs,
+                                                                         fallback_limit=MAX_SELECTED_TIMESTEPS)
+
     if train_cfg.selected_validation_trajectories:
         print(f"Selected validation trajectories: {train_cfg.selected_validation_trajectories}")
     if train_cfg.selected_test_trajectories:

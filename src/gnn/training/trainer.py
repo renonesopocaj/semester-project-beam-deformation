@@ -25,9 +25,9 @@ from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
 from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises, volume_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
-from src.gnn.validation.plot_rollout import in_depth_plots
-from src.gnn.validation.plot_overall import overall_plot
-from src.gnn.validation.plot_train import plot_final_parameter_distributions
+from src.gnn.plots.plot_rollout import in_depth_plots
+from src.gnn.plots.plot_overall import overall_plot
+from src.gnn.plots.plot_train import plot_final_parameter_distributions
 
 MAX_SELECTED_TIMESTEPS = 400
 

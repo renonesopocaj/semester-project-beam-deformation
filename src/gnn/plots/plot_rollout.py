@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import imageio  
 import torch  
 from matplotlib.ticker import FuncFormatter 
-from src.gnn.validation.plot_diagnostic import (extract_surface_faces, extract_scalar,
-                                                plot_mesh_diagnostics)  
+from src.gnn.plots.plot_diagnostic import (extract_surface_faces, extract_scalar,
+                                           plot_mesh_diagnostics)
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection  
 from src.gnn.mesh_numerical_helpers.compute_volume import volume  
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity, to_numpy  

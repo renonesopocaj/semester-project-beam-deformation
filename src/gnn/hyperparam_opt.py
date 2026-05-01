@@ -2,26 +2,30 @@
 hyperparam_opt.py
 
 Config-driven sequential Optuna grid sweeps over Hydra train configs; one W&B run per trial.
+FIXME I Don't understand: does this run multiple sweeps over different hyperparameters in one run (python , or one sweep
+ in one time?
 """
 
 import json
 import math
 from pathlib import Path
-
+import wandb as wb_sdk
+from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, wandb_summary_log_plot
 import matplotlib
 import matplotlib.pyplot as plt
 import optuna
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
-
 from src.gnn.train import run_train_pipeline
-
 matplotlib.use("Agg")
 plt.ioff()
 
-
 class SweepOption:
+    """
+    ??????????????
+    """
+
     label: str
     overrides: list
     description: str
@@ -35,7 +39,6 @@ class SweepOption:
                 Hydra override strings appended for this candidate.
             description: str
                 Optional notes; unused by the runner unless you extend it.
-        return: None
         """
         self.label = label
         self.overrides = [str(x) for x in overrides]
@@ -43,6 +46,10 @@ class SweepOption:
 
 
 class Sweep:
+    """
+    Wrapper object for a sweep in the sense of iterable of hyperparameters
+    """
+
     name: str
     fixed_overrides: list
     options: list
@@ -56,7 +63,6 @@ class Sweep:
                 Overrides applied to every trial of this sweep.
             options: iterable of SweepOption
                 Mutually exclusive choices (grid).
-        return: None
         """
         self.name = name
         self.fixed_overrides = [str(x) for x in fixed_overrides]
@@ -82,7 +88,6 @@ class SweepRunner:
         Args:
             parent_cfg: DictConfig
                 Resolved top-level Hydra hyperparam yaml (study_name, sweeps, wandb_* , ...).
-        return: None
         """
         self.parent_cfg = parent_cfg
         self.repo_root = Path(__file__).resolve().parents[2]
@@ -98,6 +103,7 @@ class SweepRunner:
         self.trial_records = []
         sweep_nodes = OmegaConf.select(parent_cfg, "sweeps")
         assembled = []
+        # FIXME: what is to_container?
         for sweep_raw in OmegaConf.to_container(sweep_nodes, resolve=True):
             sweep_name = sweep_raw["name"]
             fixed_ov = sweep_raw.get("fixed_overrides", [])
@@ -136,12 +142,13 @@ class SweepRunner:
             sweep_entity: Sweep
                 Sweep for which this closure is constructed.
         return: callable
-                Optuna objective function.
+            Optuna objective function.
         """
         sweep_ref = sweep_entity
         study_name_plain = str(OmegaConf.select(self.parent_cfg, "study_name"))
 
         def optuna_objective(trial):
+            # FIXME: what the fuck is this?
             choice_space = []
             ix = 0
             while ix < len(sweep_ref.options):
@@ -167,6 +174,7 @@ class SweepRunner:
             merged.append("+wandb_group=%s" % study_name_plain)
             merged.append("+wandb_project=%s" % self._wandb_project)
             off_raw = self._wandb_offline_raw
+            # FIXME: FUCKING CHANGE this fucking boilerplate shit
             if isinstance(off_raw, bool):
                 off_lit = off_raw
             elif off_raw is None:
@@ -178,38 +186,36 @@ class SweepRunner:
             merged.append("+wandb_offline=%s" % str(off_lit).lower())
             trial.set_user_attr("option_label_for_record", chosen_option.label)
             trial.set_user_attr("chosen_option_overrides", list(chosen_option.overrides))
-
             score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
-            record = {
-                "study_name": study_name_plain,
-                "sweep_name": sweep_ref.name,
-                "option_label": chosen_option.label,
-                "full_overrides": merged,
-                "best_val_relative_mae": score_val_mae,
-                "final_metrics": metrics_plain,
-                "wandb_run_id": wb_id,
-            }
+            record = {"study_name": study_name_plain,
+                      "sweep_name": sweep_ref.name,
+                      "option_label": chosen_option.label,
+                      "full_overrides": merged,
+                      "best_val_relative_mae": score_val_mae,
+                      "final_metrics": metrics_plain,
+                      "wandb_run_id": wb_id}
             self.trial_records.append(record)
-            trial.set_user_attr("pareto_x", metrics_plain.get(self.pareto_x_key, float("nan")))
-            trial.set_user_attr("pareto_y", metrics_plain.get(self.pareto_y_key, float("nan")))
-            if math.isnan(score_val_mae):
-                return 1e30
+            trial.set_user_attr("pareto_x", metrics_plain.get(self.pareto_x_key))
+            trial.set_user_attr("pareto_y", metrics_plain.get(self.pareto_y_key))
             return score_val_mae
 
         return optuna_objective
 
     def run_one_sweep(self, sweep_entity):
         """
+        Updates self.best_so_far_overrides with the winning option's overrides.
+
         Args:
             sweep_entity: Sweep
                 One sweep stage.
-        return: None
-                Updates self.best_so_far_overrides with the winning option's overrides.
         """
+        # create optuna objects for sweeping
         grid_map = {"option_idx": list(range(len(sweep_entity.options)))}
         sampler_obj = optuna.samplers.GridSampler(grid_map)
         study_obj = optuna.create_study(direction="minimize", sampler=sampler_obj)
+        # FIXME: ?????
         fun = self.objective_for_sweep(sweep_entity)
+        # Run one optuna trial via .optimize
         study_obj.optimize(fun, n_trials=len(sweep_entity.options))
         best_trial = study_obj.best_trial
         extra = best_trial.user_attrs["chosen_option_overrides"]
@@ -220,17 +226,16 @@ class SweepRunner:
 
     def run_all_sweeps(self):
         """
-        return: None
-            Runs every configured sweep in order.
+        Runs every configured sweep in order.
         """
         si = 0
         while si < len(self.sweeps_list):
             self.run_one_sweep(self.sweeps_list[si])
             si = si + 1
 
-    def report_global_best(self):
+    def report_global_best_run(self):
         """
-        return: dict or None
+        return: dict | None
             Record with minimum best_val_relative_mae or None if empty.
         """
         if len(self.trial_records) == 0:
@@ -246,130 +251,9 @@ class SweepRunner:
                 if candidate["best_val_relative_mae"] < best_rec["best_val_relative_mae"]:
                     best_rec = candidate
             br = br + 1
-        print("\n" + "=" * 80)
-        print("Best run by %s among all trials (smaller is better):" % self.optimization_metric_key)
-        print(json.dumps(best_rec, indent=2, default=str))
-        print("=" * 80 + "\n")
+        print("\n" + "=" * 80 + "\nBest run by %s among all trials (smaller is better):" % self.optimization_metric_key)
+        print(json.dumps(best_rec, indent=2, default=str) + "\n" + "=" * 80 + "\n")
         return best_rec
-
-
-def pareto_non_dominated_minimize(points_xy):
-    """
-    Args:
-        points_xy: list of pair (float, float)
-            Objective pairs to minimize jointly.
-    return: list[int]
-            Indices into points_xy that lie on the Pareto frontier (non-dominated).
-    """
-    n = len(points_xy)
-    out_idx = []
-    i = 0
-    while i < n:
-        dominated = False
-        j = 0
-        while j < n:
-            if j == i:
-                j = j + 1
-                continue
-            xi, yi = points_xy[i]
-            xj, yj = points_xy[j]
-            if (xj <= xi and yj <= yi) and (xj < xi or yj < yi):
-                dominated = True
-                break
-            j = j + 1
-        if dominated is False:
-            out_idx.append(i)
-        i = i + 1
-    return out_idx
-
-
-def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
-    """
-    Args:
-        records_list: list of dict
-            Trial records containing final_metrics maps.
-        pareto_x_key: str
-            X axis scalar key inside final_metrics.
-        pareto_y_key: str
-            Y axis scalar key inside final_metrics.
-        output_dir: Path
-            Directory for pareto.png .
-    return: Path
-            Path to pareto.png .
-    """
-    xs = []
-    ys = []
-    ri = 0
-    while ri < len(records_list):
-        rec_item = records_list[ri]
-        fm = rec_item["final_metrics"]
-        xa = fm.get(pareto_x_key, float("nan"))
-        ya = fm.get(pareto_y_key, float("nan"))
-        xs.append(float(xa))
-        ys.append(float(ya))
-        ri = ri + 1
-    if len(xs) == 0:
-        fig_empty, axe = plt.subplots(figsize=(7, 5))
-        axe.text(0.5, 0.5, "no trials to plot", ha="center")
-        outp_empty = Path(output_dir) / "pareto.png"
-        outp_empty.parent.mkdir(parents=True, exist_ok=True)
-        plt.tight_layout()
-        plt.savefig(outp_empty, dpi=120)
-        plt.close(fig_empty)
-        return outp_empty
-    pairs_xy = []
-    pi = 0
-    while pi < len(xs):
-        pairs_xy.append((xs[pi], ys[pi]))
-        pi = pi + 1
-    nd_local = pareto_non_dominated_minimize(pairs_xy)
-    fig, axi = plt.subplots(figsize=(7, 5))
-    axi.scatter(xs, ys, c="#888888", s=42, label="all trials", alpha=0.85)
-    nd_x = []
-    nd_y = []
-    ki = 0
-    while ki < len(nd_local):
-        pj = nd_local[ki]
-        nd_x.append(xs[pj])
-        nd_y.append(ys[pj])
-        ki = ki + 1
-    axi.scatter(nd_x, nd_y, c="#c0392b", s=76, marker="*", label="Pareto frontier", alpha=0.95, zorder=4)
-    axi.set_xlabel(pareto_x_key)
-    axi.set_ylabel(pareto_y_key)
-    axi.set_title("Pareto set (multi-objective, lower-left better)")
-    axi.legend(loc="best")
-    axi.grid(alpha=0.25)
-    out_path_png = Path(output_dir) / "pareto.png"
-    out_path_png.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(out_path_png, dpi=170)
-    plt.close(fig)
-    return out_path_png
-
-
-def wandb_summary_log_plot(study_name_str, pareto_path, wandb_project, wandb_offline_flag):
-    """
-    Logs pareto.png to W&B inside a trailing summary run.
-
-    Args:
-        study_name_str: str
-            Study basename for grouping.
-        pareto_path: Path
-            pareto.png filesystem path.
-        wandb_project: str
-            W&B project matching training runs.
-        wandb_offline_flag: bool
-            Whether offline mode is preferred.
-        return: None
-    """
-    import wandb as wb_sdk
-
-    run_name_here = "%s__summary" % study_name_str
-    wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
-                offline=wandb_offline_flag)
-    wb_sdk.log({"pareto_plot": wb_sdk.Image(str(pareto_path))})
-    wb_sdk.finish()
-
 
 @hydra.main(version_base=None, config_path="../../conf/hyperparam", config_name="sweeps")
 def main(cfg):
@@ -377,8 +261,6 @@ def main(cfg):
     Args:
         cfg: DictConfig
             Hyperparam driver yaml (study, sweeps, pareto keys).
-
-    return: None
     """
     OmegaConf.resolve(cfg)
     runner = SweepRunner(cfg)
@@ -390,12 +272,12 @@ def main(cfg):
     with open(dumped_path, "w", encoding="utf-8") as fh_out:
         json.dump(runner.trial_records, fh_out, indent=2, default=str)
 
-    runner.report_global_best()
-
+    runner.report_global_best_run()
     png_path_here = save_pareto_plot(runner.trial_records, runner.pareto_x_key, runner.pareto_y_key, outp)
     print("Saved Pareto plot to %s" % png_path_here)
 
     off_raw = OmegaConf.select(cfg, "wandb_offline")
+    # FIXME weird fucking shit change this fucking boilerplate it's useless
     if isinstance(off_raw, bool):
         off_lit = off_raw
     elif off_raw is None:
@@ -404,6 +286,7 @@ def main(cfg):
         off_lit = False
     else:
         off_lit = True
+    # FIXME: select?
     study_nm = str(OmegaConf.select(cfg, "study_name"))
     wandb_proj = str(OmegaConf.select(cfg, "wandb_project"))
     wandb_summary_log_plot(study_nm, png_path_here, wandb_proj, off_lit)
