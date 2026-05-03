@@ -1,0 +1,37 @@
+# Hyperparameter study driver: edit `sweeps` below to change what is swept (no code changes).
+# Each sweep runs every option once (grid); the override set that wins is carried into the next sweep.
+# Training composes `conf/train/{train_compose_config}.yaml` (default: train_default_hyperopt).
+# `train_default_hyperopt.yaml` mirrors `train.yaml` (full defaults + top-level fields); edit that file for hyperopt baselines.
+# Override on CLI, e.g. `train_compose_config=train` to use `train.yaml` as the compose root instead.
+
+train_compose_config: train_default_hyperopt
+
+study_name: hp_opt_integration_scheme_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+
+# Minimize this (must match ModelCheckpoint monitor in train); value comes from checkpoint best score.
+optimization_metric: val/overall_relative_mae
+
+# Axes for the Pareto plot (keys in the dict returned after val+test; use final_test/... if you prefer test).
+pareto_x_metric: final_validation/acc_all_rel_mae
+pareto_y_metric: final_validation/stress_rel_mae
+
+wandb_project: beam_deformation
+wandb_offline: true
+
+# FIXME: for everything else choose optimal values from previous runs
+sweeps:
+  - name: integration_scheme
+    options:
+      - label: second_order_central
+        overrides:
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_all/small
+      - label: robust_isotr
+        overrides:
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_allgeoms/z_isotr_newmark_all/small
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
