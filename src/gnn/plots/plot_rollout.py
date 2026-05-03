@@ -13,7 +13,7 @@ from matplotlib.ticker import FuncFormatter
 from src.gnn.plots.plot_diagnostic import (extract_surface_faces, extract_scalar,
                                            plot_mesh_diagnostics)
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection  
-from src.gnn.mesh_numerical_helpers.compute_volume import volume  
+from src.gnn.mesh_numerical_helpers.compute_volume import volume, rollout_total_absolute_volumes  
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity, to_numpy  
 from src.gnn.misc_helpers.compute_r2 import (format_r2_text, r2_linear_fit_x_to_y,
                                              r2_prediction_vs_target)  
@@ -123,7 +123,8 @@ def _plot_volume_change(pred_rollout, true_rollout, path, split_name, traj_metad
         x_true = true.x_pos_t  # Ground-truth node positions at this timestep (for tet volume integrals).
         x_pred = pred.x_pos_t  # Predicted node positions at same timestep (same connectivity).
         # Obtain all cells as tensors of (N, 4) i.e. 4 nodes for everyone of the N tetrahedrons
-        cells = torch.as_tensor(to_numpy_tetra_connectivity(true.x_element_connectivity), dtype=torch.long)
+        cells = torch.as_tensor(to_numpy_tetra_connectivity(true.x_element_connectivity), dtype=torch.long,
+                                device=x_true.device)
         true_volumes = volume(x_true, cells)  # Per-tet signed volume from true geometry.
         pred_volumes = volume(x_pred, cells)  # Per-tet signed volume from predicted geometry.
         # sum the absolute value of all volumes
@@ -815,6 +816,82 @@ def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_na
     plt.close(fig)
 
 
+def _position_error_series(true_rollout, pred_rollout):
+    """
+    Computes position MAE at each rollout timestep.
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+    return: list[float]
+        One absolute position MAE value per timestep.
+    """
+    errors = []
+    for true_graph, pred_graph in zip(true_rollout, pred_rollout):
+        diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)
+        finite = diff[torch.isfinite(diff)]
+        if finite.numel() == 0:
+            errors.append(float("nan"))
+        else:
+            errors.append(float(torch.mean(finite).detach().cpu().item()))
+    return errors
+
+
+def _plot_rollout_pos_volume_error_vs_time(true_rollout, pred_rollout, output_path, split_name, traj_metadata):
+    """
+    Plot position MAE and absolute volume error at each rollout timestep.
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+        output_path: Path
+            Destination image path.
+        split_name: str
+            Split and trajectory label used in the title.
+        traj_metadata: dict or None
+            Trajectory metadata for a footnote textbox; skipped when None.
+    """
+    print("Plot rollout position and volume error vs timestep...")
+    position_errors = _position_error_series(true_rollout, pred_rollout)
+    true_volumes = rollout_total_absolute_volumes(true_rollout)
+    pred_volumes = rollout_total_absolute_volumes(pred_rollout)
+    n_steps = min(len(position_errors), len(true_volumes), len(pred_volumes))
+    timesteps = np.arange(n_steps)
+    volume_errors = []
+    for step_idx in range(n_steps):
+        volume_errors.append(abs(pred_volumes[step_idx] - true_volumes[step_idx]))
+
+    fig, ax_pos = plt.subplots(figsize=(10, 6))
+    pos_line = ax_pos.plot(timesteps, position_errors[:n_steps], color="tab:blue", linewidth=2.0,
+                           marker="o", markersize=3, label="Position MAE")
+    ax_pos.set_xlabel("Timestep")
+    ax_pos.set_ylabel("Position MAE", color="tab:blue")
+    ax_pos.tick_params(axis="y", labelcolor="tab:blue")
+    ax_pos.grid(True, alpha=0.3)
+
+    ax_vol = ax_pos.twinx()
+    vol_line = ax_vol.plot(timesteps, volume_errors, color="tab:orange", linewidth=2.0,
+                           marker="s", markersize=3, label="Absolute Volume Error")
+    ax_vol.set_ylabel("Absolute Volume Error", color="tab:orange")
+    ax_vol.tick_params(axis="y", labelcolor="tab:orange")
+
+    lines = pos_line + vol_line
+    labels = [line.get_label() for line in lines]
+    ax_pos.legend(lines, labels, loc="best")
+    ax_pos.set_title(f"Rollout Position and Volume Error vs Timestep\n[{split_name}, 1 sample, {n_steps} timesteps]")
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.18)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def _plot_err_heatmap_rollout(true_rollout, pred_rollout, output_dir, filename_prefix, split_name, traj_metadata):
     """
     Plot rollout of the ground truth mesh (evolving over time, so a gif), with on every node of the mesh a heatmap
@@ -924,6 +1001,7 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
     gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"  # Twin-panel von Mises animation path.
     volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"  # Static volume vs time PNG path.
     rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"  # MAE vs timestep PNG path.
+    rollout_pos_volume_error_path = output_dir / f"{filename_prefix}_rollout_pos_volume_error_vs_timestep.png"
 
     # Plots
     _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name,
@@ -932,9 +1010,8 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
                               gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
                               split_name=traj_split_name, traj_metadata=traj_metadata)  # Side-by-side 3D stress GIF.
     _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)  # Position MAE curve.
-    _plot_err_heatmap_rollout(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
-                              filename_prefix=filename_prefix, split_name=traj_split_name,
-                              traj_metadata=traj_metadata)  # Signed relative error mesh GIFs.
+    _plot_rollout_pos_volume_error_vs_time(true_rollout, pred_rollout, rollout_pos_volume_error_path,
+                                           split_name=traj_split_name, traj_metadata=traj_metadata)
     _plot_scatter_edge_corr(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
                             filename_prefix=filename_prefix, split_name=traj_split_name,
                             traj_metadata=traj_metadata)  # Per-field scatter PNGs.
@@ -950,13 +1027,11 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
     paths["videos"]["beam_comparison_gif"] = gif_path  # Register main comparison animation.
     paths["images"]["volume_change"] = volume_png_path  # Register volume plot.
     paths["images"]["rollout_error_vs_timestep"] = rollout_error_path  # Register MAE curve.
+    paths["images"]["rollout_pos_volume_error_vs_timestep"] = rollout_pos_volume_error_path
     for field_name, _ in TARGET_FIELDS:
         scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
         if scatter_path.exists():
             paths["images"][f"{field_name}_prediction_vs_target"] = scatter_path  # Add scatter if writer succeeded.
-        error_gif_path = output_dir / f"{filename_prefix}_{field_name}_signed_relative_error.gif"
-        if error_gif_path.exists():
-            paths["videos"][f"{field_name}_signed_relative_error"] = error_gif_path  # Add error mesh GIF if present.
         if plot_diagnostics_advanced:
             corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
             if corr_path.exists():

@@ -20,7 +20,7 @@ class ShortMetricProgressBar(TQDMProgressBar):
         """
         super().__init__(refresh_rate=refresh_rate, process_position=process_position, leave=leave)
         self.metric_name_map = {
-            "val/final_roll_err_pos": "val/roll_err",
+            "val/rollout_pos_mae": "val/roll_pos",
             "val/overall_relative_mae": "val/rel_mae",
             "train/overall_relative_mae": "train/rel_mae",
         }

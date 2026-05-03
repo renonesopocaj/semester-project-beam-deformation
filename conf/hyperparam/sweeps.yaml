@@ -1,6 +1,10 @@
 # Hyperparameter study driver: edit `sweeps` below to change what is swept (no code changes).
 # Each sweep runs every option once (grid); the override set that wins is carried into the next sweep.
-# Training uses the same Hydra config as `src/gnn/train.py` (config_name=train under conf/train).
+# Training composes `conf/train/{train_compose_config}.yaml` (default: train_default_hyperopt).
+# `train_default_hyperopt.yaml` mirrors `train.yaml` (full defaults + top-level fields); edit that file for hyperopt baselines.
+# Override on CLI, e.g. `train_compose_config=train` to use `train.yaml` as the compose root instead.
+
+train_compose_config: train_default_hyperopt
 
 study_name: hp_opt_${now:%Y-%m-%d_%H-%M-%S}
 output_dir: hyperparam_outputs/${study_name}

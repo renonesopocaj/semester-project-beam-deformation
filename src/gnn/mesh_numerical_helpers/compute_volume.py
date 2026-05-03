@@ -3,6 +3,7 @@ compute_volume.py
 Functions to compute volume of tetrahedra.
 """
 
+import math
 import torch
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity
 
@@ -92,7 +93,8 @@ def compute_final_volumes(all_true_rollouts, all_pred_rollouts):
     for traj_idx in sorted(all_true_rollouts.keys()):
         true_final_graph = all_true_rollouts[traj_idx][-1]
         pred_final_graph = all_pred_rollouts[traj_idx][-1]
-        cells = torch.as_tensor(to_numpy_tetra_connectivity(true_final_graph.x_element_connectivity), dtype=torch.long)
+        cells = torch.as_tensor(to_numpy_tetra_connectivity(true_final_graph.x_element_connectivity), dtype=torch.long,
+                                device=true_final_graph.x_pos_t.device)
         # Compute all signed volumes and take absolute values
         v_true = torch.abs(volume(true_final_graph.x_pos_t, cells)).sum().item()
         v_pred = torch.abs(volume(pred_final_graph.x_pos_t, cells)).sum().item()
@@ -100,3 +102,52 @@ def compute_final_volumes(all_true_rollouts, all_pred_rollouts):
         true_volumes.append(v_true)
         pred_volumes.append(v_pred)
     return true_volumes, pred_volumes
+
+
+def rollout_total_absolute_volumes(rollout):
+    """
+    Computes total absolute mesh volume at every rollout timestep.
+
+    Args:
+        rollout: list
+            Rollout graphs for one trajectory.
+    return: list[float]
+        One total absolute volume per timestep.
+    """
+    volumes = []
+    for graph in rollout:
+        cells = torch.as_tensor(to_numpy_tetra_connectivity(graph.x_element_connectivity), dtype=torch.long,
+                                device=graph.x_pos_t.device)
+        volumes.append(total_absolute_volume(graph.x_pos_t, cells).detach().cpu().item())
+    return volumes
+
+
+def rollout_volume_mae(true_rollout, pred_rollout):
+    """
+    Computes absolute volume MAE over all rollout timesteps for one trajectory.
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs.
+        pred_rollout: list
+            Predicted rollout graphs.
+    return: (float, int)
+        Mean absolute error between predicted and true total mesh volume over timesteps,
+        and number of compared timesteps.
+    """
+    true_volumes = rollout_total_absolute_volumes(true_rollout)
+    pred_volumes = rollout_total_absolute_volumes(pred_rollout)
+    n_steps = min(len(true_volumes), len(pred_volumes))
+    if n_steps == 0:
+        return 0.0, 0
+    err_sum = 0.0
+    err_count = 0
+    for step_idx in range(n_steps):
+        true_val = true_volumes[step_idx]
+        pred_val = pred_volumes[step_idx]
+        if math.isfinite(true_val) and math.isfinite(pred_val):
+            err_sum += abs(pred_val - true_val)
+            err_count += 1
+    if err_count == 0:
+        return 0.0, 0
+    return err_sum / err_count, err_count
