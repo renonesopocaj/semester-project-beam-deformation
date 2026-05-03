@@ -21,7 +21,7 @@ from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
-from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
+from src.gnn.mesh_numerical_helpers.compute_volume import rollout_volume_mae
 from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises, volume_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
@@ -586,22 +586,22 @@ class LitModule(L.LightningModule):
         if not self.enable_rollout_val or self.validation_dataset is None:
             return
         self._log_wandb_epoch_marker(commit=False)
-        # 1. Collect all (for each traj) final rollout MAE error on position (mean over nodes*coords), then pool
-        # across trajectories weighted by numel so the scalar matches one global mean over all nodes.
-        all_final_roll_err_pos = []
+        # 1. Collect all-step rollout position MAE for each trajectory, then pool
+        # across trajectories weighted by element count so the scalar matches one global mean.
+        all_rollout_pos_mae = []
         weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(self.validation_dataset.num_trajectories):
             traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
-            _, _, final_roll_err_pos, n_pos = self._run_rollout(traj_loader, rollout_steps=999999)
-            all_final_roll_err_pos.append(final_roll_err_pos)
-            weighted_sum += final_roll_err_pos * n_pos
+            _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999)
+            all_rollout_pos_mae.append(rollout_pos_mae)
+            weighted_sum += rollout_pos_mae * n_pos
             weight_total += n_pos
-        # 2. Node-weighted mean across trajectories
-        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
+        # 2. Element-weighted mean across trajectories
+        avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
+        self.rollout_all_step_error = avg_rollout_pos_mae
+        avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
         # Rank zero only
-        self.log("val/final_roll_err_pos", avg_final_roll_err_pos_tensor, prog_bar=True,
+        self.log("val/rollout_pos_mae", avg_rollout_pos_mae_tensor, prog_bar=True,
                  logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
     def _get_trajectory_loader(self, dataset, traj_idx, max_timesteps):
@@ -688,42 +688,54 @@ class LitModule(L.LightningModule):
         # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
         per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
         # 2. Run rollout for every trajectory, collect results, and then log
-        all_true_rollouts, all_pred_rollouts, all_final_roll_err_pos = {}, {}, []
+        all_true_rollouts, all_pred_rollouts, all_rollout_pos_mae, all_rollout_volume_mae = {}, {}, [], []
         num_trajectories = self.test_dataset.num_trajectories
         # FIXME: add pbar
         weighted_sum, weight_total = 0.0, 0
+        volume_weighted_sum, volume_weight_total = 0.0, 0
         for traj_idx in range(num_trajectories):
-            rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
+            if self.eval_split_name == "validation":
+                rollout_steps = 999999
+            else:
+                rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
             max_timesteps = rollout_steps if rollout_steps != 999999 else None
             traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx, max_timesteps=max_timesteps)
-            true_rollout, pred_rollout, final_roll_err_pos, n_pos = self._run_rollout(
+            true_rollout, pred_rollout, rollout_pos_mae, n_pos = self._run_rollout(
                 traj_loader, rollout_steps=rollout_steps
             )
+            volume_mae, n_volume = rollout_volume_mae(true_rollout, pred_rollout)
             all_true_rollouts[traj_idx] = true_rollout
             all_pred_rollouts[traj_idx] = pred_rollout
-            all_final_roll_err_pos.append(final_roll_err_pos)
-            weighted_sum += final_roll_err_pos * n_pos
+            all_rollout_pos_mae.append(rollout_pos_mae)
+            all_rollout_volume_mae.append(volume_mae)
+            weighted_sum += rollout_pos_mae * n_pos
             weight_total += n_pos
-        # --- Node-weighted mean of final-step position MAE across all trajectories
-        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
-        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        # --- Log to wandb rollout info (position only) (media will be logged later)
-        # FIXME: log also volume
+            volume_weighted_sum += volume_mae * n_volume
+            volume_weight_total += n_volume
+        # --- Element-weighted mean of all-step position MAE across all trajectories
+        avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
+        avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
+        avg_rollout_volume_mae = volume_weighted_sum / volume_weight_total if volume_weight_total else 0.0
+        avg_rollout_volume_mae_tensor = torch.tensor(avg_rollout_volume_mae, device=self.device)
+        self.rollout_all_step_error = avg_rollout_pos_mae
+        # --- Log rollout metrics (media will be logged later)
         wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
-        self.log(name=f"{wb_prefix}/final_roll_err_pos", value=avg_final_roll_err_pos_tensor,
+        self.log(name=f"{wb_prefix}/rollout_pos_mae", value=avg_rollout_pos_mae_tensor,
                  prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        self.log(name=f"{wb_prefix}/rollout_volume_mae", value=avg_rollout_volume_mae_tensor,
+                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        if self.eval_split_name == "validation":
+            self.log(name="final_validation/rollout_pos_mae_all_trajectories", value=avg_rollout_pos_mae_tensor,
+                     prog_bar=False, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
         if not self.log_test_media: # If not logging, skip the rest
             return
-        # 3. Compute final volumes from rollout
-        final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
         selected = (self.selected_test_trajectories if self.eval_split_name == "test"
                     else self.selected_validation_trajectories)
         # 4. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
-        overall_plot_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                                          final_volumes_true, final_volumes_pred, overall_output_dir,
+        overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                          all_rollout_volume_mae, overall_output_dir,
                                           self.eval_split_name, selected)
         # 5. Generate in-depth plots for selected trajectories only
         per_traj_paths = {}
@@ -731,8 +743,10 @@ class LitModule(L.LightningModule):
             if traj_idx >= num_trajectories:
                 print(f"\tWarning: selected traj{traj_idx} out of range (only {num_trajectories} trajectories).")
                 continue
-            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
-                                                                       all_pred_rollouts[traj_idx], traj_idx)
+            true_rollout_for_plot = all_true_rollouts[traj_idx][:self.selected_eval_rollout_limit]
+            pred_rollout_for_plot = all_pred_rollouts[traj_idx][:self.selected_eval_rollout_limit]
+            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(true_rollout_for_plot,
+                                                                       pred_rollout_for_plot, traj_idx)
         # 6. Single wandb logging call (guard: logger may be False when use_wandb=false; do not touch .experiment)
         if self._has_wandb_logger():
             log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
@@ -765,7 +779,7 @@ class LitModule(L.LightningModule):
     def _run_rollout(self, traj_loader, rollout_steps):
         """
         Executes a full autoregressive rollout over a single-trajectory loader and returns ground-truth/predicted
-        trajectories plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error.
+        trajectories plus position MAE over all rollout timesteps and nodes.
 
         Args:
             traj_loader: DataLoader
@@ -773,8 +787,8 @@ class LitModule(L.LightningModule):
             rollout_steps: int
                 Maximum number of rollout steps to run.
             return: (list, list, float, int)
-                Ground-truth rollout, predicted rollout, final-step rollout MAE (mean abs over positions),
-                and numel of final position tensor for cross-trajectory weighting.
+                Ground-truth rollout, predicted rollout, all-step rollout position MAE,
+                and number of position elements used for cross-trajectory weighting.
         """
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
@@ -784,11 +798,32 @@ class LitModule(L.LightningModule):
                                                 preprocess_cfg=self.preprocess_cfg,
                                                 time_discretizer=self.time_discretizer,
                                                 exp_mises=self.exp_mises)
-        # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
-        diff = true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t
-        final_roll_err_pos = torch.mean(torch.abs(diff)).item()
-        n_pos = int(diff.numel())
-        return true_rollout, pred_rollout, final_roll_err_pos, n_pos
+        rollout_pos_mae, n_pos = self._rollout_position_mae(true_rollout, pred_rollout)
+        return true_rollout, pred_rollout, rollout_pos_mae, n_pos
+
+    def _rollout_position_mae(self, true_rollout, pred_rollout):
+        """
+        Computes absolute position MAE over all timesteps, nodes, and coordinates for one trajectory.
+
+        Args:
+            true_rollout: list
+                Ground-truth rollout graphs.
+            pred_rollout: list
+                Predicted rollout graphs.
+        return: (float, int)
+            Mean absolute position error and number of finite position elements used.
+        """
+        err_sum = 0.0
+        err_count = 0
+        for true_graph, pred_graph in zip(true_rollout, pred_rollout):
+            diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)
+            finite = diff[torch.isfinite(diff)]
+            err_count += int(finite.numel())
+            if finite.numel() > 0:
+                err_sum += float(torch.sum(finite).detach().item())
+        if err_count == 0:
+            return 0.0, 0
+        return err_sum / err_count, err_count
 
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """

@@ -1,10 +1,17 @@
 """
 hyperparam_opt.py
 
-Config-driven sequential Optuna grid sweeps over Hydra train configs; one W&B run per trial.
+Config-driven sequential Optuna grid sweeps; one W&B run per trial.
+Training each trial composes the Hydra root config named by `train_compose_config` in
+`conf/hyperparam/sweeps.yaml` (default stem: train_default_hyperopt), i.e.
+`conf/train/train_default_hyperopt.yaml`. That file is a full train-style root (same fields
+and defaults layout as `conf/train/train.yaml`); it is not read by `src/gnn/train.py`.
 FIXME I Don't understand: does this run multiple sweeps over different hyperparameters in one run (python , or one sweep
  in one time?
 """
+
+# Default Hydra `config_name` under `conf/train/` when `train_compose_config` is unset in sweeps.yaml.
+TRAIN_COMPOSE_CONFIG_DEFAULT = "train_default_hyperopt"
 
 import json
 import math
@@ -14,6 +21,7 @@ from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, wandb_summ
 import matplotlib
 import matplotlib.pyplot as plt
 import optuna
+import hydra
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
@@ -79,6 +87,7 @@ class SweepRunner:
     optimization_metric_key: str
     pareto_x_key: str
     pareto_y_key: str
+    train_compose_config_name: str
     sweeps_list: list
     best_so_far_overrides: list
     trial_records: list
@@ -87,12 +96,24 @@ class SweepRunner:
         """
         Args:
             parent_cfg: DictConfig
-                Resolved top-level Hydra hyperparam yaml (study_name, sweeps, wandb_* , ...).
+                Resolved top-level Hydra hyperparam yaml (study_name, sweeps, wandb_*,
+                train_compose_config naming conf/train/<stem>.yaml full train root, ...).
         """
         self.parent_cfg = parent_cfg
         self.repo_root = Path(__file__).resolve().parents[2]
         self.train_conf_dir = self.repo_root / "conf" / "train"
         OmegaConf.resolve(parent_cfg)
+        tcn_raw = OmegaConf.select(parent_cfg, "train_compose_config")
+        if tcn_raw is None or str(tcn_raw).strip() == "":
+            self.train_compose_config_name = TRAIN_COMPOSE_CONFIG_DEFAULT
+        else:
+            self.train_compose_config_name = str(tcn_raw).strip()
+        train_compose_path = self.train_conf_dir / ("%s.yaml" % self.train_compose_config_name)
+        if not train_compose_path.is_file():
+            raise FileNotFoundError(
+                "Train compose config missing: %s (set train_compose_config in conf/hyperparam/sweeps.yaml)"
+                % train_compose_path
+            )
         self.optimization_metric_key = str(parent_cfg.optimization_metric)
         self.pareto_x_key = str(parent_cfg.pareto_x_metric)
         self.pareto_y_key = str(parent_cfg.pareto_y_metric)
@@ -120,7 +141,8 @@ class SweepRunner:
 
     def compose_and_run_training(self, override_list):
         """
-        Composes conf/train/train.yaml under conf/train then runs training once.
+        Composes conf/train/<train_compose_config>.yaml (full root like train.yaml; see
+        SweepRunner.train_compose_config_name) under conf/train then runs training once.
 
         Args:
             override_list: list of str
@@ -133,7 +155,7 @@ class SweepRunner:
         for one in override_list:
             overrides_copy.append(one)
         with initialize_config_dir(version_base=None, config_dir=str(self.train_conf_dir)):
-            train_cfg_out = compose(config_name="train", overrides=overrides_copy)
+            train_cfg_out = compose(config_name=self.train_compose_config_name, overrides=overrides_copy)
             return run_train_pipeline(train_cfg_out)
 
     def objective_for_sweep(self, sweep_entity):
@@ -260,7 +282,7 @@ def main(cfg):
     """
     Args:
         cfg: DictConfig
-            Hyperparam driver yaml (study, sweeps, pareto keys).
+            Hyperparam driver yaml (study, sweeps, pareto keys, train_compose_config, ...).
     """
     OmegaConf.resolve(cfg)
     runner = SweepRunner(cfg)
