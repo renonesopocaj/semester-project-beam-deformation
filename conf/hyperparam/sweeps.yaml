@@ -26,16 +26,20 @@ sweeps:
     options:
       - label: all
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_all/small
       - label: nonlin
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin/small
       - label: edges_w_norms
         overrides:
-          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_edges_w_norms/small
       - label: nonlin_noedge
         overrides:
-          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin_noedge/small
 
   - name: noise
     fixed_overrides: []

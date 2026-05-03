@@ -1,0 +1,4 @@
+training_type: "longer"
+total_epochs: 150
+resume_from: null
+checkpoint_interval: 20

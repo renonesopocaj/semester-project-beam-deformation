@@ -20,20 +20,26 @@ wandb_project: beam_deformation
 wandb_offline: true
 
 sweeps:
-  - name: features
+  - name: dataset_force_geom
     fixed_overrides:
       - noise=no_noise
     options:
-      - label: all
+      - label: biax_longer
         overrides:
           - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
-      - label: nonlin
+      - label: biax_allgeoms
         overrides:
           - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
-      - label: edges_w_norms
+      - label: single_longer
         overrides:
           - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
-      - label: nonlin_noedge
+      - label: single_allgeoms
+        overrides:
+          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
+      - label: triax_longer
+        overrides:
+          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+      - label: triax_allgeoms
         overrides:
           - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
 
