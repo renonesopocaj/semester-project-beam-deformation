@@ -3,7 +3,7 @@
 
 defaults:
   - computational: default
-  - model: mgn_smallest
+  - model: mgn_big
   - training: default # contains .total_epochs
   - noise: default
   - loss: default

@@ -20,19 +20,22 @@ wandb_project: beam_deformation
 wandb_offline: true
 
 sweeps:
-  - name: dataset
+  - name: features
     fixed_overrides:
       - noise=no_noise
     options:
       - label: all
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_all_features/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
       - label: nonlin
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_nonlin/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
       - label: edges_w_norms
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_edges_w_norms/small
+          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+      - label: nonlin_noedge
+        overrides:
+          - data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
 
   - name: noise
     fixed_overrides: []
@@ -85,20 +88,6 @@ sweeps:
         overrides:
           - noise.noise_scale_train=0.00005
           - noise.noise_per_epoch=true
-
-
-  - name: forces
-    fixed_overrides: []
-    options:
-      - label: biax
-        overrides:
-          - data.dataset_dir=/absolute/path/to/processed/biax_longer/. ..
-      - label: single
-        overrides:
-          - data.dataset_dir=/absolute/path/to/processed/single_longer/...
-      - label: triax
-        overrides:
-          - data.dataset_dir=/absolute/path/to/processed/triax_longer/...
 
   - name: gamma
     fixed_overrides: []
