@@ -8,9 +8,11 @@ Only thing from ground truth graph, i.e. that's not predicted, is the node force
 import torch
 from torch_geometric.data import Data
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
+from src.gnn.training.online_edge_augmentation import OnlineRandomEdgeAugmenter, fold_online_seed, num_graphs_in_pyg_batch
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first_num,
-               rollout_steps, normalizer, preprocess_cfg, time_discretizer, exp_mises):
+               rollout_steps, normalizer, preprocess_cfg, time_discretizer, exp_mises, random_online,
+               rollout_seed_base, rollout_online_tag, traj_idx):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -44,6 +46,14 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             Normalizer
         exp_mises: bool
             If True, exponentiate the denormalized log-stress prediction to physical stress space.
+        random_online: float
+            Ratio in [0, 1]; if positive, merges random edges before each forward and rebuilds edge_attr.
+        rollout_seed_base: int
+            Base seed folded with rollout_online_tag, traj_idx, and timestep for deterministic eval.
+        rollout_online_tag: int
+            Split-specific tag folded into augmentation seeds.
+        traj_idx: int
+            Trajectory index folded into augmentation seeds.
 
     Returns:
         true_rollout: list[Data]
@@ -63,6 +73,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
         node_stats.to(device)
         edge_stats.to(device)
         target_stats.to(device)
+        online_augmenter = None
+        if float(random_online) > 0.0:
+            online_augmenter = OnlineRandomEdgeAugmenter(edge_feature_builder, normalizer, edge_stats)
 
         # Reset discretizer internal state (needed for Newmark which tracks previous acceleration)
         time_discretizer.reset()
@@ -81,7 +94,15 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                 input_graph = graph_ground_truth
             # graph_ground_truth is ground truth, input_graph comes from autoregressive
             # Predict --> denormalize prediction --> extract von mises vs acceleration
-            pred = model(input_graph.to(device))
+            if online_augmenter is not None:
+                ng = num_graphs_in_pyg_batch(input_graph)
+                seeds = []
+                for g in range(ng):
+                    seeds.append(fold_online_seed(rollout_seed_base, rollout_online_tag, traj_idx, t, g))
+                model_in = online_augmenter.apply(input_graph, float(random_online), seeds)
+            else:
+                model_in = input_graph
+            pred = model(model_in.to(device))
             pred_denorm = normalizer.denormalize(pred, target_stats)
             # FIXME: hardcoded prediction target
             a_t_pred = pred_denorm[:, 0:3]
@@ -108,11 +129,12 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                             edge_stats=edge_stats, normalizer=normalizer,
                                             node_feature_builder=node_feature_builder,
                                             edge_feature_builder=edge_feature_builder)
+            stored_edge_index = model_in.edge_index if online_augmenter is not None else graph_ground_truth.edge_index
             # Store rollouts
             true_rollout.append(Data(x_pos_t=x_true,
                                      x_vel_t=v_true,
                                      acceleration=graph_ground_truth.y_acc_t,
-                                     edge_index=graph_ground_truth.edge_index,
+                                     edge_index=stored_edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
                                      rest_pos=rest_pos,
                                      # note: saved but previous step stress is not used for next step prediction
@@ -121,7 +143,7 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             pred_rollout.append(Data(x_pos_t=x_predict_tp1,
                                      x_vel_t=v_predict_tp1,
                                      acceleration=a_t_pred,
-                                     edge_index=graph_ground_truth.edge_index,
+                                     edge_index=stored_edge_index,
                                      x_element_connectivity=graph_ground_truth.x_element_connectivity,
                                      rest_pos=rest_pos,
                                      # note: saved but previous step stress is not used for next step prediction

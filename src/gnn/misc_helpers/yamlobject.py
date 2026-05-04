@@ -4,6 +4,7 @@ Maps yaml keys to instance attributes, via flattening the cfg.
 """
 
 from omegaconf import OmegaConf, DictConfig
+from src.gnn.preprocessing.edge_augmentation import validate_edge_augmentation_config
 
 def _extract_nested(cfg, key):
     """
@@ -119,6 +120,33 @@ class PreprocessYaml:
         self.enable_force_edge_norm = flattened_cfg["enable_force_edge_norm"]
         self.enable_edge_velocity_norm = flattened_cfg["enable_edge_velocity_norm"]
 
+        edge_aug = _extract_nested(cfg, "edge_augmentation")
+        if edge_aug is None:
+            self.edge_aug_k_hop = 0
+            self.edge_aug_random_offline = 0.0
+            self.edge_aug_add_wall_edges = None
+            self.edge_aug_wall_border_percentage = 0.0
+            self.edge_aug_wall_internal_percentage = 0.0
+        else:
+            if isinstance(edge_aug, DictConfig):
+                edge_aug = OmegaConf.to_container(edge_aug, resolve=True)
+            kh = edge_aug.get("k_hop", 0)
+            if isinstance(kh, str):
+                self.edge_aug_k_hop = kh
+            else:
+                self.edge_aug_k_hop = int(kh)
+            self.edge_aug_random_offline = float(edge_aug.get("random_offline", 0.0))
+            raw_wall = edge_aug.get("add_wall_edges", None)
+            if raw_wall is None or raw_wall == "null":
+                self.edge_aug_add_wall_edges = None
+            else:
+                self.edge_aug_add_wall_edges = str(raw_wall)
+            self.edge_aug_wall_border_percentage = float(edge_aug.get("wall_border_percentage", 0.0))
+            self.edge_aug_wall_internal_percentage = float(edge_aug.get("wall_internal_percentage", 0.0))
+        validate_edge_augmentation_config(self.edge_aug_k_hop, self.edge_aug_random_offline,
+                                          self.edge_aug_add_wall_edges, self.edge_aug_wall_border_percentage,
+                                          self.edge_aug_wall_internal_percentage)
+
 class TrainYaml:
     """
     Dynamically maps all yaml keys from a nested config dictionary to instance attributes, ignoring nesting structure.
@@ -128,6 +156,7 @@ class TrainYaml:
     wandb_group: str | None
     wandb_project: str
     wandb_offline: bool
+    random_online: float
 
     def __init__(self, cfg):
         """
@@ -191,6 +220,9 @@ class TrainYaml:
         self.noise_prev_scale_train = flattened_cfg["noise_prev_scale_train"]
         self.noise_feature_update_mode = flattened_cfg["noise_feature_update_mode"]
         self.noise_per_epoch = flattened_cfg["noise_per_epoch"]
+        self.random_online = float(flattened_cfg.get("random_online", 0.0))
+        if self.random_online < 0.0 or self.random_online > 1.0:
+            raise ValueError("random_online must be in [0, 1].")
         # Exponentiate
         self.exp_mises = flattened_cfg["exp_mises"]
         self.stress_weight = flattened_cfg["stress_weight"]

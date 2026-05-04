@@ -19,6 +19,20 @@ from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discreti
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae, relative_mae_sum_and_count, human_readable_storage, module_param_and_buffer_storage_bytes
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
+from src.gnn.preprocessing.build_features import make_scripted_feature_builders
+from src.gnn.training.online_edge_augmentation import (
+    OnlineRandomEdgeAugmenter,
+    fold_online_seed,
+    num_graphs_in_pyg_batch,
+    SPLIT_TRAIN_ONLINE,
+    SPLIT_VAL_DURING_FIT,
+    SPLIT_VAL_FINAL,
+    SPLIT_TEST_FINAL,
+    SPLIT_PREDICT,
+    SPLIT_NOROLL_PER_TRAJ,
+    SPLIT_ROLLOUT_VAL,
+    SPLIT_ROLLOUT_TEST,
+)
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
 from src.gnn.mesh_numerical_helpers.compute_volume import rollout_volume_mae
@@ -68,6 +82,9 @@ class LitModule(L.LightningModule):
     selected_eval_rollout_limit: int
     test_traj_metadata: dict
     noise_feature_update_mode: str
+    random_online: float
+    train_seed: int
+    _online_random_edge_augmenter: Any
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
@@ -159,6 +176,9 @@ class LitModule(L.LightningModule):
                 f"Unknown noise_feature_update_mode '{train_cfg.noise_feature_update_mode}'. "
                 f"Expected 'exact' or 'taylor'."
             )
+        self.random_online = float(train_cfg.random_online)
+        self.train_seed = int(train_cfg.seed)
+        self._online_random_edge_augmenter = None
 
     def on_fit_start(self):
         """
@@ -319,6 +339,10 @@ class LitModule(L.LightningModule):
         self.edge_stats = StatsModule.from_stats(edge_stats)
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
+        if self.random_online > 0.0:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
 
     def set_test_context(self, test_dataset, split_name, traj_metadata):
         """
@@ -351,6 +375,86 @@ class LitModule(L.LightningModule):
             Model prediction.
         """
         return self.model(batch)
+
+    def _with_online_random_edges_train(self, batch, batch_idx, split_code, train_epoch):
+        """
+        When random_online > 0, returns a batch clone with merged random edges and recomputed edge_attr.
+
+        Args:
+            batch: Data
+                PyG batch on the training device.
+            batch_idx: int
+                Dataloader batch index.
+            split_code: int
+                Namespace for deterministic seed folding.
+            train_epoch: int
+                Current training epoch folded into per-graph seeds.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, split_code, train_epoch, batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
+
+    def _with_online_random_edges_eval_step(self, batch, batch_idx, split_code):
+        """
+        Same as training-time online augmentation but without epoch in the seed fold (deterministic eval batches).
+
+        Args:
+            batch: Data
+                PyG batch on the training device.
+            batch_idx: int
+                Dataloader batch index.
+            split_code: int
+                Namespace for deterministic seed folding.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, split_code, batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
+
+    def _with_online_random_edges_noroll(self, batch, traj_idx, inner_batch_idx):
+        """
+        Deterministic online augmentation for per-trajectory one-step metrics during final evaluation.
+
+        Args:
+            batch: Data
+                Single trajectory minibatch on device.
+            traj_idx: int
+                Trajectory index in the dataset.
+            inner_batch_idx: int
+                Index within the trajectory DataLoader.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, SPLIT_NOROLL_PER_TRAJ, traj_idx, inner_batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
 
     def _collect_train_batch_metrics_noroll(self, pred, target, batch):
         """
@@ -490,6 +594,7 @@ class LitModule(L.LightningModule):
         return: torch.Tensor
             Training loss.
         """
+        batch = self._with_online_random_edges_train(batch, batch_idx, SPLIT_TRAIN_ONLINE, int(self.current_epoch))
         pred = self(batch)
         target = batch.y
         # Metrics collected: only train loss (for now)
@@ -549,6 +654,7 @@ class LitModule(L.LightningModule):
             batch_idx: int
                 Batch index.
         """
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, SPLIT_VAL_DURING_FIT)
         pred = self(batch)
         target = batch.y
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
@@ -568,6 +674,7 @@ class LitModule(L.LightningModule):
         return: torch.Tensor
             Model prediction.
         """
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, SPLIT_PREDICT)
         return self(batch)
 
     def on_validation_epoch_end(self):
@@ -592,7 +699,8 @@ class LitModule(L.LightningModule):
         weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(self.validation_dataset.num_trajectories):
             traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
-            _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999)
+            _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999,
+                                                             rollout_online_tag=SPLIT_ROLLOUT_VAL, traj_idx=traj_idx)
             all_rollout_pos_mae.append(rollout_pos_mae)
             weighted_sum += rollout_pos_mae * n_pos
             weight_total += n_pos
@@ -663,6 +771,8 @@ class LitModule(L.LightningModule):
             batch_idx: int
                 Batch index.
         """
+        split_code = SPLIT_VAL_FINAL if self.eval_split_name == "validation" else SPLIT_TEST_FINAL
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, split_code)
         pred = self(batch)
         target = batch.y
         # Helper to get prefix
@@ -700,8 +810,9 @@ class LitModule(L.LightningModule):
                 rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
             max_timesteps = rollout_steps if rollout_steps != 999999 else None
             traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx, max_timesteps=max_timesteps)
+            rollout_tag = SPLIT_ROLLOUT_VAL if self.eval_split_name == "validation" else SPLIT_ROLLOUT_TEST
             true_rollout, pred_rollout, rollout_pos_mae, n_pos = self._run_rollout(
-                traj_loader, rollout_steps=rollout_steps
+                traj_loader, rollout_steps=rollout_steps, rollout_online_tag=rollout_tag, traj_idx=traj_idx
             )
             volume_mae, n_volume = rollout_volume_mae(true_rollout, pred_rollout)
             all_true_rollouts[traj_idx] = true_rollout
@@ -776,7 +887,7 @@ class LitModule(L.LightningModule):
                    f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
         return metrics
 
-    def _run_rollout(self, traj_loader, rollout_steps):
+    def _run_rollout(self, traj_loader, rollout_steps, rollout_online_tag, traj_idx):
         """
         Executes a full autoregressive rollout over a single-trajectory loader and returns ground-truth/predicted
         trajectories plus position MAE over all rollout timesteps and nodes.
@@ -786,6 +897,10 @@ class LitModule(L.LightningModule):
                 Single-trajectory dataloader used for rollout evaluation.
             rollout_steps: int
                 Maximum number of rollout steps to run.
+            rollout_online_tag: int
+                Seed namespace for deterministic online edge augmentation during rollout.
+            traj_idx: int
+                Trajectory index folded into rollout augmentation seeds.
             return: (list, list, float, int)
                 Ground-truth rollout, predicted rollout, all-step rollout position MAE,
                 and number of position elements used for cross-trajectory weighting.
@@ -797,7 +912,11 @@ class LitModule(L.LightningModule):
                                                 normalizer=self.used_dataset_normalizer,
                                                 preprocess_cfg=self.preprocess_cfg,
                                                 time_discretizer=self.time_discretizer,
-                                                exp_mises=self.exp_mises)
+                                                exp_mises=self.exp_mises,
+                                                random_online=self.random_online,
+                                                rollout_seed_base=self.train_seed,
+                                                rollout_online_tag=rollout_online_tag,
+                                                traj_idx=traj_idx)
         rollout_pos_mae, n_pos = self._rollout_position_mae(true_rollout, pred_rollout)
         return true_rollout, pred_rollout, rollout_pos_mae, n_pos
 
@@ -845,8 +964,9 @@ class LitModule(L.LightningModule):
                 traj_loader = self._get_trajectory_loader(dataset, traj_idx, max_timesteps=max_timesteps)
                 acc_sum, acc_cnt = 0.0, 0.0
                 stress_sum, stress_cnt = 0.0, 0.0
-                for batch in traj_loader:
+                for inner_batch_idx, batch in enumerate(traj_loader):
                     batch = batch.to(self.device)
+                    batch = self._with_online_random_edges_noroll(batch, traj_idx, inner_batch_idx)
                     pred = self(batch)
                     target = batch.y
                     pred_acc = pred[:, 0:3].contiguous()
