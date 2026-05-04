@@ -334,11 +334,11 @@ The repository tracks different metrics for training, validation, and final eval
 - main monitored metric is `val/overall_relative_mae`
 - best-checkpoint selection also uses `val/overall_relative_mae`
 - optional `val/acc_all_loss` and `val/stress_loss` exist in the code but are disabled by default in the current config
-- rollout validation metric `val/final_roll_err_pos` exists, but rollout-on-validation is disabled by default in the current config
+- rollout validation metric `val/rollout_pos_mae` exists, but rollout-on-validation is disabled by default in the current config
 
 - Final validation and test evaluation (Lightning `Trainer.test` after training):
-- One-step batch metrics and rollout summary `final_roll_err_pos` are logged to Weights & Biases under `final_validation/*` when the val split is evaluated and under `final_test/*` when the test split is evaluated. This keeps them separate from per-epoch training validation metrics under `val/*`.
-- Metric names mirror the training-style layout: `overall_relative_mae` (all four target channels), `acc_all_rel_mae`, `stress_rel_mae`, and `final_roll_err_pos` (mean absolute position error at the last rollout timestep).
+- One-step batch metrics and rollout summaries are logged to Weights & Biases under `final_validation/*` when the val split is evaluated and under `final_test/*` when the test split is evaluated. This keeps them separate from per-epoch training validation metrics under `val/*`.
+- Metric names mirror the training-style layout: `overall_relative_mae` (all four target channels), `acc_all_rel_mae`, `stress_rel_mae`, `rollout_pos_mae` (absolute position MAE averaged over all rollout timesteps and nodes), and `rollout_volume_mae` (absolute volume MAE averaged over all rollout timesteps). Final validation also logs `final_validation/rollout_pos_mae_all_trajectories`, an explicit validation-only aggregate over all validation trajectories.
 
 **Weights & Biases media layout.** When test-time media logging is enabled (`log_test_media` in training config), images and GIFs use the following key prefixes so each in-depth trajectory has its own folder in the W&B UI:
 

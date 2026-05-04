@@ -12,6 +12,9 @@ defaults:
   - _self_
 
 seed: 42
+# Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
+# not already adjacent (undirected) on the current graph; merged with existing edge_index.
+random_online: 0.0
 use_wandb: true
 initial_lr: 1e-3
 optimizer: adam
