@@ -20,19 +20,26 @@ wandb_project: beam_deformation
 wandb_offline: true
 
 sweeps:
-  - name: dataset
+  - name: features
     fixed_overrides:
       - noise=no_noise
     options:
       - label: all
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_all_features/small
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_all/small
       - label: nonlin
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_nonlin/small
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin/small
       - label: edges_w_norms
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/dataset_edges_w_norms/small
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_edges_w_norms/small
+      - label: nonlin_noedge
+        overrides:
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin_noedge/small
 
   - name: noise
     fixed_overrides: []
@@ -44,6 +51,22 @@ sweeps:
       - label: offline_s2
         overrides:
           - noise.noise_scale_train=0.0003
+          - noise.noise_per_epoch=false
+      - label: offline_s3
+        overrides:
+          - noise.noise_scale_train=0.001
+          - noise.noise_per_epoch=false
+      - label: offline_s4
+        overrides:
+          - noise.noise_scale_train=0.003
+          - noise.noise_per_epoch=false
+      - label: offline_s5
+        overrides:
+          - noise.noise_scale_train=0.00005
+          - noise.noise_per_epoch=false
+      - label: offline_s6
+        overrides:
+          - noise.noise_scale_train=0.00001
           - noise.noise_per_epoch=false
       - label: online_s1
         overrides:
@@ -57,38 +80,37 @@ sweeps:
         overrides:
           - noise.noise_scale_train=0.001
           - noise.noise_per_epoch=true
-
-  - name: forces
-    fixed_overrides: []
-    options:
-      - label: biax
+      - label: online_s4
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/biax_longer/...
-      - label: single
+          - noise.noise_scale_train=0.005
+          - noise.noise_per_epoch=true
+      - label: online_s5
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/single_longer/...
-      - label: triax
+          - noise.noise_scale_train=0.00001
+          - noise.noise_per_epoch=true
+      - label: online_s6
         overrides:
-          - data.dataset_dir=/absolute/path/to/processed/triax_longer/...
+          - noise.noise_scale_train=0.00005
+          - noise.noise_per_epoch=true
 
   - name: gamma
     fixed_overrides: []
     options:
+      - label: g_0.1
+        overrides:
+          - noise.noise_gamma=0.1
+      - label: g_0.05
+        overrides:
+          - noise.noise_gamma=0.05
+      - label: g_0.2
+        overrides:
+          - noise.noise_gamma=0.2
       - label: g_0.5
         overrides:
           - noise.noise_gamma=0.5
       - label: g_0.8
         overrides:
           - noise.noise_gamma=0.8
-      - label: g_1.0
-        overrides:
-          - noise.noise_gamma=1.0
-      - label: g_1.2
-        overrides:
-          - noise.noise_gamma=1.2
-      - label: g_1.5
-        overrides:
-          - noise.noise_gamma=1.5
 
 hydra:
   run:
