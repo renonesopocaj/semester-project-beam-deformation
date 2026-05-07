@@ -1,0 +1,119 @@
+# Hyperparameter study driver: edit `sweeps` below to change what is swept (no code changes).
+# Each sweep runs every option once (grid); the override set that wins is carried into the next sweep.
+# Training composes `conf/train/{train_compose_config}.yaml` (default: train_default_hyperopt).
+# `train_default_hyperopt.yaml` mirrors `train.yaml` (full defaults + top-level fields); edit that file for hyperopt baselines.
+# Override on CLI, e.g. `train_compose_config=train` to use `train.yaml` as the compose root instead.
+
+train_compose_config: train_default_hyperopt
+
+study_name: hp_opt_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+
+# Minimize this (must match ModelCheckpoint monitor in train); value comes from checkpoint best score.
+optimization_metric: val/overall_relative_mae
+
+# Axes for the Pareto plot (keys in the dict returned after val+test; use final_test/... if you prefer test).
+pareto_x_metric: final_validation/acc_all_rel_mae
+pareto_y_metric: final_validation/stress_rel_mae
+
+wandb_project: beam_deformation
+wandb_offline: true
+
+sweeps:
+  - name: features
+    fixed_overrides:
+      - noise=no_noise
+    options:
+      - label: all
+        overrides:
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/all/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_all/small
+      - label: nonlin
+        overrides:
+          #- data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/nonlin/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin/small
+      - label: edges_w_norms
+        overrides:
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/edges_w_norms/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_edges_w_norms/small
+      - label: nonlin_noedge
+        overrides:
+          #- data.dataset_dir/scratch/izar/senoner/dataset/processed/biax_longer/nonlin_noedge/small
+          - data.dataset_dir=dataset/processed/biax_longer/z_isotr_centr_nonlin_noedge/small
+
+  - name: noise
+    fixed_overrides: []
+    options:
+      - label: offline_s1
+        overrides:
+          - noise.noise_scale_train=0.0001
+          - noise.noise_per_epoch=false
+      - label: offline_s2
+        overrides:
+          - noise.noise_scale_train=0.0003
+          - noise.noise_per_epoch=false
+      - label: offline_s3
+        overrides:
+          - noise.noise_scale_train=0.001
+          - noise.noise_per_epoch=false
+      - label: offline_s4
+        overrides:
+          - noise.noise_scale_train=0.003
+          - noise.noise_per_epoch=false
+      - label: offline_s5
+        overrides:
+          - noise.noise_scale_train=0.00005
+          - noise.noise_per_epoch=false
+      - label: offline_s6
+        overrides:
+          - noise.noise_scale_train=0.00001
+          - noise.noise_per_epoch=false
+      - label: online_s1
+        overrides:
+          - noise.noise_scale_train=0.0001
+          - noise.noise_per_epoch=true
+      - label: online_s2
+        overrides:
+          - noise.noise_scale_train=0.0003
+          - noise.noise_per_epoch=true
+      - label: online_s3
+        overrides:
+          - noise.noise_scale_train=0.001
+          - noise.noise_per_epoch=true
+      - label: online_s4
+        overrides:
+          - noise.noise_scale_train=0.005
+          - noise.noise_per_epoch=true
+      - label: online_s5
+        overrides:
+          - noise.noise_scale_train=0.00001
+          - noise.noise_per_epoch=true
+      - label: online_s6
+        overrides:
+          - noise.noise_scale_train=0.00005
+          - noise.noise_per_epoch=true
+
+  - name: gamma
+    fixed_overrides: []
+    options:
+      - label: g_0.1
+        overrides:
+          - noise.noise_gamma=0.1
+      - label: g_0.05
+        overrides:
+          - noise.noise_gamma=0.05
+      - label: g_0.2
+        overrides:
+          - noise.noise_gamma=0.2
+      - label: g_0.5
+        overrides:
+          - noise.noise_gamma=0.5
+      - label: g_0.8
+        overrides:
+          - noise.noise_gamma=0.8
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

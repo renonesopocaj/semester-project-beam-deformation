@@ -4,7 +4,7 @@ preprocessor.py
 Offline preprocessing of data. Noise injection is done online, not offline, due to having to change it each epoch.
 A lot of redundancy in Data(...) which are the PyG-formatted graphs, because it lets us do rollout and other stuff
 later in training without having to slice tensors and "remembering" which feature is where.
-One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
+One trajectory = same graph that changes features over time (topology unchanged unless edge_augmentation alters it offline)
 Note one file = one trajectory.
 Validation/test:
     1. load files and stats
@@ -35,6 +35,7 @@ from abc import ABC, abstractmethod
 from tqdm import tqdm
 from src.gnn.mesh_numerical_helpers.compute_angle import (extract_surface_triangles_torch,
                                                           filter_fixed_surface_triangles, max_surface_angle)
+from src.gnn.preprocessing.edge_augmentation import build_augmented_edge_index, edge_augmentation_traj_seed
 
 EPS = 1e-6
 
@@ -105,7 +106,7 @@ class Preprocessor(ABC):
     def preprocess_data(self, cfg, graphs_dir, save_dir):
         """
         Preprocess simulation data into graph format. Note one file = one trajectory
-        One trajectory = same graph that changes features over time (topology aka adjacency matrix doesn't change)
+        One trajectory = same graph that changes features over time (topology unchanged unless edge_augmentation alters it offline)
         Validation: 1. load files and stats
                     2. for each file:
                         2.a. compute velocity, acceleration, von mises stress, edge and other features (node and edge)
@@ -167,6 +168,14 @@ class Preprocessor(ABC):
             all_node_force = whole_trajectory_batch.x_node_force.reshape(len(graphs_list_batch), -1, 3)  # (T, N, 3)
             # .x_bc contains 0,1 value with 1 = fixed, 0 = free
             boundary_condition = graphs_list_batch[0].x_bc
+            aug_device = torch.device(cfg.device)
+            traj_seed = edge_augmentation_traj_seed(cfg.seed, idx_file)
+            aug_edge_index = build_augmented_edge_index(
+                graphs_list_batch[0].edge_index, rest_pos_x, boundary_condition, cfg.edge_aug_k_hop,
+                cfg.edge_aug_random_offline, cfg.edge_aug_add_wall_edges, cfg.edge_aug_wall_border_percentage,
+                cfg.edge_aug_wall_internal_percentage, traj_seed, aug_device)
+            for _g in graphs_list_batch:
+                _g.edge_index = aug_edge_index
 
             # Inside loop: for each graph build its features
             effective_limit = self.selected_limit if idx_file in self.selected_indices else cfg.limit_timesteps
@@ -327,6 +336,7 @@ class TrainPreprocessor(Preprocessor):
         self.out_graphs.append(Data(y_acc_t=_a, # TARGET feature acceleration
                                     # Helpers for rollout or other tasks
                                     edge_index=graph.edge_index,  # global index
+                                    x_element_connectivity=graph.x_element_connectivity,
                                     t=graph.time,  # global t attribute
                                     # Features (input, x)
                                     x_pos_t=_x, # FEATURE position

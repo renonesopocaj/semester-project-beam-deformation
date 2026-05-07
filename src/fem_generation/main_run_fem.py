@@ -25,6 +25,7 @@ DECIMALS = 10
 TOL = 1e-9
 ARE_EQUAL_THRESHOLD = 1e-12
 # Threshold used to decide whether a range is effectively constant.
+MAX_SELECTED_TIMESTEPS = 400
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -201,6 +202,23 @@ def _save_extra_info(output_root, selected_trajs, ood_by_traj):
         print(f"Saved test_ood_features.json => {extra_info_dir / 'test_ood_features.json'}")
 
 
+def _resolve_selected_num_steps(selected_trajs, default_num_steps):
+    """
+    Resolve selected trajectory num_steps from config and cap it to MAX_SELECTED_TIMESTEPS.
+
+    Args:
+        selected_trajs: dict
+            selected_trajs section from config.
+        default_num_steps: int
+            fallback num_steps from simulation defaults.
+    return: int
+        effective selected trajectory timestep count.
+    """
+    raw_steps = selected_trajs.get("selected_num_steps", selected_trajs.get("num_steps", default_num_steps))
+    selected_num_steps = int(raw_steps)
+    return min(selected_num_steps, MAX_SELECTED_TIMESTEPS)
+
+
 # ---------------------------------------------------------------------------
 #  Main loop
 # ---------------------------------------------------------------------------
@@ -226,8 +244,12 @@ def _run_only_json(cfg, defaults, output_root, requested_modes, selected_trajs):
     with open(ood_path, "w") as f:
         json.dump(ood_by_traj, f, indent=2)
     print(json.dumps(ood_by_traj, indent=2))
+    selected_num_steps = _resolve_selected_num_steps(selected_trajs, defaults["num_steps"])
+    selected_trajs_to_save = dict(selected_trajs)
+    selected_trajs_to_save["selected_num_steps"] = selected_num_steps
+    selected_trajs_to_save["num_steps"] = selected_num_steps
     # Save extra_info (selected trajectories + test_ood_features)
-    _save_extra_info(output_root, selected_trajs, ood_by_traj)
+    _save_extra_info(output_root, selected_trajs_to_save, ood_by_traj)
 
 def _mode_isvalid(requested_modes, valid_modes):
     for mode in requested_modes:
@@ -295,11 +317,15 @@ def run_simulations(config_input, verbose, skip_existing, modes):
         ood_path = test_dir / "test_ood_features.json"
         with open(ood_path, "w") as f:
             json.dump(ood_by_traj, f, indent=2)
+    # Resolve selected trajectory rollout overrides
+    selected_num_steps = _resolve_selected_num_steps(selected_trajs, defaults["num_steps"])
+    selected_trajs_to_save = dict(selected_trajs)
+    selected_trajs_to_save["selected_num_steps"] = selected_num_steps
+    selected_trajs_to_save["num_steps"] = selected_num_steps
     # Save extra_info (selected trajectories + test_ood_features)
-    _save_extra_info(output_root, selected_trajs, ood_by_traj)
+    _save_extra_info(output_root, selected_trajs_to_save, ood_by_traj)
     # Read selected trajectory overrides
     selected_total_time = selected_trajs.get("selected_total_time", defaults["total_time"])
-    selected_num_steps = selected_trajs.get("num_steps", defaults["num_steps"])
 
     # FOR EACH REQUESTED MODE
     for mode in requested_modes:

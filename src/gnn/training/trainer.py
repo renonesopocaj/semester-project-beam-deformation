@@ -19,15 +19,31 @@ from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discreti
 from src.gnn.misc_helpers.misc import compute_mean_relative_mae, relative_mae_sum_and_count, human_readable_storage, module_param_and_buffer_storage_bytes
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
+from src.gnn.preprocessing.build_features import make_scripted_feature_builders
+from src.gnn.training.online_edge_augmentation import (
+    OnlineRandomEdgeAugmenter,
+    fold_online_seed,
+    num_graphs_in_pyg_batch,
+    SPLIT_TRAIN_ONLINE,
+    SPLIT_VAL_DURING_FIT,
+    SPLIT_VAL_FINAL,
+    SPLIT_TEST_FINAL,
+    SPLIT_PREDICT,
+    SPLIT_NOROLL_PER_TRAJ,
+    SPLIT_ROLLOUT_VAL,
+    SPLIT_ROLLOUT_TEST,
+)
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
-from src.gnn.mesh_numerical_helpers.compute_volume import compute_final_volumes
-from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises
+from src.gnn.mesh_numerical_helpers.compute_volume import rollout_volume_mae
+from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises, volume_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
-from src.gnn.validation.plot_rollout import in_depth_plots
-from src.gnn.validation.plot_overall import overall_plot
-from src.gnn.validation.plot_train import plot_final_parameter_distributions
+from src.gnn.plots.plot_rollout import in_depth_plots
+from src.gnn.plots.plot_overall import overall_plot
+from src.gnn.plots.plot_train import plot_final_parameter_distributions
+
+MAX_SELECTED_TIMESTEPS = 400
 
 class LitModule(L.LightningModule):
     # Model, optimizer
@@ -63,8 +79,12 @@ class LitModule(L.LightningModule):
     # Which trajectories get in-depth plots
     selected_validation_trajectories: list[int]
     selected_test_trajectories: list[int]
+    selected_eval_rollout_limit: int
     test_traj_metadata: dict
     noise_feature_update_mode: str
+    random_online: float
+    train_seed: int
+    _online_random_edge_augmenter: Any
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
@@ -99,6 +119,7 @@ class LitModule(L.LightningModule):
         self.residual_list = set(train_cfg.residual_list)
         self.theta_max = theta_max
         self.curvature_loss_weight = train_cfg.curvature_loss_weight
+        self.volume_loss_weight = train_cfg.volume_loss_weight
         if "curvature" in self.residual_list and self.theta_max is None:
             raise ValueError("Curvature residual requested but theta_max was not provided.")
         # training id
@@ -137,6 +158,10 @@ class LitModule(L.LightningModule):
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
+        self.selected_eval_rollout_limit = min(
+            int(getattr(train_cfg, "selected_eval_rollout_limit", MAX_SELECTED_TIMESTEPS)),
+            MAX_SELECTED_TIMESTEPS
+        )
         self.rollout_batch_size = train_cfg.rollout_batch_size
         # performance stuff
         self.rollout_num_workers = train_cfg.num_workers
@@ -151,6 +176,9 @@ class LitModule(L.LightningModule):
                 f"Unknown noise_feature_update_mode '{train_cfg.noise_feature_update_mode}'. "
                 f"Expected 'exact' or 'taylor'."
             )
+        self.random_online = float(train_cfg.random_online)
+        self.train_seed = int(train_cfg.seed)
+        self._online_random_edge_augmenter = None
 
     def on_fit_start(self):
         """
@@ -311,6 +339,10 @@ class LitModule(L.LightningModule):
         self.edge_stats = StatsModule.from_stats(edge_stats)
         self.target_stats = StatsModule.from_stats(target_stats)
         self.dt = dt
+        if self.random_online > 0.0:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
 
     def set_test_context(self, test_dataset, split_name, traj_metadata):
         """
@@ -344,6 +376,86 @@ class LitModule(L.LightningModule):
         """
         return self.model(batch)
 
+    def _with_online_random_edges_train(self, batch, batch_idx, split_code, train_epoch):
+        """
+        When random_online > 0, returns a batch clone with merged random edges and recomputed edge_attr.
+
+        Args:
+            batch: Data
+                PyG batch on the training device.
+            batch_idx: int
+                Dataloader batch index.
+            split_code: int
+                Namespace for deterministic seed folding.
+            train_epoch: int
+                Current training epoch folded into per-graph seeds.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, split_code, train_epoch, batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
+
+    def _with_online_random_edges_eval_step(self, batch, batch_idx, split_code):
+        """
+        Same as training-time online augmentation but without epoch in the seed fold (deterministic eval batches).
+
+        Args:
+            batch: Data
+                PyG batch on the training device.
+            batch_idx: int
+                Dataloader batch index.
+            split_code: int
+                Namespace for deterministic seed folding.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, split_code, batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
+
+    def _with_online_random_edges_noroll(self, batch, traj_idx, inner_batch_idx):
+        """
+        Deterministic online augmentation for per-trajectory one-step metrics during final evaluation.
+
+        Args:
+            batch: Data
+                Single trajectory minibatch on device.
+            traj_idx: int
+                Trajectory index in the dataset.
+            inner_batch_idx: int
+                Index within the trajectory DataLoader.
+        return: Data
+            Possibly augmented batch for the forward pass.
+        """
+        if self.random_online <= 0.0:
+            return batch
+        if self._online_random_edge_augmenter is None:
+            _, edge_builder = make_scripted_feature_builders(self.preprocess_cfg)
+            self._online_random_edge_augmenter = OnlineRandomEdgeAugmenter(
+                edge_builder, self.used_dataset_normalizer, self.edge_stats)
+        ngraphs = num_graphs_in_pyg_batch(batch)
+        seeds = []
+        for g in range(ngraphs):
+            seeds.append(fold_online_seed(self.train_seed, SPLIT_NOROLL_PER_TRAJ, traj_idx, inner_batch_idx, g))
+        return self._online_random_edge_augmenter.apply(batch, self.random_online, seeds)
+
     def _collect_train_batch_metrics_noroll(self, pred, target, batch):
         """
         Collects only the training metrics that are actually needed during training.
@@ -365,10 +477,13 @@ class LitModule(L.LightningModule):
         if "curvature" in self.residual_list:
             curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max,
                                                 self.time_discretizer)
+            metrics["train/curvature_residual"] = curvature_residual
             total_loss = total_loss + self.curvature_loss_weight * curvature_residual
         if "volume" in self.residual_list:
-            # TODO: implement volume loss
-            raise NotImplementedError("Volume loss is not implemented.")
+            volume_loss_value = volume_residual(pred, target, batch, self.target_stats, self.dt,
+                                                self.time_discretizer, self.loss_fn)
+            metrics["train/volume_residual"] = volume_loss_value
+            total_loss = total_loss + self.volume_loss_weight * volume_loss_value
         metrics["train/loss"] = total_loss
         return metrics
 
@@ -479,13 +594,20 @@ class LitModule(L.LightningModule):
         return: torch.Tensor
             Training loss.
         """
+        batch = self._with_online_random_edges_train(batch, batch_idx, SPLIT_TRAIN_ONLINE, int(self.current_epoch))
         pred = self(batch)
         target = batch.y
         # Metrics collected: only train loss (for now)
         metrics = self._collect_train_batch_metrics_noroll(pred, target, batch)
         lw = self._train_loss_log_weight(batch, pred)
-        self._log_metrics(metrics, prog_bar_keys=["train/loss"], metric_weights={"train/loss": lw},
-                          sync_dist_keys=["train/loss"])
+        metric_weights = {}
+        for metric_name in metrics.keys():
+            if metric_name == "train/volume_residual":
+                metric_weights[metric_name] = int(batch.num_graphs)
+            else:
+                metric_weights[metric_name] = lw
+        self._log_metrics(metrics, prog_bar_keys=["train/loss"], metric_weights=metric_weights,
+                          sync_dist_keys=list(metrics.keys()))
         # on_train_epoch_end
         # 1. Steps the custom LR scheduler using the epoch loss
         # 2. Halts training early if the scheduler signals stop.
@@ -532,6 +654,7 @@ class LitModule(L.LightningModule):
             batch_idx: int
                 Batch index.
         """
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, SPLIT_VAL_DURING_FIT)
         pred = self(batch)
         target = batch.y
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
@@ -551,6 +674,7 @@ class LitModule(L.LightningModule):
         return: torch.Tensor
             Model prediction.
         """
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, SPLIT_PREDICT)
         return self(batch)
 
     def on_validation_epoch_end(self):
@@ -569,25 +693,26 @@ class LitModule(L.LightningModule):
         if not self.enable_rollout_val or self.validation_dataset is None:
             return
         self._log_wandb_epoch_marker(commit=False)
-        # 1. Collect all (for each traj) final rollout MAE error on position (mean over nodes*coords), then pool
-        # across trajectories weighted by numel so the scalar matches one global mean over all nodes.
-        all_final_roll_err_pos = []
+        # 1. Collect all-step rollout position MAE for each trajectory, then pool
+        # across trajectories weighted by element count so the scalar matches one global mean.
+        all_rollout_pos_mae = []
         weighted_sum, weight_total = 0.0, 0
         for traj_idx in range(self.validation_dataset.num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx)
-            _, _, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
-            all_final_roll_err_pos.append(final_roll_err_pos)
-            weighted_sum += final_roll_err_pos * n_pos
+            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
+            _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999,
+                                                             rollout_online_tag=SPLIT_ROLLOUT_VAL, traj_idx=traj_idx)
+            all_rollout_pos_mae.append(rollout_pos_mae)
+            weighted_sum += rollout_pos_mae * n_pos
             weight_total += n_pos
-        # 2. Node-weighted mean across trajectories
-        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
+        # 2. Element-weighted mean across trajectories
+        avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
+        self.rollout_all_step_error = avg_rollout_pos_mae
+        avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
         # Rank zero only
-        self.log("val/final_roll_err_pos", avg_final_roll_err_pos_tensor, prog_bar=True,
+        self.log("val/rollout_pos_mae", avg_rollout_pos_mae_tensor, prog_bar=True,
                  logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
 
-    def _get_trajectory_loader(self, dataset, traj_idx):
+    def _get_trajectory_loader(self, dataset, traj_idx, max_timesteps):
         """
         Creates a DataLoader for a single trajectory by slicing the dataset. Used for all rollouts operations,
         since I cannot use "batches" to execute evaluation in parallel due to the sequential nature of autoregressive
@@ -599,14 +724,36 @@ class LitModule(L.LightningModule):
                 Dataset with trajectory_boundaries.
             traj_idx: int
                 Index of the trajectory to extract.
+            max_timesteps: int or None
+                Optional maximum number of timesteps kept from the trajectory.
         return: DataLoader
             DataLoader yielding graphs for the single trajectory in order.
         """
         start, end = dataset.trajectory_boundaries[traj_idx]
-        subset = Subset(dataset, range(start, end))
+        if max_timesteps is not None:
+            capped_end = min(end, start + int(max_timesteps))
+        else:
+            capped_end = end
+        subset = Subset(dataset, range(start, capped_end))
         dataloader_traj = DataLoader(subset, batch_size=self.rollout_batch_size, shuffle=False,
                                      num_workers=self.rollout_num_workers, pin_memory=self.pin_memory)
         return dataloader_traj
+
+    def _rollout_steps_for_trajectory(self, traj_idx):
+        """
+        Return rollout horizon for one trajectory in final evaluation.
+
+        Args:
+            traj_idx: int
+                Index of the trajectory.
+        return: int
+            Maximum rollout length for the trajectory.
+        """
+        selected = (self.selected_test_trajectories if self.eval_split_name == "test"
+                    else self.selected_validation_trajectories)
+        if traj_idx in selected:
+            return int(self.selected_eval_rollout_limit)
+        return 999999
 
 
     #################################################################################################################
@@ -624,6 +771,8 @@ class LitModule(L.LightningModule):
             batch_idx: int
                 Batch index.
         """
+        split_code = SPLIT_VAL_FINAL if self.eval_split_name == "validation" else SPLIT_TEST_FINAL
+        batch = self._with_online_random_edges_eval_step(batch, batch_idx, split_code)
         pred = self(batch)
         target = batch.y
         # Helper to get prefix
@@ -649,38 +798,55 @@ class LitModule(L.LightningModule):
         # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
         per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
         # 2. Run rollout for every trajectory, collect results, and then log
-        all_true_rollouts, all_pred_rollouts, all_final_roll_err_pos = {}, {}, []
+        all_true_rollouts, all_pred_rollouts, all_rollout_pos_mae, all_rollout_volume_mae = {}, {}, [], []
         num_trajectories = self.test_dataset.num_trajectories
         # FIXME: add pbar
         weighted_sum, weight_total = 0.0, 0
+        volume_weighted_sum, volume_weight_total = 0.0, 0
         for traj_idx in range(num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx)
-            true_rollout, pred_rollout, final_roll_err_pos, n_pos = self._run_rollout(traj_loader)
+            if self.eval_split_name == "validation":
+                rollout_steps = 999999
+            else:
+                rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
+            max_timesteps = rollout_steps if rollout_steps != 999999 else None
+            traj_loader = self._get_trajectory_loader(self.test_dataset, traj_idx, max_timesteps=max_timesteps)
+            rollout_tag = SPLIT_ROLLOUT_VAL if self.eval_split_name == "validation" else SPLIT_ROLLOUT_TEST
+            true_rollout, pred_rollout, rollout_pos_mae, n_pos = self._run_rollout(
+                traj_loader, rollout_steps=rollout_steps, rollout_online_tag=rollout_tag, traj_idx=traj_idx
+            )
+            volume_mae, n_volume = rollout_volume_mae(true_rollout, pred_rollout)
             all_true_rollouts[traj_idx] = true_rollout
             all_pred_rollouts[traj_idx] = pred_rollout
-            all_final_roll_err_pos.append(final_roll_err_pos)
-            weighted_sum += final_roll_err_pos * n_pos
+            all_rollout_pos_mae.append(rollout_pos_mae)
+            all_rollout_volume_mae.append(volume_mae)
+            weighted_sum += rollout_pos_mae * n_pos
             weight_total += n_pos
-        # --- Node-weighted mean of final-step position MAE across all trajectories
-        avg_final_roll_err_pos = weighted_sum / weight_total if weight_total else 0.0
-        avg_final_roll_err_pos_tensor = torch.tensor(avg_final_roll_err_pos, device=self.device)
-        self.rollout_all_step_error = avg_final_roll_err_pos
-        # --- Log to wandb rollout info (position only) (media will be logged later)
-        # FIXME: log also volume
+            volume_weighted_sum += volume_mae * n_volume
+            volume_weight_total += n_volume
+        # --- Element-weighted mean of all-step position MAE across all trajectories
+        avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
+        avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
+        avg_rollout_volume_mae = volume_weighted_sum / volume_weight_total if volume_weight_total else 0.0
+        avg_rollout_volume_mae_tensor = torch.tensor(avg_rollout_volume_mae, device=self.device)
+        self.rollout_all_step_error = avg_rollout_pos_mae
+        # --- Log rollout metrics (media will be logged later)
         wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
-        self.log(name=f"{wb_prefix}/final_roll_err_pos", value=avg_final_roll_err_pos_tensor,
+        self.log(name=f"{wb_prefix}/rollout_pos_mae", value=avg_rollout_pos_mae_tensor,
                  prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        self.log(name=f"{wb_prefix}/rollout_volume_mae", value=avg_rollout_volume_mae_tensor,
+                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        if self.eval_split_name == "validation":
+            self.log(name="final_validation/rollout_pos_mae_all_trajectories", value=avg_rollout_pos_mae_tensor,
+                     prog_bar=False, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
         if not self.log_test_media: # If not logging, skip the rest
             return
-        # 3. Compute final volumes from rollout
-        final_volumes_true, final_volumes_pred = compute_final_volumes(all_true_rollouts, all_pred_rollouts)
         selected = (self.selected_test_trajectories if self.eval_split_name == "test"
                     else self.selected_validation_trajectories)
         # 4. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
-        overall_plot_paths = overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                                          final_volumes_true, final_volumes_pred, overall_output_dir,
+        overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                          all_rollout_volume_mae, overall_output_dir,
                                           self.eval_split_name, selected)
         # 5. Generate in-depth plots for selected trajectories only
         per_traj_paths = {}
@@ -688,11 +854,14 @@ class LitModule(L.LightningModule):
             if traj_idx >= num_trajectories:
                 print(f"\tWarning: selected traj{traj_idx} out of range (only {num_trajectories} trajectories).")
                 continue
-            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(all_true_rollouts[traj_idx],
-                                                                       all_pred_rollouts[traj_idx], traj_idx)
-        # 6. Single wandb logging call
-        log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
-                            self._has_wandb_logger(), self._current_wandb_epoch())
+            true_rollout_for_plot = all_true_rollouts[traj_idx][:self.selected_eval_rollout_limit]
+            pred_rollout_for_plot = all_pred_rollouts[traj_idx][:self.selected_eval_rollout_limit]
+            per_traj_paths[traj_idx] = self._log_plot_roll_single_traj(true_rollout_for_plot,
+                                                                       pred_rollout_for_plot, traj_idx)
+        # 6. Single wandb logging call (guard: logger may be False when use_wandb=false; do not touch .experiment)
+        if self._has_wandb_logger():
+            log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
+                                True, self._current_wandb_epoch())
 
     def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
         """
@@ -718,31 +887,62 @@ class LitModule(L.LightningModule):
                    f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
         return metrics
 
-    def _run_rollout(self, traj_loader):
+    def _run_rollout(self, traj_loader, rollout_steps, rollout_online_tag, traj_idx):
         """
         Executes a full autoregressive rollout over a single-trajectory loader and returns ground-truth/predicted
-        trajectories plus final-step MAE, i.e. mean over all nodes POSITION ONLY of final-timestep MAE error.
+        trajectories plus position MAE over all rollout timesteps and nodes.
 
         Args:
             traj_loader: DataLoader
                 Single-trajectory dataloader used for rollout evaluation.
+            rollout_steps: int
+                Maximum number of rollout steps to run.
+            rollout_online_tag: int
+                Seed namespace for deterministic online edge augmentation during rollout.
+            traj_idx: int
+                Trajectory index folded into rollout augmentation seeds.
             return: (list, list, float, int)
-                Ground-truth rollout, predicted rollout, final-step rollout MAE (mean abs over positions),
-                and numel of final position tensor for cross-trajectory weighting.
+                Ground-truth rollout, predicted rollout, all-step rollout position MAE,
+                and number of position elements used for cross-trajectory weighting.
         """
         # Stats are already registered as submodules with buffers, so they auto-move to correct device
         true_rollout, pred_rollout = do_rollout(model=self.model, test_loader=traj_loader, node_stats=self.node_stats,
                                                 edge_stats=self.edge_stats, target_stats=self.target_stats, dt=self.dt,
-                                                device=self.device, skip_first_num=0, rollout_steps=999999,
+                                                device=self.device, skip_first_num=0, rollout_steps=rollout_steps,
                                                 normalizer=self.used_dataset_normalizer,
                                                 preprocess_cfg=self.preprocess_cfg,
                                                 time_discretizer=self.time_discretizer,
-                                                exp_mises=self.exp_mises)
-        # mean over all nodes POSITION ONLY of final-timestep MAE error during rollout
-        diff = true_rollout[-1].x_pos_t - pred_rollout[-1].x_pos_t
-        final_roll_err_pos = torch.mean(torch.abs(diff)).item()
-        n_pos = int(diff.numel())
-        return true_rollout, pred_rollout, final_roll_err_pos, n_pos
+                                                exp_mises=self.exp_mises,
+                                                random_online=self.random_online,
+                                                rollout_seed_base=self.train_seed,
+                                                rollout_online_tag=rollout_online_tag,
+                                                traj_idx=traj_idx)
+        rollout_pos_mae, n_pos = self._rollout_position_mae(true_rollout, pred_rollout)
+        return true_rollout, pred_rollout, rollout_pos_mae, n_pos
+
+    def _rollout_position_mae(self, true_rollout, pred_rollout):
+        """
+        Computes absolute position MAE over all timesteps, nodes, and coordinates for one trajectory.
+
+        Args:
+            true_rollout: list
+                Ground-truth rollout graphs.
+            pred_rollout: list
+                Predicted rollout graphs.
+        return: (float, int)
+            Mean absolute position error and number of finite position elements used.
+        """
+        err_sum = 0.0
+        err_count = 0
+        for true_graph, pred_graph in zip(true_rollout, pred_rollout):
+            diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)
+            finite = diff[torch.isfinite(diff)]
+            err_count += int(finite.numel())
+            if finite.numel() > 0:
+                err_sum += float(torch.sum(finite).detach().item())
+        if err_count == 0:
+            return 0.0, 0
+        return err_sum / err_count, err_count
 
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
@@ -759,11 +959,14 @@ class LitModule(L.LightningModule):
         self.eval()
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
-                traj_loader = self._get_trajectory_loader(dataset, traj_idx)
+                rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
+                max_timesteps = rollout_steps if rollout_steps != 999999 else None
+                traj_loader = self._get_trajectory_loader(dataset, traj_idx, max_timesteps=max_timesteps)
                 acc_sum, acc_cnt = 0.0, 0.0
                 stress_sum, stress_cnt = 0.0, 0.0
-                for batch in traj_loader:
+                for inner_batch_idx, batch in enumerate(traj_loader):
                     batch = batch.to(self.device)
+                    batch = self._with_online_random_edges_noroll(batch, traj_idx, inner_batch_idx)
                     pred = self(batch)
                     target = batch.y
                     pred_acc = pred[:, 0:3].contiguous()

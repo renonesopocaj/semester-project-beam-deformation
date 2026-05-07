@@ -1,0 +1,30 @@
+# Root training config used only by `src/gnn/hyperparam_opt.py` (`config_name=train_default_hyperopt`).
+# Same shape as `train.yaml`: set every `defaults` entry and top-level field here; sweep overrides still apply on top.
+
+defaults:
+  - computational: in_memory_slurm_1gpu_littlebatch
+  - model: mgn_extradeep_midmsg
+  - training: longer # contains .total_epochs
+  - noise: no_noise
+  - loss: default
+  - validation: default
+  - data: default
+  - lr_scheduler: plateau_long
+  - residuals: default
+  - devices: one_gpu
+  - _self_
+
+seed: 42
+use_wandb: true
+initial_lr: 8e-4
+optimizer: adam
+protect_from_oom: True # disables cuda reduce overhead which causes oom errors
+
+hydra:
+  run:
+    dir: hydra/outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false

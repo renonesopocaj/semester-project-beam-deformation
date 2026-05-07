@@ -18,6 +18,7 @@ from lightning.pytorch.profilers import SimpleProfiler
 import matplotlib
 import matplotlib.pyplot as plt
 import torch
+import wandb
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger
@@ -44,6 +45,7 @@ from src.gnn.training.optimizers import optimizer_factory
 matplotlib.use("Agg")
 plt.ioff()
 THETA_MAX_MARGIN = 1e-6
+MAX_SELECTED_TIMESTEPS = 400
 
 
 def _load_traj_metadata(split_dir, extra_info_dir):
@@ -83,6 +85,22 @@ def _load_traj_metadata(split_dir, extra_info_dir):
     for key_str, ood_list in ood_raw.items():
         by_idx[int(key_str)] = {"ood_features": ood_list}
     return by_idx
+
+
+def _selected_eval_rollout_limit(selected_trajs, fallback_limit):
+    """
+    Resolve the selected trajectory rollout length used in final evaluation and cap it to MAX_SELECTED_TIMESTEPS.
+
+    Args:
+        selected_trajs: dict
+            Parsed selected_trajectories.json.
+        fallback_limit: int
+            Fallback value when selected trajectory step information is not present.
+    return: int
+        Max number of rollout steps for selected trajectories in final evaluation.
+    """
+    raw_steps = selected_trajs.get("selected_num_steps", selected_trajs.get("num_steps", fallback_limit))
+    return min(int(raw_steps), MAX_SELECTED_TIMESTEPS)
 
 
 def resolve_trainer_precision(accelerator, configured_precision):
@@ -150,6 +168,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
                             dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
                             activation_checkpointing=train_cfg.activation_checkpointing)
+
     elif train_cfg.model_name == "clofnet":
         _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
         act_name = str(train_cfg.clofnet_activation).lower()
@@ -225,6 +244,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
+
 def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     """
     Args:
@@ -256,6 +276,8 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     if "curvature" in train_cfg.residual_list:
         theta_max = load_theta_max(train_cfg.train_dir) + THETA_MAX_MARGIN
         print(f"\tLoaded theta_max threshold = {theta_max}")
+    if "volume" in train_cfg.residual_list:
+        print(f"\tVolume residual enabled with weight = {train_cfg.volume_loss_weight}")
 
     # ========================= Dataset stuff ===================
     validation_dataset = None
@@ -342,8 +364,16 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # One important detail for your snippet: in Lightning, WandbLogger(log_model=True) or
         # WandbLogger(log_model="all") cannot be combined with offline=True; that configuration raises a
         # MisconfigurationException.
-        logger = WandbLogger(project="beam_deformation", name=training_id, save_dir=str(lightning_module.model_dir),
-                             log_model=False, offline=True, config=cfg_for_wandb(train_dict))
+        wb_run_display_name = training_id if train_cfg.wandb_run_name is None else train_cfg.wandb_run_name
+        wb_offline_flag = train_cfg.wandb_offline
+        if train_cfg.wandb_group is not None:
+            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name, group=train_cfg.wandb_group,
+                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
+                                 config=cfg_for_wandb(train_dict))
+        else:
+            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
+                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
+                                 config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
@@ -425,11 +455,23 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     fit_trainer.fit(model=lightning_module, train_dataloaders=train_dataloader,
                     val_dataloaders=validation_dataloader, ckpt_path=train_cfg.resume_from)
 
-    return lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader
+    return (lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset,
+            validation_dataloader)
 
 
-@hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
-def main(cfg):
+def run_train_pipeline(cfg):
+    """
+    Same flow as CLI main(...) but returns metrics when called from hyperparameter tooling (Optuna).
+
+    Args:
+        cfg: omegaconf.DictConfig
+
+    return: tuple
+        (best_val_relative_mae, final_metrics_plain_dict, wandb_run_id)
+        First element is checkpoint-best val/overall_relative_mae from ModelCheckpoint;
+        Second maps keys like final_validation/acc_all_rel_mae ... to floats after val+test phases;
+        Third is W&B run id when use_wandb else None.
+    """
     # Print train cfg
     print("\n"+ "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
 
@@ -455,10 +497,14 @@ def main(cfg):
         train_cfg.selected_validation_trajectories = selected_trajs.get("selected_validation_trajectories", [])
     if train_cfg.selected_test_trajectories is None:
         train_cfg.selected_test_trajectories = selected_trajs.get("selected_test_trajectories", [])
+    train_cfg.selected_eval_rollout_limit = _selected_eval_rollout_limit(selected_trajs,
+                                                                         fallback_limit=MAX_SELECTED_TIMESTEPS)
+
     if train_cfg.selected_validation_trajectories:
         print(f"Selected validation trajectories: {train_cfg.selected_validation_trajectories}")
     if train_cfg.selected_test_trajectories:
         print(f"Selected test trajectories: {train_cfg.selected_test_trajectories}")
+    print(f"Selected trajectory final-eval rollout limit: {train_cfg.selected_eval_rollout_limit}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not torch.cuda.is_available() and train_cfg.training_type == "slurm":
@@ -491,6 +537,37 @@ def main(cfg):
     lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
                                        traj_metadata=test_traj_metadata)
     fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
+
+    best_val_relative_mae = float("nan")
+    if train_cfg.enable_val:
+        for chk in fit_trainer.checkpoint_callbacks:
+            monitored = getattr(chk, "monitor", "")
+            if monitored == "val/overall_relative_mae":
+                best_score_tensor = chk.best_model_score
+                if best_score_tensor is not None:
+                    best_val_relative_mae = float(best_score_tensor.detach().item())
+                break
+
+    final_metrics_plain = {}
+    for key, value in fit_trainer.callback_metrics.items():
+        if not (str(key).startswith("final_validation/") or str(key).startswith("final_test/")):
+            continue
+        if hasattr(value, "detach"):
+            final_metrics_plain[str(key)] = float(value.detach().item())
+        else:
+            final_metrics_plain[str(key)] = float(value)
+
+    wandb_run_id = None
+    if train_cfg.use_wandb:
+        wandb_run_id = str(lightning_module.logger.experiment.id)
+        wandb.finish()
+
+    return best_val_relative_mae, final_metrics_plain, wandb_run_id
+
+
+@hydra.main(version_base=None, config_path="../../conf/train", config_name="train")
+def main(cfg):
+    run_train_pipeline(cfg)
 
 if __name__ == "__main__":
     main()

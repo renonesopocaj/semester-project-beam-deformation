@@ -9,6 +9,7 @@ Residuals: angle_residual, volume TODO, energy???
 import torch
 import torch.nn.functional as F
 from src.gnn.mesh_numerical_helpers.compute_angle import compute_surface_angles_torch
+from src.gnn.mesh_numerical_helpers.compute_volume import batched_total_absolute_volumes
 
 EPS = 1e-6
 TARGET_ACC_DIM = 3
@@ -34,10 +35,41 @@ def loss_factory(loss_type):
         return F.huber_loss
     raise NotImplementedError("Unsupported loss function")
 
-def volume_loss(pred, target):
-    # FIXME: implement volume loss/residual: the difference between the "rest" and "non-rest" volume (scalars)
-    #       has to be minimized
-    return
+def volume_residual(pred, target, batch, target_stats, dt, time_discretizer, loss_fn):
+    """
+    Computes residual between true and predicted next-step mesh volume for each graph in batch.
+
+    Args:
+        pred: torch.Tensor
+            Model prediction with shape `(num_nodes, 4)`.
+        target: torch.Tensor
+            Ground-truth target with shape `(num_nodes, 4)`.
+        batch: Data
+            Batched PyG graph containing x_pos_t, x_vel_t and x_element_connectivity.
+        target_stats: Stats or StatsModule
+            Target normalization statistics.
+        dt: float
+            Simulation time step.
+        time_discretizer: TimeDiscretizer
+            Time integration strategy used for position reconstruction.
+        loss_fn: callable
+            Element-wise scalar loss (mse/mae/huber) used for volume matching.
+    return: torch.Tensor
+        Scalar differentiable residual on per-graph total volume.
+    """
+    if not hasattr(batch, "x_element_connectivity"):
+        raise ValueError("Volume residual requested but batch has no x_element_connectivity. "
+                         "Regenerate preprocessed training data with tetra connectivity enabled.")
+    if not hasattr(batch, "_slice_dict") or "x_element_connectivity" not in batch._slice_dict:
+        raise ValueError("Volume residual requires batched tetra slices in batch._slice_dict['x_element_connectivity'].")
+    pred_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer)
+    true_next_positions = _reconstruct_predicted_next_positions(target, batch, target_stats, dt, time_discretizer)
+    tet_slices = batch._slice_dict["x_element_connectivity"].to(device=pred.device)
+    pred_total_volume = batched_total_absolute_volumes(pred_next_positions, batch.x_element_connectivity,
+                                                       batch.ptr, tet_slices)
+    true_total_volume = batched_total_absolute_volumes(true_next_positions, batch.x_element_connectivity,
+                                                       batch.ptr, tet_slices)
+    return loss_fn(pred_total_volume, true_total_volume)
 
 
 def angle_residual(pred, batch, target_stats, dt, theta_max, time_discretizer):

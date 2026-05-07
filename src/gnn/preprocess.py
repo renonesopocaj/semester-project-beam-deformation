@@ -17,6 +17,8 @@ from src.gnn.preprocessing.build_features import (probe_feature_layout)
 from src.gnn.preprocessing.preprocessor import TrainPreprocessor, ValPreprocessor
 from pathlib import Path
 
+MAX_SELECTED_TIMESTEPS = 400
+
 
 def load_selected_trajectories(extra_info_dir):
     """
@@ -89,7 +91,8 @@ def selected_limit_from_json(selected_trajs, default_limit):
     return: int
         timestep limit for selected trajectories
     """
-    timestep_limit = int(selected_trajs.get("selected_num_steps", selected_trajs["num_steps"]))
+    raw_limit = selected_trajs.get("selected_num_steps", selected_trajs.get("num_steps", default_limit))
+    timestep_limit = min(int(raw_limit), MAX_SELECTED_TIMESTEPS)
     return timestep_limit
 
 def _copy_trajectory_params_json(raw_graphs_dir, processed_split_dir):

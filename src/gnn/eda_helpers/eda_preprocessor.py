@@ -29,7 +29,7 @@ from src.gnn.preprocessing.preprocessor import sort_filenames_by_traj_params
 from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import Stats
-from src.gnn.validation.plot_rollout import make_ground_truth_gif
+from src.gnn.plots.plot_rollout import make_ground_truth_gif
 
 EPS = 1e-6
 

@@ -276,6 +276,7 @@ class _NoisedMixin:
                     y=new_y, # target
                     # Other features helpers for rollout or others
                     edge_index=data.edge_index,
+                    x_element_connectivity=data.x_element_connectivity,
                     y_acc_t=data.y_acc_t, # kept the same because it should be non-noised ground truth
                     x_pos_tm1_prev=x_pos_tm1_prev,
                     x_pos_t=x_noised,

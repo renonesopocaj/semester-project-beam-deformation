@@ -112,7 +112,7 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
     experiment.define_metric("val/acc_y_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
     experiment.define_metric("val/acc_z_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
     experiment.define_metric("val/stress_rel_mae", summary="min")
-    experiment.define_metric("val/final_roll_err_pos", summary="min")
+    experiment.define_metric("val/rollout_pos_mae", summary="min")
 
     # Final evaluation metrics (trainer.test on val or test)
     for prefix in ["final_test", "final_validation"]:
@@ -120,4 +120,6 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
         experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
         experiment.define_metric(f"{prefix}/acc_all_rel_mae", summary="min")
         experiment.define_metric(f"{prefix}/stress_rel_mae", summary="min")
-        experiment.define_metric(f"{prefix}/final_roll_err_pos", summary="min")
+        experiment.define_metric(f"{prefix}/rollout_pos_mae", summary="min")
+        experiment.define_metric(f"{prefix}/rollout_volume_mae", summary="min")
+    experiment.define_metric("final_validation/rollout_pos_mae_all_trajectories", summary="min")

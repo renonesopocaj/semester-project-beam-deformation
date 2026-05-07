@@ -1,0 +1,12 @@
+model_name: "MGN"
+num_messages: 10
+latent_dim: 512
+num_layers_graphnetblock: 2
+layer_norm_enable_encoder: True
+layer_norm_enable_processor: True
+layer_norm_enable_decoder: False
+num_layers_heads: 2
+num_layers_encoder: 2
+dropout_head: 0.05
+dropout_encoder: 0.05
+dropout_processor: 0.0

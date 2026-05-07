@@ -18,27 +18,25 @@ _COLOR_STRIPE_A = "gold"
 _COLOR_STRIPE_B = "royalblue"
 
 
-def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
-                 final_volumes_true, final_volumes_pred, output_dir, split, selected_trajectory_indices):
+def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices):
     """
     Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
-    - all_final_roll_err_pos
+    - all_rollout_pos_mae
     - per_traj_acc_rel_mae
     - per_traj_stress_rel_mae
-    - (final_volumes_true, final_volumes_pred) err
+    - all_rollout_volume_mae
     Main access point called by trainer.
 
     Args:
-        all_final_roll_err_pos: list[float]
-            Per-trajectory final rollout position error.
+        all_rollout_pos_mae: list[float]
+            Per-trajectory rollout position MAE averaged over all timesteps, nodes, and coordinates.
         per_traj_acc_rel_mae: list[float]
             Per-trajectory acceleration relative MAE (no rollout).
         per_traj_stress_rel_mae: list[float]
             Per-trajectory stress relative MAE (no rollout).
-        final_volumes_true: list[float]
-            Per-trajectory ground-truth final volume.
-        final_volumes_pred: list[float]
-            Per-trajectory predicted final volume.
+        all_rollout_volume_mae: list[float]
+            Per-trajectory rollout volume MAE averaged over all timesteps.
         output_dir: Path
             Directory where summary plots are saved.
         split: str
@@ -53,17 +51,17 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
 
     paths = {"images": {}, "videos": {}}  # Collect paths; videos key unused here but matches trainer contract.
 
-    # 1) Final rollout position error per trajectory
-    p1 = output_dir / "final_roll_err_pos_per_traj.png"  # Output file for sorted bar chart of rollout pos error.
+    # 1) Rollout position error per trajectory
+    p1 = output_dir / "rollout_pos_mae_per_traj.png"  # Output file for sorted bar chart of rollout pos error.
     _plot_sorted_per_traj_histogram(
-        np.asarray(all_final_roll_err_pos, dtype=float),
-        ylabel="Final Rollout Position MAE",
-        title=f"Final Rollout Position MAE Error per Trajectory averaged over all nodes [{split}]",
+        np.asarray(all_rollout_pos_mae, dtype=float),
+        ylabel="Rollout Position MAE",
+        title=f"Rollout Position MAE per Trajectory averaged over all timesteps and nodes [{split}]",
         output_path=p1,
-        x_sort_caption="final rollout position MAE (ascending)",
+        x_sort_caption="rollout position MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["final_roll_err_pos_per_traj"] = p1  # Register path for logging/UI.
+    paths["images"]["rollout_pos_mae_per_traj"] = p1  # Register path for logging/UI.
 
     # 2) Acceleration relative MAE per trajectory (no rollout)
     p2 = output_dir / "acc_rel_mae_noroll_per_traj.png"
@@ -89,20 +87,17 @@ def overall_plot(all_final_roll_err_pos, per_traj_acc_rel_mae, per_traj_stress_r
     )
     paths["images"]["stress_rel_mae_noroll_per_traj"] = p3  # Store path.
 
-    # 4) Absolute final volume error |pred - true| per trajectory
-    vol_true = np.asarray(final_volumes_true, dtype=float)
-    vol_pred = np.asarray(final_volumes_pred, dtype=float)
-    volume_abs_err = np.abs(vol_pred - vol_true)
-    p4 = output_dir / "final_volume_per_traj.png"
+    # 4) Absolute rollout volume MAE per trajectory
+    p4 = output_dir / "rollout_volume_mae_per_traj.png"
     _plot_sorted_per_traj_histogram(
-        volume_abs_err,
-        ylabel="Absolute volume error",
-        title=f"Final Rollout Absolute Volume Error per Trajectory [{split}]",
+        np.asarray(all_rollout_volume_mae, dtype=float),
+        ylabel="Rollout Volume MAE",
+        title=f"Rollout Volume MAE per Trajectory averaged over all timesteps [{split}]",
         output_path=p4,
-        x_sort_caption="absolute volume error (ascending)",
+        x_sort_caption="rollout volume MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["final_volume_per_traj"] = p4  # Register fourth summary figure.
+    paths["images"]["rollout_volume_mae_per_traj"] = p4  # Register fourth summary figure.
 
     return paths  # Return map of artifact names to paths (images only populated here).
 
