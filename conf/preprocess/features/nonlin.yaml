@@ -6,7 +6,7 @@ mises_log: true
 enable_absolute_pos: false # with this off, only displacement is left
 enable_past_history: true # controls if t-1 features are given, for displacement u and abs position x and stretch ratio
 # Node
-enable_node_norms: false
+enable_node_norms: false # does not report norms for absolute positions x and rest_pos
 # Edge linear and vectorial
 enable_edge_velocity: false
 enable_force_edge: false

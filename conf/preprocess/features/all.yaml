@@ -5,7 +5,7 @@ mises_log: true
 enable_absolute_pos: true
 enable_past_history: true
 # Node
-enable_node_norms: true
+enable_node_norms: true # does not report norms for absolute positions x and rest_pos
 # Edge
 enable_edge_velocity: true
 enable_force_edge: true
