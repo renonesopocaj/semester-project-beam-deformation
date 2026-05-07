@@ -3,7 +3,7 @@
 # dataset_dir must match preprocess output:
 # save_dir / create_dir_name(...) / dataset_size — for defaults (z_isotropic, features: all, second_order_central,
 # mises_log) see preprocess create_dir_name.
-dataset_dir: "/scratch/izar/senoner/dataset/processed/single_direction_beam/z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot/large"
+dataset_dir: "/scratch/izar/senoner/dataset/processed/single_longer/z_isotr_centr_all/medium"
 train_dir: ${data.dataset_dir}/train
 val_dir: ${data.dataset_dir}/val
 test_dir: ${data.dataset_dir}/test

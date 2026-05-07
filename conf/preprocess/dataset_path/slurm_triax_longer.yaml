@@ -1,0 +1,7 @@
+# Absolute scratch paths (Izar). Requires selected_trajectories.json under extra_info_dir (same as raw extra_info).
+# Note repo is in /home instead
+dataset_type: triax_longer
+base_dir: dataset
+raw_data_dir: /scratch/izar/senoner/${dataset_path.base_dir}/raw/raw/${dataset_path.dataset_type}/${size.dataset_size}
+save_dir: /scratch/izar/senoner/${dataset_path.base_dir}/processed/${dataset_path.dataset_type}
+extra_info_dir: ${dataset_path.raw_data_dir}/extra_info
