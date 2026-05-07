@@ -36,13 +36,13 @@ def _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_pas
         feat_list.append(torch.norm(u, dim=1, keepdim=True))
         feat_list.append(torch.norm(node_force, dim=1, keepdim=True))
         feat_list.append(torch.norm(v, dim=1, keepdim=True))
-        if enable_absolute_pos:
-            feat_list.append(torch.norm(x, dim=1, keepdim=True))
-            feat_list.append(torch.norm(rest_pos, dim=1, keepdim=True))
+        # if enable_absolute_pos:
+            # feat_list.append(torch.norm(x, dim=1, keepdim=True))
+            # feat_list.append(torch.norm(rest_pos, dim=1, keepdim=True))
         if enable_past_history:
             feat_list.append(torch.norm(u_tm1, dim=1, keepdim=True))
-            if enable_absolute_pos:
-                feat_list.append(torch.norm(x_tm1_prev, dim=1, keepdim=True))
+            # if enable_absolute_pos:
+                # feat_list.append(torch.norm(x_tm1_prev, dim=1, keepdim=True))
     node_feat_tensor = torch.cat(feat_list, dim=1)
     return node_feat_tensor, split_idx_node
 

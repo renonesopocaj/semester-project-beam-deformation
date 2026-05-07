@@ -1,11 +1,11 @@
-name_features: "edges_w_norms"
+name_features: "noabspos_yesedge"
 # Processing target von mises
 mises_log: true
 # Both edge and node
-enable_absolute_pos: true # needs also additional enabler for edges
+enable_absolute_pos: false # needs also additional enabler for edges
 enable_past_history: true
 # Node
-enable_node_norms: false
+enable_node_norms: false # does not report norms for absolute positions x and rest_pos
 # Edge
 enable_edge_velocity: true
 enable_force_edge: true
