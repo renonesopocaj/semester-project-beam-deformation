@@ -1,5 +1,5 @@
 name_features: "nonlin"
-# non_linear.yaml Idea: all linear relationships quantity_i - quantity_j are turned off and left to the message passing
+# nonlin.yaml Idea: all linear relationships quantity_i - quantity_j are turned off and left to the message passing
 # Processing target von mises
 mises_log: true
 # Both edge and node

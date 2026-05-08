@@ -1,4 +1,5 @@
 name_features: "all"
+# all.yaml: all features
 # Processing target von mises
 mises_log: true
 # Both edge and node
