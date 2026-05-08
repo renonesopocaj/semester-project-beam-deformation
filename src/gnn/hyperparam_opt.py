@@ -26,6 +26,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 from src.gnn.train import run_train_pipeline
+from src.gnn.training.pareto_metric_config import resolve_pareto_metric_keys
 matplotlib.use("Agg")
 plt.ioff()
 
@@ -115,8 +116,11 @@ class SweepRunner:
                 % train_compose_path
             )
         self.optimization_metric_key = str(parent_cfg.optimization_metric)
-        self.pareto_x_key = str(parent_cfg.pareto_x_metric)
-        self.pareto_y_key = str(parent_cfg.pareto_y_metric)
+        self.pareto_x_key, self.pareto_y_key = resolve_pareto_metric_keys(
+            OmegaConf.select(parent_cfg, "pareto_metric_source"),
+            OmegaConf.select(parent_cfg, "pareto_x_metric"),
+            OmegaConf.select(parent_cfg, "pareto_y_metric"),
+        )
         wandb_proj = str(OmegaConf.select(parent_cfg, "wandb_project"))
         self._wandb_project = wandb_proj
         self._wandb_offline_raw = OmegaConf.select(parent_cfg, "wandb_offline")

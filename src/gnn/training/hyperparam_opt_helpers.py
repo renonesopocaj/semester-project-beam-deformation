@@ -1,5 +1,5 @@
 from pathlib import Path
-import wandb as wb_sdk
+import math
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use("Agg")
@@ -21,18 +21,46 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
     """
     xs = []
     ys = []
+    missing_pair_count = 0
+    non_finite_count = 0
     ri = 0
     while ri < len(records_list):
         rec_item = records_list[ri]
-        fm = rec_item["final_metrics"]
-        xa = fm.get(pareto_x_key, float("nan"))
-        ya = fm.get(pareto_y_key, float("nan"))
-        xs.append(float(xa))
-        ys.append(float(ya))
+        fm = rec_item.get("final_metrics", {})
+        xa = fm.get(pareto_x_key)
+        ya = fm.get(pareto_y_key)
+        if xa is None or ya is None:
+            missing_pair_count = missing_pair_count + 1
+            ri = ri + 1
+            continue
+        try:
+            xf = float(xa)
+            yf = float(ya)
+        except (TypeError, ValueError):
+            non_finite_count = non_finite_count + 1
+            ri = ri + 1
+            continue
+        if (math.isfinite(xf) is False) or (math.isfinite(yf) is False):
+            non_finite_count = non_finite_count + 1
+            ri = ri + 1
+            continue
+        xs.append(xf)
+        ys.append(yf)
         ri = ri + 1
+    print(
+        "Pareto plotting: %d valid points, %d missing-key records, %d non-finite records."
+        % (len(xs), missing_pair_count, non_finite_count)
+    )
     if len(xs) == 0:
         fig_empty, axe = plt.subplots(figsize=(7, 5))
-        axe.text(0.5, 0.5, "no trials to plot", ha="center")
+        diag = (
+            "No valid Pareto points.\n"
+            "Expected keys:\n- %s\n- %s\n"
+            "Missing-key records: %d\nNon-finite records: %d"
+            % (pareto_x_key, pareto_y_key, missing_pair_count, non_finite_count)
+        )
+        axe.text(0.5, 0.5, diag, ha="center", va="center")
+        axe.set_axis_off()
         outp_empty = Path(output_dir) / "pareto.png"
         outp_empty.parent.mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
@@ -111,6 +139,8 @@ def wandb_summary_log_plot(study_name_str, pareto_path, wandb_project, wandb_off
         wandb_offline_flag: bool
             Whether offline mode is preferred.
     """
+    import wandb as wb_sdk
+
     run_name_here = "%s__summary" % study_name_str
     wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
                 offline=wandb_offline_flag)
