@@ -1001,7 +1001,6 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
     gif_path = output_dir / f"{filename_prefix}_beam_comparison.gif"  # Twin-panel von Mises animation path.
     volume_png_path = output_dir / f"{filename_prefix}_volume_change.png"  # Static volume vs time PNG path.
     rollout_error_path = output_dir / f"{filename_prefix}_rollout_error_vs_timestep.png"  # MAE vs timestep PNG path.
-    rollout_pos_volume_error_path = output_dir / f"{filename_prefix}_rollout_pos_volume_error_vs_timestep.png"
 
     # Plots
     _plot_volume_change(pred_rollout, true_rollout, path=volume_png_path, split_name=traj_split_name,
@@ -1010,8 +1009,6 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
                               gif_path=gif_path, fps=4, bbox_only_on_true=False, verbose=False,
                               split_name=traj_split_name, traj_metadata=traj_metadata)  # Side-by-side 3D stress GIF.
     _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, rollout_error_path, split_name=traj_split_name)  # Position MAE curve.
-    _plot_rollout_pos_volume_error_vs_time(true_rollout, pred_rollout, rollout_pos_volume_error_path,
-                                           split_name=traj_split_name, traj_metadata=traj_metadata)
     _plot_scatter_edge_corr(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
                             filename_prefix=filename_prefix, split_name=traj_split_name,
                             traj_metadata=traj_metadata)  # Per-field scatter PNGs.
@@ -1027,7 +1024,6 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
     paths["videos"]["beam_comparison_gif"] = gif_path  # Register main comparison animation.
     paths["images"]["volume_change"] = volume_png_path  # Register volume plot.
     paths["images"]["rollout_error_vs_timestep"] = rollout_error_path  # Register MAE curve.
-    paths["images"]["rollout_pos_volume_error_vs_timestep"] = rollout_pos_volume_error_path
     for field_name, _ in TARGET_FIELDS:
         scatter_path = output_dir / f"{filename_prefix}_{field_name}_prediction_vs_target.png"
         if scatter_path.exists():
