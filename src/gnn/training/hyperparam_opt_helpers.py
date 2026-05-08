@@ -96,6 +96,47 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
     plt.close(fig)
     return out_path_png
 
+def save_sweep_performance_plot(sweep_name, x_labels, y_values, y_metric_name, output_dir):
+    """
+    Args:
+        sweep_name: str
+            Sweep identifier used in title and output filename.
+        x_labels: list of str
+            Labels representing swept value(s) for each option.
+        y_values: list of float
+            Performance values for each option (same order as x_labels).
+        y_metric_name: str
+            Name of the plotted metric for axis labeling.
+        output_dir: Path
+            Directory where plot image is written.
+    return: Path
+            Path to generated sweep plot image.
+    """
+    out_path = Path(output_dir) / ("sweep_%s_overall_mae.png" % sweep_name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if len(x_labels) == 0 or len(y_values) == 0:
+        fig_empty, ax_empty = plt.subplots(figsize=(8, 4.8))
+        ax_empty.text(0.5, 0.5, "No sweep data to plot for %s" % sweep_name, ha="center", va="center")
+        ax_empty.set_axis_off()
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=160)
+        plt.close(fig_empty)
+        return out_path
+    x_idx = list(range(len(x_labels)))
+    fig, ax = plt.subplots(figsize=(max(8, int(len(x_labels) * 0.9)), 4.8))
+    ax.plot(x_idx, y_values, marker="o", linewidth=1.6, alpha=0.95)
+    ax.scatter(x_idx, y_values, s=40, zorder=3)
+    ax.set_xticks(x_idx)
+    ax.set_xticklabels(x_labels, rotation=25, ha="right")
+    ax.set_xlabel("swept value(s)")
+    ax.set_ylabel(y_metric_name)
+    ax.set_title("Sweep performance: %s" % sweep_name)
+    ax.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=170)
+    plt.close(fig)
+    return out_path
+
 def _pareto_non_dominated_minimize(points_xy):
     """
     Args:

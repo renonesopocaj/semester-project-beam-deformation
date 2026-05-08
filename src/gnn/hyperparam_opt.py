@@ -17,7 +17,7 @@ import json
 import math
 from pathlib import Path
 import wandb as wb_sdk
-from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, wandb_summary_log_plot
+from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_sweep_performance_plot, wandb_summary_log_plot
 import matplotlib
 import matplotlib.pyplot as plt
 import optuna
@@ -29,6 +29,29 @@ from src.gnn.train import run_train_pipeline
 from src.gnn.training.pareto_metric_config import resolve_pareto_metric_keys
 matplotlib.use("Agg")
 plt.ioff()
+
+def format_swept_value_label(option_overrides):
+    """
+    Args:
+        option_overrides: list of str
+            Override literals like key=value for the active option.
+    return: str
+            One value label or a tuple-like label when multiple values are swept together.
+    """
+    values = []
+    ix = 0
+    while ix < len(option_overrides):
+        ov = str(option_overrides[ix])
+        if "=" in ov:
+            values.append(ov.split("=", 1)[1])
+        else:
+            values.append(ov)
+        ix = ix + 1
+    if len(values) == 0:
+        return "(no-option-overrides)"
+    if len(values) == 1:
+        return values[0]
+    return "(" + ", ".join(values) + ")"
 
 class SweepOption:
     """
@@ -92,6 +115,7 @@ class SweepRunner:
     sweeps_list: list
     best_so_far_overrides: list
     trial_records: list
+    per_sweep_plot_records: dict
 
     def __init__(self, parent_cfg):
         """
@@ -126,6 +150,8 @@ class SweepRunner:
         self._wandb_offline_raw = OmegaConf.select(parent_cfg, "wandb_offline")
         self.best_so_far_overrides = []
         self.trial_records = []
+        self.per_sweep_plot_records = {}
+        self.output_dir = Path(str(OmegaConf.select(parent_cfg, "output_dir")))
         sweep_nodes = OmegaConf.select(parent_cfg, "sweeps")
         assembled = []
         # FIXME: what is to_container?
@@ -216,6 +242,8 @@ class SweepRunner:
             record = {"study_name": study_name_plain,
                       "sweep_name": sweep_ref.name,
                       "option_label": chosen_option.label,
+                      "swept_value_label": format_swept_value_label(chosen_option.overrides),
+                      "swept_overrides": list(chosen_option.overrides),
                       "full_overrides": merged,
                       "best_val_relative_mae": score_val_mae,
                       "final_metrics": metrics_plain,
@@ -243,6 +271,33 @@ class SweepRunner:
         fun = self.objective_for_sweep(sweep_entity)
         # Run one optuna trial via .optimize
         study_obj.optimize(fun, n_trials=len(sweep_entity.options))
+        # Collect one point per option for the current sweep in config order.
+        option_to_metric = {}
+        tr_i = 0
+        while tr_i < len(study_obj.trials):
+            one_trial = study_obj.trials[tr_i]
+            op_idx = one_trial.params.get("option_idx")
+            if op_idx is not None:
+                option_to_metric[int(op_idx)] = float(one_trial.value)
+            tr_i = tr_i + 1
+        x_labels = []
+        y_vals = []
+        oi = 0
+        while oi < len(sweep_entity.options):
+            one_option = sweep_entity.options[oi]
+            if oi in option_to_metric:
+                x_labels.append(format_swept_value_label(one_option.overrides))
+                y_vals.append(option_to_metric[oi])
+            oi = oi + 1
+        sweep_plot_path = save_sweep_performance_plot(
+            sweep_entity.name,
+            x_labels,
+            y_vals,
+            self.optimization_metric_key,
+            self.output_dir,
+        )
+        self.per_sweep_plot_records[sweep_entity.name] = str(sweep_plot_path)
+        print("Saved sweep performance plot to %s" % sweep_plot_path)
         best_trial = study_obj.best_trial
         extra = best_trial.user_attrs["chosen_option_overrides"]
         ei = 0

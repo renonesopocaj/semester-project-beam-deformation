@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.gnn.training.pareto_metric_config import resolve_pareto_metric_keys
-from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot
+from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_sweep_performance_plot
 
 
 def test_resolve_pareto_metric_keys_uses_test_source():
@@ -36,5 +36,17 @@ def test_save_pareto_plot_handles_missing_keys_with_diagnostic(tmp_path):
     out_dir = Path(tmp_path)
     out_path = save_pareto_plot(records, "final_validation/acc_all_rel_mae", "final_validation/stress_rel_mae", out_dir)
     assert out_path == out_dir / "pareto.png"
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_save_sweep_performance_plot_writes_curve_image(tmp_path):
+    """
+    Informal specification: a sweep-level performance trend should always render as a concrete image
+    when x labels and metric values are provided, so each sweep can be inspected independently of Pareto.
+    """
+    out_dir = Path(tmp_path)
+    out_path = save_sweep_performance_plot("noise", ["0.0001", "0.0005", "0.001"], [1.2, 1.1, 1.3], "val/overall_relative_mae", out_dir)
+    assert out_path == out_dir / "sweep_noise_overall_mae.png"
     assert out_path.exists()
     assert out_path.stat().st_size > 0
