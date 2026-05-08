@@ -183,7 +183,8 @@ def wandb_summary_log_plot(study_name_str, pareto_path, wandb_project, wandb_off
     import wandb as wb_sdk
 
     run_name_here = "%s__summary" % study_name_str
+    wandb_mode = "offline" if wandb_offline_flag else "online"
     wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
-                offline=wandb_offline_flag)
+                mode=wandb_mode)
     wb_sdk.log({"pareto_plot": wb_sdk.Image(str(pareto_path))})
     wb_sdk.finish()

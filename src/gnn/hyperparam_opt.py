@@ -30,6 +30,25 @@ from src.gnn.training.pareto_metric_config import resolve_pareto_metric_keys
 matplotlib.use("Agg")
 plt.ioff()
 
+def _resolve_offline_flag(raw_value):
+    """
+    Converts a raw config value (bool, None, or string) to a bool for wandb offline mode.
+
+    Args:
+        raw_value: bool or None or str
+            Value from OmegaConf for the wandb_offline key.
+    return: bool
+        True when offline mode should be used.
+    """
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None:
+        return True
+    if str(raw_value).strip().lower() in ("false", "0"):
+        return False
+    return True
+
+
 def format_swept_value_label(option_overrides):
     """
     Args:
@@ -225,16 +244,7 @@ class SweepRunner:
             merged.append("+wandb_run_name=%s" % run_slug)
             merged.append("+wandb_group=%s" % study_name_plain)
             merged.append("+wandb_project=%s" % self._wandb_project)
-            off_raw = self._wandb_offline_raw
-            # FIXME: FUCKING CHANGE this fucking boilerplate shit
-            if isinstance(off_raw, bool):
-                off_lit = off_raw
-            elif off_raw is None:
-                off_lit = True
-            elif str(off_raw).strip().lower() in ("false", "0"):
-                off_lit = False
-            else:
-                off_lit = True
+            off_lit = _resolve_offline_flag(self._wandb_offline_raw)
             merged.append("+wandb_offline=%s" % str(off_lit).lower())
             trial.set_user_attr("option_label_for_record", chosen_option.label)
             trial.set_user_attr("chosen_option_overrides", list(chosen_option.overrides))
@@ -357,17 +367,7 @@ def main(cfg):
     png_path_here = save_pareto_plot(runner.trial_records, runner.pareto_x_key, runner.pareto_y_key, outp)
     print("Saved Pareto plot to %s" % png_path_here)
 
-    off_raw = OmegaConf.select(cfg, "wandb_offline")
-    # FIXME weird fucking shit change this fucking boilerplate it's useless
-    if isinstance(off_raw, bool):
-        off_lit = off_raw
-    elif off_raw is None:
-        off_lit = True
-    elif str(off_raw).strip().lower() in ("false", "0"):
-        off_lit = False
-    else:
-        off_lit = True
-    # FIXME: select?
+    off_lit = _resolve_offline_flag(OmegaConf.select(cfg, "wandb_offline"))
     study_nm = str(OmegaConf.select(cfg, "study_name"))
     wandb_proj = str(OmegaConf.select(cfg, "wandb_project"))
     wandb_summary_log_plot(study_nm, png_path_here, wandb_proj, off_lit)

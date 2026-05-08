@@ -369,11 +369,11 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         if train_cfg.wandb_group is not None:
             logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name, group=train_cfg.wandb_group,
                                  save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
-                                 config=cfg_for_wandb(train_dict))
+                                 reinit=True, config=cfg_for_wandb(train_dict))
         else:
             logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
                                  save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
-                                 config=cfg_for_wandb(train_dict))
+                                 reinit=True, config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
