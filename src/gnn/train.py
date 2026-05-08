@@ -444,7 +444,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 precision=trainer_precision,
                                 profiler=profiler)
     else:
-        raise NotImplementedError("Default")
+        raise NotImplementedError(f"training_type={train_cfg.training_type}")
 
     print(f"Training ID: {lightning_module.training_id}\n\t Initial learning rate: {train_cfg.initial_lr}\n\t"
           f"LR scheduler: {train_cfg.scheduler_cfg['type']}\n\t Total epochs: {train_cfg.total_epochs}\n\t"

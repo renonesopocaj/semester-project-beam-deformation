@@ -4,7 +4,7 @@
 defaults:
   - computational: in_memory_slurm_1gpu_littlebatch
   - model: mgn_extradeep_midmsg
-  - training: longer # contains .total_epochs
+  - training: slurm # contains .total_epochs
   - noise: no_noise
   - loss: default
   - validation: default
