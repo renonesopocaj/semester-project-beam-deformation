@@ -37,3 +37,13 @@ dependencies:
       - prettytable==3.17.0
       - rich==14.3.1
       - xxhash==3.6.0
+      - --find-links https://data.pyg.org/whl/torch-2.11.0+cu126.html
+      - torch-geometric==2.7.0
+      - pyg-lib==0.6.0
+      - torch-scatter==2.1.2
+      - torch-sparse==0.6.18
+      - torch-cluster==1.6.3
+      - torchvision==0.26.0
+      - timm==1.0.26
+      - einops==0.8.2
+      - loguru==0.7.3
