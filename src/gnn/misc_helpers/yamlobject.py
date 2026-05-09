@@ -220,7 +220,7 @@ class TrainYaml:
         self.noise_prev_scale_train = flattened_cfg["noise_prev_scale_train"]
         self.noise_feature_update_mode = flattened_cfg["noise_feature_update_mode"]
         self.noise_per_epoch = flattened_cfg["noise_per_epoch"]
-        self.random_online = float(flattened_cfg.get("random_online", 0.0))
+        self.random_online = float(flattened_cfg.get("random_online"))
         if self.random_online < 0.0 or self.random_online > 1.0:
             raise ValueError("random_online must be in [0, 1].")
         # Exponentiate
