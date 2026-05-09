@@ -1,6 +1,6 @@
 model_name: "MGN"
 num_messages: 12
-latent_dim: 400
+latent_dim: 312
 num_layers_graphnetblock: 2
 layer_norm_enable_encoder: True
 layer_norm_enable_processor: True

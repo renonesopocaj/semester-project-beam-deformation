@@ -346,7 +346,7 @@ class SweepRunner:
         print(json.dumps(best_rec, indent=2, default=str) + "\n" + "=" * 80 + "\n")
         return best_rec
 
-@hydra.main(version_base=None, config_path="../../conf/hyperparam", config_name="sanity_sweep")
+@hydra.main(version_base=None, config_path="../../conf/hyperparam", config_name="sweeps")
 def main(cfg):
     """
     Args:

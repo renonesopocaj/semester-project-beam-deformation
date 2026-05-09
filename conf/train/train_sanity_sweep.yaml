@@ -14,6 +14,10 @@ defaults:
   - devices: one_gpu
   - _self_
 
+# Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
+# not already adjacent (undirected) on the current graph; merged with existing edge_index.
+random_online: 0.0
+# Other
 seed: 42
 use_wandb: true
 initial_lr: 8e-4

@@ -24,4 +24,4 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 mkdir -p saved_models
 
-python -m src.gnn.hyperparam_opt
+srun python -m src.gnn.hyperparam_opt
