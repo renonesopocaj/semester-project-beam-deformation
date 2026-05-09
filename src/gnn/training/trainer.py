@@ -199,11 +199,12 @@ class LitModule(L.LightningModule):
 
         # Define all metrics with epoch as x-axis
         define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
-        # Watch model gradients and parameters
+        # Keep strict epoch-based step semantics: do not emit per-batch watch logs.
         if self.enable_wandb_watch:
-            self.logger.watch(self.model, log="gradients", log_freq=self.len_train_dataloader*5, log_graph=False)
+            print("W&B watch disabled: enforcing one W&B step per epoch.")
         # Log initial epoch value
-        self.logger.experiment.log({"epoch": 0}, step=0, commit=True)
+        epoch_number = self._current_wandb_epoch()
+        self.logger.experiment.log({"epoch": epoch_number}, step=epoch_number, commit=True)
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS
@@ -217,9 +218,9 @@ class LitModule(L.LightningModule):
 
     def _current_wandb_epoch(self):
         """
-        Returns the 1-based epoch number used as W&B step.
+        Returns the 0-based epoch number used as W&B step.
         """
-        return int(self.current_epoch) + 1
+        return int(self.current_epoch)
 
     def _log_wandb_epoch_marker(self, commit):
         """
@@ -233,6 +234,80 @@ class LitModule(L.LightningModule):
             return
         epoch_number = self._current_wandb_epoch()
         self.logger.experiment.log({"epoch": epoch_number}, step=epoch_number, commit=commit)
+
+    def _to_wandb_scalar(self, value):
+        """
+        Converts a metric value to a Python float if it is scalar-like.
+
+        Args:
+            value: object
+                Metric value from trainer.callback_metrics.
+        return: float or None
+            Float value when conversion is possible, otherwise None.
+        """
+        if hasattr(value, "detach"):
+            detached = value.detach()
+            if detached.numel() != 1:
+                return None
+            return float(detached.item())
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _collect_callback_metrics_for_wandb(self, include_prefixes, include_exact):
+        """
+        Collects callback metrics to be logged to W&B at the current epoch step.
+
+        Args:
+            include_prefixes: list[str]
+                Metric prefixes to include.
+            include_exact: list[str]
+                Exact metric names to include.
+        return: dict
+            Metric payload ready for experiment.log.
+        """
+        payload = {}
+        include_prefixes_set = set(include_prefixes)
+        include_exact_set = set(include_exact)
+        for metric_name, metric_value in self.trainer.callback_metrics.items():
+            metric_name_str = str(metric_name)
+            if metric_name_str in include_exact_set:
+                pass
+            else:
+                has_prefix = False
+                for prefix in include_prefixes_set:
+                    if metric_name_str.startswith(prefix):
+                        has_prefix = True
+                        break
+                if not has_prefix:
+                    continue
+            scalar_value = self._to_wandb_scalar(metric_value)
+            if scalar_value is None:
+                continue
+            payload[metric_name_str] = scalar_value
+        return payload
+
+    def _log_callback_metrics_to_wandb(self, include_prefixes, include_exact, commit):
+        """
+        Logs selected callback metrics to W&B at step=current_epoch.
+
+        Args:
+            include_prefixes: list[str]
+                Metric prefixes to include.
+            include_exact: list[str]
+                Exact metric names to include.
+            commit: bool
+                W&B commit flag for this call.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+        payload = self._collect_callback_metrics_for_wandb(include_prefixes, include_exact)
+        if len(payload) == 0:
+            return
+        epoch_number = self._current_wandb_epoch()
+        payload["epoch"] = epoch_number
+        self.logger.experiment.log(payload, step=epoch_number, commit=commit)
 
     def configure_optimizers(self):
         """
@@ -569,17 +644,13 @@ class LitModule(L.LightningModule):
             sync_dist_keys: list[str]
                 Metric names that must be synchronized across ranks.
         """
-        has_logger = self._has_wandb_logger()
         prog_bar_key_set = set(prog_bar_keys)
         sync_dist_key_set = set(sync_dist_keys)
-        if has_logger:
-            self.log("epoch", float(self._current_wandb_epoch()), on_step=False, on_epoch=True,
-                     prog_bar=False, logger=True, batch_size=1, sync_dist=False, rank_zero_only=True)
 
         for metric_name, metric_value in metrics.items():
             self.log(metric_name, metric_value, on_step=False, on_epoch=True,
                      prog_bar=metric_name in prog_bar_key_set,
-                     logger=has_logger, batch_size=metric_weights[metric_name],
+                     logger=False, batch_size=metric_weights[metric_name],
                      sync_dist=metric_name in sync_dist_key_set)
 
     def training_step(self, batch, batch_idx):
@@ -635,7 +706,16 @@ class LitModule(L.LightningModule):
         # Logs current learning rate value
         current_lr = float(self.optimizer.param_groups[0]["lr"])
         self.log("train/lr", current_lr, on_step=False, on_epoch=True, prog_bar=True,
-                 logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+                 logger=False, sync_dist=False, rank_zero_only=True)
+        should_run_validation = False
+        if self.enable_val and self.trainer is not None:
+            val_every_n = int(getattr(self.trainer, "check_val_every_n_epoch", 1))
+            if val_every_n <= 0:
+                val_every_n = 1
+            should_run_validation = ((int(self.current_epoch) + 1) % val_every_n) == 0
+        self._log_callback_metrics_to_wandb(
+            include_prefixes=["train/"], include_exact=[], commit=(not should_run_validation)
+        )
         # Checks if it has to stop
         if self.scheduler.stop:
             print("\n\n\n\n" + "=" * 60)
@@ -690,27 +770,27 @@ class LitModule(L.LightningModule):
         # strategy by lightning)
         if not self.trainer.is_global_zero:
             return
-        if not self.enable_rollout_val or self.validation_dataset is None:
-            return
-        self._log_wandb_epoch_marker(commit=False)
-        # 1. Collect all-step rollout position MAE for each trajectory, then pool
-        # across trajectories weighted by element count so the scalar matches one global mean.
-        all_rollout_pos_mae = []
-        weighted_sum, weight_total = 0.0, 0
-        for traj_idx in range(self.validation_dataset.num_trajectories):
-            traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
-            _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999,
-                                                             rollout_online_tag=SPLIT_ROLLOUT_VAL, traj_idx=traj_idx)
-            all_rollout_pos_mae.append(rollout_pos_mae)
-            weighted_sum += rollout_pos_mae * n_pos
-            weight_total += n_pos
-        # 2. Element-weighted mean across trajectories
-        avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
-        self.rollout_all_step_error = avg_rollout_pos_mae
-        avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
-        # Rank zero only
-        self.log("val/rollout_pos_mae", avg_rollout_pos_mae_tensor, prog_bar=True,
-                 logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+        if self.enable_rollout_val and self.validation_dataset is not None:
+            self._log_wandb_epoch_marker(commit=False)
+            # 1. Collect all-step rollout position MAE for each trajectory, then pool
+            # across trajectories weighted by element count so the scalar matches one global mean.
+            all_rollout_pos_mae = []
+            weighted_sum, weight_total = 0.0, 0
+            for traj_idx in range(self.validation_dataset.num_trajectories):
+                traj_loader = self._get_trajectory_loader(self.validation_dataset, traj_idx, max_timesteps=None)
+                _, _, rollout_pos_mae, n_pos = self._run_rollout(traj_loader, rollout_steps=999999,
+                                                                 rollout_online_tag=SPLIT_ROLLOUT_VAL, traj_idx=traj_idx)
+                all_rollout_pos_mae.append(rollout_pos_mae)
+                weighted_sum += rollout_pos_mae * n_pos
+                weight_total += n_pos
+            # 2. Element-weighted mean across trajectories
+            avg_rollout_pos_mae = weighted_sum / weight_total if weight_total else 0.0
+            self.rollout_all_step_error = avg_rollout_pos_mae
+            avg_rollout_pos_mae_tensor = torch.tensor(avg_rollout_pos_mae, device=self.device)
+            # Rank zero only
+            self.log("val/rollout_pos_mae", avg_rollout_pos_mae_tensor, prog_bar=True,
+                     logger=False, sync_dist=False, rank_zero_only=True)
+        self._log_callback_metrics_to_wandb(include_prefixes=["train/", "val/"], include_exact=[], commit=True)
 
     def _get_trajectory_loader(self, dataset, traj_idx, max_timesteps):
         """
@@ -832,12 +912,20 @@ class LitModule(L.LightningModule):
         # --- Log rollout metrics (media will be logged later)
         wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
         self.log(name=f"{wb_prefix}/rollout_pos_mae", value=avg_rollout_pos_mae_tensor,
-                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+                 prog_bar=True, logger=False, sync_dist=False, rank_zero_only=True)
         self.log(name=f"{wb_prefix}/rollout_volume_mae", value=avg_rollout_volume_mae_tensor,
-                 prog_bar=True, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+                 prog_bar=True, logger=False, sync_dist=False, rank_zero_only=True)
         if self.eval_split_name == "validation":
             self.log(name="final_validation/rollout_pos_mae_all_trajectories", value=avg_rollout_pos_mae_tensor,
-                     prog_bar=False, logger=self._has_wandb_logger(), sync_dist=False, rank_zero_only=True)
+                     prog_bar=False, logger=False, sync_dist=False, rank_zero_only=True)
+        include_exact = []
+        if self.eval_split_name == "validation":
+            include_exact.append("final_validation/rollout_pos_mae_all_trajectories")
+        self._log_callback_metrics_to_wandb(
+            include_prefixes=[f"{wb_prefix}/"],
+            include_exact=include_exact,
+            commit=not self.log_test_media,
+        )
         if not self.log_test_media: # If not logging, skip the rest
             return
         selected = (self.selected_test_trajectories if self.eval_split_name == "test"
