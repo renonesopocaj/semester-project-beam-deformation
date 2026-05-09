@@ -117,11 +117,17 @@ class LitModule(L.LightningModule):
         self.exp_mises = train_cfg.exp_mises
         self.stress_weight = train_cfg.stress_weight
         self.residual_list = set(train_cfg.residual_list)
+        supported_residuals = {"curvature", "volume"}
+        unknown_residuals = sorted(self.residual_list.difference(supported_residuals))
+        if len(unknown_residuals) > 0:
+            raise ValueError(f"Unsupported residual(s): {unknown_residuals}. Supported residuals: {sorted(supported_residuals)}")
         self.theta_max = theta_max
         self.curvature_loss_weight = train_cfg.curvature_loss_weight
         self.volume_loss_weight = train_cfg.volume_loss_weight
         if "curvature" in self.residual_list and self.theta_max is None:
             raise ValueError("Curvature residual requested but theta_max was not provided.")
+        if "volume" in self.residual_list and float(self.volume_loss_weight) < 0.0:
+            raise ValueError("volume_loss_weight must be >= 0 when volume residual is enabled.")
         # training id
         self.training_id = training_id
         # used normalizers

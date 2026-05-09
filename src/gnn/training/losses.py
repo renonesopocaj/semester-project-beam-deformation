@@ -10,9 +10,51 @@ import torch
 import torch.nn.functional as F
 from src.gnn.mesh_numerical_helpers.compute_angle import compute_surface_angles_torch
 from src.gnn.mesh_numerical_helpers.compute_volume import batched_total_absolute_volumes
+from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity
 
 EPS = 1e-6
 TARGET_ACC_DIM = 3
+
+
+def _to_tetra_connectivity_tensor(connectivity, device):
+    """
+    Normalizes tetra connectivity to a torch.LongTensor on the requested device.
+
+    Args:
+        connectivity: object
+            Connectivity payload from a PyG batch; may be tensor-like or nested python lists.
+        device: torch.device
+            Destination device.
+    return: torch.Tensor
+        Tensor with shape (num_tets, 4) and dtype long.
+    """
+    cells_np = to_numpy_tetra_connectivity(connectivity)
+    cells = torch.as_tensor(cells_np, dtype=torch.long, device=device)
+    if cells.numel() == 0:
+        return cells.reshape(0, 4)
+    if cells.dim() != 2 or int(cells.size(1)) != 4:
+        raise ValueError(f"Expected tetra connectivity shape (num_tets, 4), got {tuple(cells.shape)}.")
+    return cells
+
+
+def _to_pointer_tensor(pointer_like, pointer_name, device):
+    """
+    Converts a pointer-like object to a contiguous 1D long tensor.
+
+    Args:
+        pointer_like: object
+            Pointer payload, for example batch.ptr or a slice vector from batch._slice_dict.
+        pointer_name: str
+            Name used in error messages.
+        device: torch.device
+            Destination device.
+    return: torch.Tensor
+        1D long tensor pointer.
+    """
+    pointer = torch.as_tensor(pointer_like, dtype=torch.long, device=device).reshape(-1).contiguous()
+    if pointer.numel() == 0:
+        raise ValueError(f"{pointer_name} is empty.")
+    return pointer
 
 def loss_factory(loss_type):
     """
@@ -64,11 +106,14 @@ def volume_residual(pred, target, batch, target_stats, dt, time_discretizer, los
         raise ValueError("Volume residual requires batched tetra slices in batch._slice_dict['x_element_connectivity'].")
     pred_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer)
     true_next_positions = _reconstruct_predicted_next_positions(target, batch, target_stats, dt, time_discretizer)
-    tet_slices = batch._slice_dict["x_element_connectivity"].to(device=pred.device)
-    pred_total_volume = batched_total_absolute_volumes(pred_next_positions, batch.x_element_connectivity,
-                                                       batch.ptr, tet_slices)
-    true_total_volume = batched_total_absolute_volumes(true_next_positions, batch.x_element_connectivity,
-                                                       batch.ptr, tet_slices)
+    batch_ptr = _to_pointer_tensor(batch.ptr, "batch.ptr", pred.device)
+    tet_slices = _to_pointer_tensor(batch._slice_dict["x_element_connectivity"],
+                                    "batch._slice_dict['x_element_connectivity']", pred.device)
+    if int(batch_ptr.numel()) != int(tet_slices.numel()):
+        raise ValueError("Volume residual requires matching lengths for node ptr and tetra ptr vectors.")
+    tet_connectivity = _to_tetra_connectivity_tensor(batch.x_element_connectivity, pred.device)
+    pred_total_volume = batched_total_absolute_volumes(pred_next_positions, tet_connectivity, batch_ptr, tet_slices)
+    true_total_volume = batched_total_absolute_volumes(true_next_positions, tet_connectivity, batch_ptr, tet_slices)
     return loss_fn(pred_total_volume, true_total_volume)
 
 

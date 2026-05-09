@@ -120,6 +120,33 @@ def resolve_trainer_precision(accelerator, configured_precision):
     return configured_precision
 
 
+def validate_volume_residual_batch_support(batch):
+    """
+    Checks that a collated training batch contains the topology fields required by the volume residual.
+
+    Args:
+        batch: Data
+            PyG collated batch sampled from the training dataloader.
+    """
+    if not hasattr(batch, "x_element_connectivity"):
+        raise ValueError("Volume residual requested but batch has no x_element_connectivity field.")
+    if not hasattr(batch, "_slice_dict") or "x_element_connectivity" not in batch._slice_dict:
+        raise ValueError("Volume residual requested but batch._slice_dict['x_element_connectivity'] is missing.")
+    try:
+        connectivity_tensor = torch.as_tensor(batch.x_element_connectivity, dtype=torch.long)
+    except Exception as exception:
+        raise ValueError("Volume residual requires x_element_connectivity to be tensor-convertible.") from exception
+    if connectivity_tensor.numel() > 0:
+        if connectivity_tensor.dim() != 2 or int(connectivity_tensor.size(1)) != 4:
+            raise ValueError(
+                f"Volume residual expects tetra connectivity shape (num_tets, 4), got {tuple(connectivity_tensor.shape)}."
+            )
+    ptr_tensor = torch.as_tensor(batch.ptr, dtype=torch.long).reshape(-1)
+    tet_ptr_tensor = torch.as_tensor(batch._slice_dict["x_element_connectivity"], dtype=torch.long).reshape(-1)
+    if int(ptr_tensor.numel()) != int(tet_ptr_tensor.numel()):
+        raise ValueError("Volume residual expects ptr and tetra slice pointers to have the same length.")
+
+
 def maybe_compile_model(model, train_cfg, protect_from_oom):
     """
     Optionally wraps the model with torch.compile and enables graph-break logs.
@@ -314,6 +341,9 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     print(f"\n\nOne training batch (collated, tensor storage only): {human_readable_storage(peek_batch_bytes)} "
           f"({peek_batch_bytes} bytes), num_graphs={peek_num_graphs}, config batch_size={train_cfg.batch_size}")
     print("(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)\n\n")
+    if "volume" in train_cfg.residual_list:
+        validate_volume_residual_batch_support(peek_batch)
+        print("\tVolume residual data check passed on one collated training batch.")
     if train_cfg.enable_val:
         print("Validation dataset:")
         # device = "cpu" hardcoded for performance reason
