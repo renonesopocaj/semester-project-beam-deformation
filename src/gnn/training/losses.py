@@ -32,6 +32,8 @@ def _to_tetra_connectivity_tensor(connectivity, device):
     cells = torch.as_tensor(cells_np, dtype=torch.long, device=device)
     if cells.numel() == 0:
         return cells.reshape(0, 4)
+    if cells.dim() == 1 and int(cells.size(0)) == 4:
+        cells = cells.reshape(1, 4)
     if cells.dim() != 2 or int(cells.size(1)) != 4:
         raise ValueError(f"Expected tetra connectivity shape (num_tets, 4), got {tuple(cells.shape)}.")
     return cells
@@ -55,6 +57,63 @@ def _to_pointer_tensor(pointer_like, pointer_name, device):
     if pointer.numel() == 0:
         raise ValueError(f"{pointer_name} is empty.")
     return pointer
+
+
+def _batched_connectivity_entries(connectivity):
+    """
+    Splits a connectivity payload into per-graph entries when needed.
+
+    Args:
+        connectivity: object
+            Batch connectivity payload.
+    return: list
+        One connectivity entry per graph when representable, otherwise a single-entry list.
+    """
+    if torch.is_tensor(connectivity):
+        if connectivity.dim() <= 2:
+            return [connectivity]
+        return [connectivity[idx] for idx in range(int(connectivity.size(0)))]
+    if isinstance(connectivity, (list, tuple)):
+        return list(connectivity)
+    return [connectivity]
+
+
+def _prepare_tetra_connectivity_and_slices(batch, device):
+    """
+    Builds flattened tetra connectivity and matching per-graph slice pointers.
+
+    Args:
+        batch: Data
+            Batched PyG graph containing x_element_connectivity.
+        device: torch.device
+            Destination device.
+    return: (torch.Tensor, torch.Tensor)
+        Flattened tetra connectivity `(total_tets, 4)` and tetra-slice pointer `(num_graphs + 1,)`.
+    """
+    num_graphs = int(torch.as_tensor(batch.ptr).numel()) - 1
+    entries = _batched_connectivity_entries(batch.x_element_connectivity)
+    if len(entries) == 1 and num_graphs > 1:
+        cells = _to_tetra_connectivity_tensor(entries[0], device)
+        tet_slices = _to_pointer_tensor(batch._slice_dict["x_element_connectivity"],
+                                        "batch._slice_dict['x_element_connectivity']",
+                                        device)
+        return cells, tet_slices
+    if len(entries) != num_graphs:
+        raise ValueError(
+            f"Volume residual expected {num_graphs} connectivity entries, got {len(entries)}."
+        )
+    all_cells = []
+    tet_offsets = [0]
+    for entry in entries:
+        cells = _to_tetra_connectivity_tensor(entry, device)
+        all_cells.append(cells)
+        tet_offsets.append(tet_offsets[-1] + int(cells.size(0)))
+    if len(all_cells) == 0:
+        flat_cells = torch.zeros((0, 4), dtype=torch.long, device=device)
+    else:
+        flat_cells = torch.cat(all_cells, dim=0)
+    tet_slices = torch.as_tensor(tet_offsets, dtype=torch.long, device=device)
+    return flat_cells, tet_slices
 
 def loss_factory(loss_type):
     """
@@ -102,16 +161,14 @@ def volume_residual(pred, target, batch, target_stats, dt, time_discretizer, los
     if not hasattr(batch, "x_element_connectivity"):
         raise ValueError("Volume residual requested but batch has no x_element_connectivity. "
                          "Regenerate preprocessed training data with tetra connectivity enabled.")
-    if not hasattr(batch, "_slice_dict") or "x_element_connectivity" not in batch._slice_dict:
-        raise ValueError("Volume residual requires batched tetra slices in batch._slice_dict['x_element_connectivity'].")
+    if not hasattr(batch, "_slice_dict"):
+        raise ValueError("Volume residual requires batch._slice_dict.")
     pred_next_positions = _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer)
     true_next_positions = _reconstruct_predicted_next_positions(target, batch, target_stats, dt, time_discretizer)
     batch_ptr = _to_pointer_tensor(batch.ptr, "batch.ptr", pred.device)
-    tet_slices = _to_pointer_tensor(batch._slice_dict["x_element_connectivity"],
-                                    "batch._slice_dict['x_element_connectivity']", pred.device)
+    tet_connectivity, tet_slices = _prepare_tetra_connectivity_and_slices(batch, pred.device)
     if int(batch_ptr.numel()) != int(tet_slices.numel()):
         raise ValueError("Volume residual requires matching lengths for node ptr and tetra ptr vectors.")
-    tet_connectivity = _to_tetra_connectivity_tensor(batch.x_element_connectivity, pred.device)
     pred_total_volume = batched_total_absolute_volumes(pred_next_positions, tet_connectivity, batch_ptr, tet_slices)
     true_total_volume = batched_total_absolute_volumes(true_next_positions, tet_connectivity, batch_ptr, tet_slices)
     return loss_fn(pred_total_volume, true_total_volume)

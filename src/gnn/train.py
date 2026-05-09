@@ -132,15 +132,21 @@ def validate_volume_residual_batch_support(batch):
         raise ValueError("Volume residual requested but batch has no x_element_connectivity field.")
     if not hasattr(batch, "_slice_dict") or "x_element_connectivity" not in batch._slice_dict:
         raise ValueError("Volume residual requested but batch._slice_dict['x_element_connectivity'] is missing.")
+    connectivity_payload = batch.x_element_connectivity
     try:
-        connectivity_tensor = torch.as_tensor(batch.x_element_connectivity, dtype=torch.long)
+        if torch.is_tensor(connectivity_payload):
+            sample_connectivity = connectivity_payload
+        elif isinstance(connectivity_payload, (list, tuple)) and len(connectivity_payload) > 0:
+            sample_connectivity = torch.as_tensor(connectivity_payload[0], dtype=torch.long)
+        else:
+            sample_connectivity = torch.as_tensor(connectivity_payload, dtype=torch.long)
     except Exception as exception:
         raise ValueError("Volume residual requires x_element_connectivity to be tensor-convertible.") from exception
-    if connectivity_tensor.numel() > 0:
-        if connectivity_tensor.dim() != 2 or int(connectivity_tensor.size(1)) != 4:
-            raise ValueError(
-                f"Volume residual expects tetra connectivity shape (num_tets, 4), got {tuple(connectivity_tensor.shape)}."
-            )
+    if sample_connectivity.numel() > 0 and int(sample_connectivity.shape[-1]) != 4:
+        raise ValueError(
+            "Volume residual expects tetra connectivity with last dimension equal to 4, "
+            f"got shape {tuple(sample_connectivity.shape)}."
+        )
     ptr_tensor = torch.as_tensor(batch.ptr, dtype=torch.long).reshape(-1)
     tet_ptr_tensor = torch.as_tensor(batch._slice_dict["x_element_connectivity"], dtype=torch.long).reshape(-1)
     if int(ptr_tensor.numel()) != int(tet_ptr_tensor.numel()):
