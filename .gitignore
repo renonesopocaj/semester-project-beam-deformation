@@ -39,3 +39,8 @@ compression_fem_output
 tests_artifacts
 dataset_izar
 wandb_export
+# slurm
+old_out_slurm
+*.out
+*.err
+wandb

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=semester-project
+#SBATCH --job-name=train
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
@@ -8,6 +8,8 @@
 #SBATCH --time=0-12:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=jacopo.senoner@epfl.ch
 
 set -euo pipefail
 
