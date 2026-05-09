@@ -32,76 +32,76 @@ sweeps:
         overrides:
           - data.dataset_dir=${base_dir}/processed/biax_longer/z_isotr_centr_noabspos_yesedge/medium
 
-  - name: noise
-    fixed_overrides: []
-    options:
-      - label: offline_1e-4
-        overrides:
-          - noise.noise_scale_train=0.0001
-          - noise.noise_per_epoch=false
-      - label: offline_5e-4
-        overrides:
-          - noise.noise_scale_train=0.0005
-          - noise.noise_per_epoch=false
-      - label: offline_1e-3
-        overrides:
-          - noise.noise_scale_train=0.001
-          - noise.noise_per_epoch=false
-      - label: offline_3e-3
-        overrides:
-          - noise.noise_scale_train=0.005
-          - noise.noise_per_epoch=false
-      - label: offline_5e-5
-        overrides:
-          - noise.noise_scale_train=0.00005
-          - noise.noise_per_epoch=false
-      - label: offline_1e-5
-        overrides:
-          - noise.noise_scale_train=0.00001
-          - noise.noise_per_epoch=false
-      - label: online_1e-4
-        overrides:
-          - noise.noise_scale_train=0.0001
-          - noise.noise_per_epoch=true
-      - label: online_5e-4
-        overrides:
-          - noise.noise_scale_train=0.0005
-          - noise.noise_per_epoch=true
-      - label: online_1e-3
-        overrides:
-          - noise.noise_scale_train=0.001
-          - noise.noise_per_epoch=true
-      - label: online_5e-3
-        overrides:
-          - noise.noise_scale_train=0.005
-          - noise.noise_per_epoch=true
-      - label: online_1e-4
-        overrides:
-          - noise.noise_scale_train=0.00001
-          - noise.noise_per_epoch=true
-      - label: online_5e-5
-        overrides:
-          - noise.noise_scale_train=0.00005
-          - noise.noise_per_epoch=true
-
-  - name: gamma
-    fixed_overrides: []
-    options:
-      - label: g_0.1
-        overrides:
-          - noise.noise_gamma=0.1
-      - label: g_0.05
-        overrides:
-          - noise.noise_gamma=0.05
-      - label: g_0.2
-        overrides:
-          - noise.noise_gamma=0.2
-      - label: g_0.5
-        overrides:
-          - noise.noise_gamma=0.5
-      - label: g_0.8
-        overrides:
-          - noise.noise_gamma=0.8
+#  - name: noise
+#    fixed_overrides: []
+#    options:
+#      - label: offline_1e-4
+#        overrides:
+#          - noise.noise_scale_train=0.0001
+#          - noise.noise_per_epoch=false
+#      - label: offline_5e-4
+#        overrides:
+#          - noise.noise_scale_train=0.0005
+#          - noise.noise_per_epoch=false
+#      - label: offline_1e-3
+#        overrides:
+#          - noise.noise_scale_train=0.001
+#          - noise.noise_per_epoch=false
+#      - label: offline_3e-3
+#        overrides:
+#          - noise.noise_scale_train=0.005
+#          - noise.noise_per_epoch=false
+#      - label: offline_5e-5
+#        overrides:
+#          - noise.noise_scale_train=0.00005
+#          - noise.noise_per_epoch=false
+#      - label: offline_1e-5
+#        overrides:
+#          - noise.noise_scale_train=0.00001
+#          - noise.noise_per_epoch=false
+#      - label: online_1e-4
+#        overrides:
+#          - noise.noise_scale_train=0.0001
+#          - noise.noise_per_epoch=true
+#      - label: online_5e-4
+#        overrides:
+#          - noise.noise_scale_train=0.0005
+#          - noise.noise_per_epoch=true
+#      - label: online_1e-3
+#        overrides:
+#          - noise.noise_scale_train=0.001
+#          - noise.noise_per_epoch=true
+#      - label: online_5e-3
+#        overrides:
+#          - noise.noise_scale_train=0.005
+#          - noise.noise_per_epoch=true
+#      - label: online_1e-4
+#        overrides:
+#          - noise.noise_scale_train=0.00001
+#          - noise.noise_per_epoch=true
+#      - label: online_5e-5
+#        overrides:
+#          - noise.noise_scale_train=0.00005
+#          - noise.noise_per_epoch=true
+#
+#  - name: gamma
+#    fixed_overrides: []
+#    options:
+#      - label: g_0.1
+#        overrides:
+#          - noise.noise_gamma=0.1
+#      - label: g_0.05
+#        overrides:
+#          - noise.noise_gamma=0.05
+#      - label: g_0.2
+#        overrides:
+#          - noise.noise_gamma=0.2
+#      - label: g_0.5
+#        overrides:
+#          - noise.noise_gamma=0.5
+#      - label: g_0.8
+#        overrides:
+#          - noise.noise_gamma=0.8
 
 hydra:
   run:
