@@ -6,15 +6,13 @@ Training each trial composes the Hydra root config named by `train_compose_confi
 `conf/hyperparam/sweeps.yaml` (default stem: train_default_hyperopt), i.e.
 `conf/train/train_default_hyperopt.yaml`. That file is a full train-style root (same fields
 and defaults layout as `conf/train/train.yaml`); it is not read by `src/gnn/train.py`.
-FIXME I Don't understand: does this run multiple sweeps over different hyperparameters in one run (python , or one sweep
- in one time?
 """
 
 # Default Hydra `config_name` under `conf/train/` when `train_compose_config` is unset in sweeps.yaml.
 TRAIN_COMPOSE_CONFIG_DEFAULT = "train_default_hyperopt"
-
 import json
 import math
+import traceback
 from pathlib import Path
 import torch
 import wandb as wb_sdk
@@ -400,43 +398,44 @@ def main(cfg):
     off_lit = _resolve_offline_flag(OmegaConf.select(cfg, "wandb_offline"))
     study_nm = str(OmegaConf.select(cfg, "study_name"))
     wandb_proj = str(OmegaConf.select(cfg, "wandb_project"))
+    try:
+        # One Pareto plot per configured (x, y) pair.
+        pareto_plot_paths = []
+        pi = 0
+        while pi < len(runner.pareto_pairs):
+            px_key, py_key = runner.pareto_pairs[pi]
+            pareto_filename = "pareto_%d.png" % pi
+            png_path_here = save_pareto_plot(runner.trial_records, px_key, py_key, outp, pareto_filename)
+            pareto_plot_paths.append(png_path_here)
+            print("Saved Pareto plot %d to %s" % (pi, png_path_here))
+            pi = pi + 1
 
-    # One Pareto plot per configured (x, y) pair.
-    pareto_plot_paths = []
-    pi = 0
-    while pi < len(runner.pareto_pairs):
-        px_key, py_key = runner.pareto_pairs[pi]
-        pareto_filename = "pareto_%d.png" % pi
-        png_path_here = save_pareto_plot(runner.trial_records, px_key, py_key, outp, pareto_filename)
-        pareto_plot_paths.append(png_path_here)
-        print("Saved Pareto plot %d to %s" % (pi, png_path_here))
-        pi = pi + 1
+        # Fixed summary plots across all trials: final_test and final_validation splits.
+        summary_metric_specs = [
+            ("final_test/overall_abs_mae", "summary_test_abs_mae.png"),
+            ("final_test/overall_relative_mae", "summary_test_rel_mae.png"),
+            ("final_validation/overall_abs_mae", "summary_val_abs_mae.png"),
+            ("final_validation/overall_relative_mae", "summary_val_rel_mae.png"),
+            ("final_test/rollout_pos_mae", "summary_test_rollout_pos_mae.png"),
+            ("final_validation/rollout_pos_mae", "summary_val_rollout_pos_mae.png"),
+        ]
+        summary_plot_paths = []
+        sm = 0
+        while sm < len(summary_metric_specs):
+            metric_key_here, filename_here = summary_metric_specs[sm]
+            sp = save_summary_metric_plot(runner.trial_records, metric_key_here, outp, filename_here)
+            summary_plot_paths.append(sp)
+            print("Saved summary plot (%s) to %s" % (metric_key_here, sp))
+            sm = sm + 1
 
-    # Fixed summary plots across all trials: final_test and final_validation splits.
-    summary_metric_specs = [
-        ("final_test/overall_abs_mae", "summary_test_abs_mae.png"),
-        ("final_test/overall_relative_mae", "summary_test_rel_mae.png"),
-        ("final_validation/overall_abs_mae", "summary_val_abs_mae.png"),
-        ("final_validation/overall_relative_mae", "summary_val_rel_mae.png"),
-        ("final_test/rollout_pos_mae", "summary_test_rollout_pos_mae.png"),
-        ("final_validation/rollout_pos_mae", "summary_val_rollout_pos_mae.png"),
-    ]
-    summary_plot_paths = []
-    sm = 0
-    while sm < len(summary_metric_specs):
-        metric_key_here, filename_here = summary_metric_specs[sm]
-        sp = save_summary_metric_plot(runner.trial_records, metric_key_here, outp, filename_here)
-        summary_plot_paths.append(sp)
-        print("Saved summary plot (%s) to %s" % (metric_key_here, sp))
-        sm = sm + 1
-
-    # Log all plots to W&B.
-    all_plot_paths = list(pareto_plot_paths) + summary_plot_paths
-    ap = 0
-    while ap < len(all_plot_paths):
-        wandb_summary_log_plot(study_nm, all_plot_paths[ap], wandb_proj, off_lit)
-        ap = ap + 1
-
+        # Log all plots to W&B.
+        all_plot_paths = list(pareto_plot_paths) + summary_plot_paths
+        ap = 0
+        while ap < len(all_plot_paths):
+            wandb_summary_log_plot(study_nm, all_plot_paths[ap], wandb_proj, off_lit)
+            ap = ap + 1
+    except Exception as e:
+        traceback.print_exception(type(e), e, e.__traceback__)
 
 if __name__ == "__main__":
     main()
