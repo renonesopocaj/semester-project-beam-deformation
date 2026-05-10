@@ -789,7 +789,7 @@ def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_na
             Destination image path.
         return: None
     """
-    print("Plot rollout position error vs timestep...")
+    # print("Plot rollout position error vs timestep...")
     errors = []  # One scalar MAE per rollout step for the y-axis series.
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
         diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)  # Per-node L1 position error at this timestep.

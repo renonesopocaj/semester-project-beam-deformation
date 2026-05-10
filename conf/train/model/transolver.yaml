@@ -5,6 +5,9 @@ transolver_dropout: 0.0
 transolver_n_head: 8
 transolver_time_input: false
 transolver_act: "gelu"
+# FFN expansion ratio inside each Transolver_block: the pointwise MLP expands from n_hidden to mlp_ratio * n_hidden
+# (then back). 1 means no expansion relative to hidden width; values like 4 are common in transformer-style FFNs for
+# more nonlinear capacity.
 transolver_mlp_ratio: 1
 transolver_slice_num: 32
 transolver_ref: 8
