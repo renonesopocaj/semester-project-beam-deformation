@@ -412,18 +412,26 @@ def main(cfg):
         print("Saved Pareto plot %d to %s" % (pi, png_path_here))
         pi = pi + 1
 
-    # Fixed summary plots across all trials.
-    abs_summary_path = save_summary_metric_plot(
-        runner.trial_records, "final_test/overall_abs_mae", outp, "summary_abs_mae.png"
-    )
-    rel_summary_path = save_summary_metric_plot(
-        runner.trial_records, "final_test/overall_relative_mae", outp, "summary_rel_mae.png"
-    )
-    print("Saved summary abs MAE plot to %s" % abs_summary_path)
-    print("Saved summary relative MAE plot to %s" % rel_summary_path)
+    # Fixed summary plots across all trials: final_test and final_validation splits.
+    summary_metric_specs = [
+        ("final_test/overall_abs_mae", "summary_test_abs_mae.png"),
+        ("final_test/overall_relative_mae", "summary_test_rel_mae.png"),
+        ("final_validation/overall_abs_mae", "summary_val_abs_mae.png"),
+        ("final_validation/overall_relative_mae", "summary_val_rel_mae.png"),
+        ("final_test/rollout_pos_mae", "summary_test_rollout_pos_mae.png"),
+        ("final_validation/rollout_pos_mae", "summary_val_rollout_pos_mae.png"),
+    ]
+    summary_plot_paths = []
+    sm = 0
+    while sm < len(summary_metric_specs):
+        metric_key_here, filename_here = summary_metric_specs[sm]
+        sp = save_summary_metric_plot(runner.trial_records, metric_key_here, outp, filename_here)
+        summary_plot_paths.append(sp)
+        print("Saved summary plot (%s) to %s" % (metric_key_here, sp))
+        sm = sm + 1
 
     # Log all plots to W&B.
-    all_plot_paths = list(pareto_plot_paths) + [abs_summary_path, rel_summary_path]
+    all_plot_paths = list(pareto_plot_paths) + summary_plot_paths
     ap = 0
     while ap < len(all_plot_paths):
         wandb_summary_log_plot(study_nm, all_plot_paths[ap], wandb_proj, off_lit)
