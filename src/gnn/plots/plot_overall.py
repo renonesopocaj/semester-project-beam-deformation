@@ -18,43 +18,37 @@ _COLOR_SELECTED = "crimson"
 _COLOR_STRIPE_A = "gold"
 _COLOR_STRIPE_B = "royalblue"
 
-# Ordered list of (wandb_key, brief_label, group) for the run-wide summary histogram.
-# Groups are final_validation (green), val (red), final_test (blue), train (gray).
-_SUMMARY_METRICS_CONFIG = [
+# Ordered list of (wandb_key, brief_label, group) for the combined train/run_summary histogram.
+# Groups are final_validation (green), final_test (blue), train (gray).
+# The two "train" entries (monitor + final loss) are injected at call time with their actual
+# resolved key; the config below covers only the final_* bars.
+_COMBINED_FINAL_METRICS_CONFIG = [
     ("final_validation/rollout_pos_mae",   "roll pos",    "final_validation"),
     ("final_validation/rollout_volume_mae","roll vol",    "final_validation"),
     ("final_validation/stress_abs_mae",    "stress abs",  "final_validation"),
     ("final_validation/stress_rel_mae",    "stress rel",  "final_validation"),
-    ("val/acc_all_abs_mae",                "abs acc",     "val"),
-    ("val/overall_abs_mae",                "abs overall", "val"),
-    ("val/overall_relative_mae",           "rel overall", "val"),
-    ("val/stress_abs_mae",                 "stress abs",  "val"),
-    ("train/loss",                         "loss",        "train"),
     ("final_test/rollout_pos_mae",         "roll pos",    "final_test"),
     ("final_test/rollout_volume_mae",      "roll vol",    "final_test"),
     ("final_test/stress_abs_mae",          "stress abs",  "final_test"),
     ("final_test/stress_rel_mae",          "stress rel",  "final_test"),
 ]
 
-_SUMMARY_GROUP_PALETTES = {
+_COMBINED_GROUP_PALETTES = {
     "final_validation": ["#1b4332", "#2d6a4f", "#40916c", "#74c69d"],  # dark-to-light green
-    "val":              ["#6a040f", "#9d0208", "#d00000", "#e85d04"],  # dark-to-light red
     "final_test":       ["#03045e", "#0077b6", "#00b4d8", "#48cae4"],  # dark-to-light blue
-    "train":            ["#6c757d"],
+    "train":            ["#6c757d", "#adb5bd"],  # two gray shades: monitor then final loss
 }
 
-_SUMMARY_GROUP_DISPLAY_NAMES = {
+_COMBINED_GROUP_DISPLAY_NAMES = {
     "final_validation": "final_validation",
-    "val":              "val",
     "final_test":       "final_test",
-    "train":            "train",
+    "train":            "train (monitor / final loss)",
 }
 
 
 def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                  per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
-                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices,
-                 summary_scalars):
+                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices):
     """
     Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
     - all_rollout_pos_mae
@@ -64,8 +58,6 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
     - per_traj_stress_abs_mae
     - per_traj_overall_abs_mae
     - all_rollout_volume_mae
-    Also generates a run-wide summary histogram (run_summary.png) aggregating key scalars
-    across final_validation (green), val (red), final_test (blue), and train (gray) groups.
     Main access point called by trainer.
 
     Args:
@@ -89,10 +81,6 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
             Split name for plot titles (e.g. test, validation).
         selected_trajectory_indices: list[int]
             Trajectory indices highlighted in red (same as in-depth rollout plots).
-        summary_scalars: dict
-            Flat dict of {wandb_metric_key: float} for the run-wide summary histogram.
-            Keys from val/, train/, final_validation/, and final_test/ are all welcome;
-            only those present in _SUMMARY_METRICS_CONFIG are rendered.
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
@@ -184,11 +172,6 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
         selected_trajectory_indices=selected_trajectory_indices,
     )
     paths["images"]["rollout_volume_mae_per_traj"] = p7
-
-    # 8) Run-wide summary histogram — all key scalars, color-coded by split group
-    p8 = output_dir / "run_summary.png"
-    _plot_run_summary_histogram(summary_scalars, p8)
-    paths["images"]["run_summary"] = p8  # Registered even if skipped; wandb logger checks file existence.
 
     return paths  # Return map of artifact names to paths (images only populated here).
 
@@ -290,28 +273,59 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
     plt.close(fig)  # Free figure memory after save.
 
 
-def _plot_run_summary_histogram(summary_scalars, output_path):
+def plot_combined_train_run_summary(accumulated_final_scalars, last_monitor_key,
+                                    last_monitor_value, last_train_loss, output_path):
     """
-    Single-bar-per-metric histogram aggregating all key run scalars, color-coded by split group:
-    - final_validation metrics in shades of green
-    - val metrics in shades of red
-    - final_test metrics in shades of blue
-    - train metrics in gray
-    Brief labels are shown on the x-axis ticks; full metric keys are printed in a rotated
-    margin below the x-axis. Metric values are annotated on top of each bar.
-    Metrics not present in summary_scalars are silently skipped.
+    Single combined histogram logged to W&B under train/run_summary.
+    Bars left-to-right:
+      1. final_validation/* (green shades) — rollout pos/vol, stress abs/rel
+      2. final_test/*       (blue shades)  — same four metrics
+      3. scheduler monitor bar (dark gray) — last training epoch value of val/ or train/loss
+      4. train/loss bar        (light gray)— final training epoch loss
+
+    Metrics absent from accumulated_final_scalars are silently skipped.
+    The monitor bar is omitted when last_monitor_value is nan; the train/loss bar is omitted
+    when last_train_loss is nan. When the monitor key equals "train/loss", the two train bars
+    are labelled differently to distinguish them ("monitor" vs "final loss").
 
     Args:
-        summary_scalars: dict
-            Flat {wandb_metric_key: float} dict; only keys listed in _SUMMARY_METRICS_CONFIG
-            are rendered — extras are ignored.
+        accumulated_final_scalars: dict
+            Flat {wandb_metric_key: float} containing any final_validation/* and final_test/* values.
+        last_monitor_key: str
+            Resolved W&B key used by the scheduler monitor (e.g. "val/overall_relative_mae").
+        last_monitor_value: float
+            Last-epoch value of the scheduler monitor metric.
+        last_train_loss: float
+            Final training epoch train/loss value.
         output_path: Path
             Destination PNG path.
     """
-    visible = [(key, brief, group) for key, brief, group in _SUMMARY_METRICS_CONFIG
-               if key in summary_scalars]
-    if not visible:
+    import math
+
+    entries = [(key, brief, group) for key, brief, group in _COMBINED_FINAL_METRICS_CONFIG
+               if key in accumulated_final_scalars]
+
+    # Determine brief labels for the two train bars, avoiding duplicate labels when both resolve to train/loss
+    monitor_is_train_loss = (last_monitor_key == "train/loss")
+    monitor_brief = "monitor" if monitor_is_train_loss else last_monitor_key.split("/")[-1]
+    train_loss_brief = "final loss" if monitor_is_train_loss else "loss"
+
+    if not math.isnan(last_monitor_value):
+        entries.append((last_monitor_key, monitor_brief, "train"))
+    # Add train/loss bar only when it would not duplicate the monitor bar already added above
+    if not math.isnan(last_train_loss) and not (monitor_is_train_loss and not math.isnan(last_monitor_value)):
+        entries.append(("train/loss", train_loss_brief, "train"))
+
+    if not entries:
         return
+
+    # Resolve bar values — monitor and final-loss scalars come from dedicated args, not the dict
+    def _value_for(key, brief, group):
+        if group == "train" and key == last_monitor_key and brief == monitor_brief:
+            return last_monitor_value
+        if group == "train" and key == "train/loss":
+            return last_train_loss
+        return float(accumulated_final_scalars[key])
 
     positions = []
     brief_labels = []
@@ -325,21 +339,21 @@ def _plot_run_summary_histogram(summary_scalars, output_path):
     bar_w = 0.75
     group_gap = 0.9
 
-    for key, brief, group in visible:
+    for key, brief, group in entries:
         if group != current_group:
             if current_group is not None:
-                x += group_gap  # visual gap between groups
+                x += group_gap
             current_group = group
             if group not in seen_groups:
                 seen_groups.append(group)
         shade_idx = group_shade_counter.get(group, 0)
-        palette = _SUMMARY_GROUP_PALETTES[group]
+        palette = _COMBINED_GROUP_PALETTES[group]
         bar_colors.append(palette[shade_idx % len(palette)])
         group_shade_counter[group] = shade_idx + 1
         positions.append(x)
         brief_labels.append(brief)
         full_labels.append(key)
-        bar_values.append(float(summary_scalars[key]))
+        bar_values.append(_value_for(key, brief, group))
         x += 1.0
 
     n = len(positions)
@@ -348,33 +362,29 @@ def _plot_run_summary_histogram(summary_scalars, output_path):
 
     ax.bar(positions, bar_values, width=bar_w, color=bar_colors, linewidth=0, edgecolor="none")
 
-    # Value annotations on top of each bar
     for pos, val in zip(positions, bar_values):
         ax.text(pos, val, f"{val:.4g}", ha="center", va="bottom", fontsize=8, color="0.2")
 
-    # Brief labels as x-tick labels (shown ON the histogram x-axis)
     ax.set_xticks(positions)
     ax.set_xticklabels(brief_labels, fontsize=9)
 
-    # Full metric keys printed BELOW the x-axis in a rotated margin
     blend = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
     for pos, full_name in zip(positions, full_labels):
         ax.text(pos, -0.04, full_name, transform=blend, rotation=90,
                 va="top", ha="center", fontsize=6.5, color="0.4", clip_on=False)
 
-    ax.set_title("Run Summary — Key Metrics by Split")
+    ax.set_title("Run Summary — final_validation / final_test / train")
     ax.set_ylabel("Metric Value")
     ax.grid(True, alpha=0.3, axis="y")
     ax.set_xlim(-0.65, x - 0.35)
 
-    # One legend patch per group (representative darkest shade)
     legend_handles = [
-        Patch(facecolor=_SUMMARY_GROUP_PALETTES[g][0], edgecolor="none",
-              label=_SUMMARY_GROUP_DISPLAY_NAMES[g])
+        Patch(facecolor=_COMBINED_GROUP_PALETTES[g][0], edgecolor="none",
+              label=_COMBINED_GROUP_DISPLAY_NAMES[g])
         for g in seen_groups
     ]
     ax.legend(handles=legend_handles, loc="upper right", fontsize=9)
 
-    fig.subplots_adjust(bottom=0.30)  # Reserve bottom margin for full metric name labels.
+    fig.subplots_adjust(bottom=0.30)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

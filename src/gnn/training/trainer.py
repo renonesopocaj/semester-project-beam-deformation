@@ -47,7 +47,7 @@ from src.gnn.training.losses import loss_factory, angle_residual, compute_total_
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
 from src.gnn.plots.plot_rollout import in_depth_plots
-from src.gnn.plots.plot_overall import overall_plot
+from src.gnn.plots.plot_overall import overall_plot, plot_combined_train_run_summary
 from src.gnn.plots.plot_train import plot_final_parameter_distributions
 
 MAX_SELECTED_TIMESTEPS = 400
@@ -94,6 +94,10 @@ class LitModule(L.LightningModule):
     val_monitor_metric: str
     _online_random_edge_augmenter: Any
     _last_fit_epoch: int
+    _wandb_last_train_loss: float
+    _wandb_last_monitor_key: str
+    _wandb_last_monitor_value: float
+    _wandb_accum_final_eval_scalars: dict
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
@@ -196,6 +200,10 @@ class LitModule(L.LightningModule):
         self.train_seed = int(train_cfg.seed)
         self._online_random_edge_augmenter = None
         self._last_fit_epoch = 0
+        self._wandb_last_train_loss = float("nan")
+        self._wandb_last_monitor_key = "train/loss"
+        self._wandb_last_monitor_value = float("nan")
+        self._wandb_accum_final_eval_scalars = {}
 
     def on_fit_start(self):
         """
@@ -758,8 +766,15 @@ class LitModule(L.LightningModule):
             monitor_name = "train/loss"
         monitor_metric = self.trainer.callback_metrics.get(monitor_name)
         if monitor_metric is None: # additional check
+            monitor_name = "train/loss"
             monitor_metric = self.trainer.callback_metrics["train/loss"]
         monitor_metric_value = float(monitor_metric.detach().item())
+        # Persist last-epoch scalars for the combined run-summary histogram
+        train_loss_metric = self.trainer.callback_metrics.get("train/loss")
+        if train_loss_metric is not None:
+            self._wandb_last_train_loss = float(train_loss_metric.detach().item())
+        self._wandb_last_monitor_key = monitor_name
+        self._wandb_last_monitor_value = monitor_metric_value
         # Scheduler step
         self.scheduler.step(metric=monitor_metric_value, epoch=self.current_epoch)
         # Logs current learning rate value
@@ -988,6 +1003,14 @@ class LitModule(L.LightningModule):
             include_prefixes=[f"{wb_prefix}/"],
             include_exact=[],
         )
+        # Accumulate final_* scalars from this phase so both validation and test contributions
+        # are available when the combined run_summary histogram is built on the test phase.
+        phase_scalars = self._collect_callback_metrics_for_wandb(
+            include_prefixes=["final_validation/", "final_test/"],
+            include_exact=[],
+        )
+        self._wandb_accum_final_eval_scalars.update(phase_scalars)
+
         if not self.log_test_media: # If not logging, skip the rest
             return
         selected = (self.selected_test_trajectories if self.eval_split_name == "test"
@@ -995,14 +1018,10 @@ class LitModule(L.LightningModule):
         # 4. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
-        summary_scalars = self._collect_callback_metrics_for_wandb(
-            include_prefixes=["val/", "train/", "final_validation/", "final_test/"],
-            include_exact=[],
-        )
         overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                                           per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
                                           all_rollout_volume_mae, overall_output_dir,
-                                          self.eval_split_name, selected, summary_scalars)
+                                          self.eval_split_name, selected)
         # 5. Generate in-depth plots for selected trajectories only
         per_traj_paths = {}
         for traj_idx in selected:
@@ -1018,6 +1037,22 @@ class LitModule(L.LightningModule):
             self._log_wandb_epoch_marker(commit=False)
             log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
                                 True, self._current_wandb_epoch())
+        # 7. On the final test phase, build and log the combined train/run_summary histogram once.
+        # Both final_validation/* and final_test/* scalars are now accumulated.
+        if self.eval_split_name == "test" and self._has_wandb_logger():
+            run_summary_path = self.training_plots_dir / "run_summary_combined.png"
+            plot_combined_train_run_summary(
+                self._wandb_accum_final_eval_scalars,
+                self._wandb_last_monitor_key,
+                self._wandb_last_monitor_value,
+                self._wandb_last_train_loss,
+                run_summary_path,
+            )
+            if run_summary_path.exists():
+                self.logger.experiment.log(
+                    {"epoch": self._current_wandb_epoch(), "train/run_summary": wandb.Image(str(run_summary_path))},
+                    commit=True,
+                )
 
     def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
         """
