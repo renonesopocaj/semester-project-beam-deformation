@@ -16,6 +16,7 @@ TRAIN_COMPOSE_CONFIG_DEFAULT = "train_default_hyperopt"
 import json
 import math
 from pathlib import Path
+import torch
 import wandb as wb_sdk
 from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_summary_metric_plot, save_sweep_performance_plot, wandb_summary_log_plot
 import matplotlib
@@ -220,6 +221,10 @@ class SweepRunner:
         return: triple
             (best_val_mae float, metrics dict str->float, wandb_run_id optional str)
         """
+        # Clear the global dynamo compilation cache so each trial starts fresh.
+        # Without this, the cache (keyed per code object, not per model instance) accumulates
+        # compilations across trials and hits the recompile_limit (default 8) by Trial 1.
+        torch._dynamo.reset()
         GlobalHydra.instance().clear()
         overrides_copy = []
         for one in override_list:
