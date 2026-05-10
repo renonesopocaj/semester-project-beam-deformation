@@ -6,6 +6,7 @@ Contains functions for generating summary plots of model evaluation, with main a
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import numpy as np
 from matplotlib.patches import Patch
 
@@ -17,10 +18,43 @@ _COLOR_SELECTED = "crimson"
 _COLOR_STRIPE_A = "gold"
 _COLOR_STRIPE_B = "royalblue"
 
+# Ordered list of (wandb_key, brief_label, group) for the run-wide summary histogram.
+# Groups are final_validation (green), val (red), final_test (blue), train (gray).
+_SUMMARY_METRICS_CONFIG = [
+    ("final_validation/rollout_pos_mae",   "roll pos",    "final_validation"),
+    ("final_validation/rollout_volume_mae","roll vol",    "final_validation"),
+    ("final_validation/stress_abs_mae",    "stress abs",  "final_validation"),
+    ("final_validation/stress_rel_mae",    "stress rel",  "final_validation"),
+    ("val/acc_all_abs_mae",                "abs acc",     "val"),
+    ("val/overall_abs_mae",                "abs overall", "val"),
+    ("val/overall_relative_mae",           "rel overall", "val"),
+    ("val/stress_abs_mae",                 "stress abs",  "val"),
+    ("train/loss",                         "loss",        "train"),
+    ("final_test/rollout_pos_mae",         "roll pos",    "final_test"),
+    ("final_test/rollout_volume_mae",      "roll vol",    "final_test"),
+    ("final_test/stress_abs_mae",          "stress abs",  "final_test"),
+    ("final_test/stress_rel_mae",          "stress rel",  "final_test"),
+]
+
+_SUMMARY_GROUP_PALETTES = {
+    "final_validation": ["#1b4332", "#2d6a4f", "#40916c", "#74c69d"],  # dark-to-light green
+    "val":              ["#6a040f", "#9d0208", "#d00000", "#e85d04"],  # dark-to-light red
+    "final_test":       ["#03045e", "#0077b6", "#00b4d8", "#48cae4"],  # dark-to-light blue
+    "train":            ["#6c757d"],
+}
+
+_SUMMARY_GROUP_DISPLAY_NAMES = {
+    "final_validation": "final_validation",
+    "val":              "val",
+    "final_test":       "final_test",
+    "train":            "train",
+}
+
 
 def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                  per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
-                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices):
+                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices,
+                 summary_scalars):
     """
     Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
     - all_rollout_pos_mae
@@ -30,6 +64,8 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
     - per_traj_stress_abs_mae
     - per_traj_overall_abs_mae
     - all_rollout_volume_mae
+    Also generates a run-wide summary histogram (run_summary.png) aggregating key scalars
+    across final_validation (green), val (red), final_test (blue), and train (gray) groups.
     Main access point called by trainer.
 
     Args:
@@ -53,6 +89,10 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
             Split name for plot titles (e.g. test, validation).
         selected_trajectory_indices: list[int]
             Trajectory indices highlighted in red (same as in-depth rollout plots).
+        summary_scalars: dict
+            Flat dict of {wandb_metric_key: float} for the run-wide summary histogram.
+            Keys from val/, train/, final_validation/, and final_test/ are all welcome;
+            only those present in _SUMMARY_METRICS_CONFIG are rendered.
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
@@ -143,7 +183,12 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
         x_sort_caption="rollout volume MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["rollout_volume_mae_per_traj"] = p7  # Register last summary figure.
+    paths["images"]["rollout_volume_mae_per_traj"] = p7
+
+    # 8) Run-wide summary histogram — all key scalars, color-coded by split group
+    p8 = output_dir / "run_summary.png"
+    _plot_run_summary_histogram(summary_scalars, p8)
+    paths["images"]["run_summary"] = p8  # Registered even if skipped; wandb logger checks file existence.
 
     return paths  # Return map of artifact names to paths (images only populated here).
 
@@ -243,3 +288,93 @@ def _plot_sorted_per_traj_histogram(values, ylabel, title, output_path, x_sort_c
     fig.tight_layout()  # Reduce subplot padding so title/labels fit before rasterizing.
     fig.savefig(output_path, dpi=150)  # Write PNG at 150 dpi to disk.
     plt.close(fig)  # Free figure memory after save.
+
+
+def _plot_run_summary_histogram(summary_scalars, output_path):
+    """
+    Single-bar-per-metric histogram aggregating all key run scalars, color-coded by split group:
+    - final_validation metrics in shades of green
+    - val metrics in shades of red
+    - final_test metrics in shades of blue
+    - train metrics in gray
+    Brief labels are shown on the x-axis ticks; full metric keys are printed in a rotated
+    margin below the x-axis. Metric values are annotated on top of each bar.
+    Metrics not present in summary_scalars are silently skipped.
+
+    Args:
+        summary_scalars: dict
+            Flat {wandb_metric_key: float} dict; only keys listed in _SUMMARY_METRICS_CONFIG
+            are rendered — extras are ignored.
+        output_path: Path
+            Destination PNG path.
+    """
+    visible = [(key, brief, group) for key, brief, group in _SUMMARY_METRICS_CONFIG
+               if key in summary_scalars]
+    if not visible:
+        return
+
+    positions = []
+    brief_labels = []
+    full_labels = []
+    bar_colors = []
+    bar_values = []
+    group_shade_counter = {}
+    seen_groups = []
+    x = 0.0
+    current_group = None
+    bar_w = 0.75
+    group_gap = 0.9
+
+    for key, brief, group in visible:
+        if group != current_group:
+            if current_group is not None:
+                x += group_gap  # visual gap between groups
+            current_group = group
+            if group not in seen_groups:
+                seen_groups.append(group)
+        shade_idx = group_shade_counter.get(group, 0)
+        palette = _SUMMARY_GROUP_PALETTES[group]
+        bar_colors.append(palette[shade_idx % len(palette)])
+        group_shade_counter[group] = shade_idx + 1
+        positions.append(x)
+        brief_labels.append(brief)
+        full_labels.append(key)
+        bar_values.append(float(summary_scalars[key]))
+        x += 1.0
+
+    n = len(positions)
+    fig_w = max(9.0, n * 0.95 + len(seen_groups) * group_gap)
+    fig, ax = plt.subplots(figsize=(fig_w, 5.5))
+
+    ax.bar(positions, bar_values, width=bar_w, color=bar_colors, linewidth=0, edgecolor="none")
+
+    # Value annotations on top of each bar
+    for pos, val in zip(positions, bar_values):
+        ax.text(pos, val, f"{val:.4g}", ha="center", va="bottom", fontsize=8, color="0.2")
+
+    # Brief labels as x-tick labels (shown ON the histogram x-axis)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(brief_labels, fontsize=9)
+
+    # Full metric keys printed BELOW the x-axis in a rotated margin
+    blend = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+    for pos, full_name in zip(positions, full_labels):
+        ax.text(pos, -0.04, full_name, transform=blend, rotation=90,
+                va="top", ha="center", fontsize=6.5, color="0.4", clip_on=False)
+
+    ax.set_title("Run Summary — Key Metrics by Split")
+    ax.set_ylabel("Metric Value")
+    ax.grid(True, alpha=0.3, axis="y")
+    ax.set_xlim(-0.65, x - 0.35)
+
+    # One legend patch per group (representative darkest shade)
+    legend_handles = [
+        Patch(facecolor=_SUMMARY_GROUP_PALETTES[g][0], edgecolor="none",
+              label=_SUMMARY_GROUP_DISPLAY_NAMES[g])
+        for g in seen_groups
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=9)
+
+    fig.subplots_adjust(bottom=0.30)  # Reserve bottom margin for full metric name labels.
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)

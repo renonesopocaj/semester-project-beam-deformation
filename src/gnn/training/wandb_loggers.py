@@ -42,7 +42,7 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
         experiment: ????
             run object
         epoch_number: int
-            Epoch index used as W&B step for media logging.
+            Epoch value included in the payload for the custom W&B x-axis.
     """
     # if not self._has_wandb_logger():
     if not has_wandb_logger:
@@ -75,7 +75,7 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
     if len(wandb_logs) == 0:
         return
     wandb_logs["epoch"] = epoch_number
-    experiment.log(wandb_logs, step=epoch_number, commit=True)
+    experiment.log(wandb_logs, commit=True)
 
 def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
     """
@@ -122,4 +122,3 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
         experiment.define_metric(f"{prefix}/stress_rel_mae", summary="min")
         experiment.define_metric(f"{prefix}/rollout_pos_mae", summary="min")
         experiment.define_metric(f"{prefix}/rollout_volume_mae", summary="min")
-    experiment.define_metric("final_validation/rollout_pos_mae_all_trajectories", summary="min")
