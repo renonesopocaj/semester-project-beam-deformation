@@ -17,6 +17,8 @@ defaults:
 # Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
 # not already adjacent (undirected) on the current graph; merged with existing edge_index.
 random_online: 0.0
+# Used by hyperparam sweep overrides like data.dataset_dir=${base_dir}/processed/...
+base_dir: /scratch/izar/senoner/dataset
 # Other
 seed: 42
 use_wandb: true
