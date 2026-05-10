@@ -55,9 +55,11 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
         overall_root, traj_root = "final_test", "final_test_traj"
     else:
         overall_root, traj_root = eval_split_name, f"{eval_split_name}_traj"
-    # 1. Log overall/summary plots
+    # 1. Log overall/summary plots (run_summary is excluded: logged separately as train/run_summary)
     wandb_logs = {}
     for name, path in overall_plot_paths.get("images", {}).items():
+        if name == "run_summary":
+            continue
         if Path(path).exists():
             wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Image(str(path))
     for name, path in overall_plot_paths.get("videos", {}).items():
@@ -91,6 +93,7 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
     experiment.define_metric("*", step_metric="epoch")
     # Training metrics
     experiment.define_metric("train/loss", summary="min")
+    experiment.define_metric("train/run_summary", step_metric="epoch")
     experiment.define_metric("train/supervised_loss", summary="min")
     experiment.define_metric("train/curvature_loss", summary="min")
     experiment.define_metric("train/acc_all_loss", summary="min")
