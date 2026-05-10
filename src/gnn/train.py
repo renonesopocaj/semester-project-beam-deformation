@@ -517,6 +517,30 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
             validation_dataloader)
 
 
+def read_hyperopt_optimization_scalar(callback_metrics, final_metrics_plain, metric_key):
+    """
+    Reads one scalar metric for hyperparameter search from trainer callback metrics or final-eval dicts.
+
+    Args:
+        callback_metrics: dict
+            Lightning Trainer.callback_metrics mapping names to tensors or floats.
+        final_metrics_plain: dict
+            Subset of names under final_validation/ and final_test/ mapped to floats.
+        metric_key: str
+            Metric name, for example val/acc_all_abs_mae or final_test/stress_abs_mae.
+    return: float
+        Scalar value, or nan when the key is missing in both sources.
+    """
+    raw = callback_metrics.get(metric_key)
+    if raw is None:
+        raw = final_metrics_plain.get(metric_key)
+    if raw is None:
+        return float("nan")
+    if hasattr(raw, "detach"):
+        return float(raw.detach().item())
+    return float(raw)
+
+
 def run_train_pipeline(cfg):
     """
     Same flow as CLI main(...) but returns metrics when called from hyperparameter tooling (Optuna).
@@ -525,9 +549,13 @@ def run_train_pipeline(cfg):
         cfg: omegaconf.DictConfig
 
     return: tuple
-        (best_val_relative_mae, final_metrics_plain_dict, wandb_run_id)
-        First element is checkpoint-best val/overall_relative_mae from ModelCheckpoint;
-        Second maps keys like final_validation/acc_all_rel_mae ... to floats after val+test phases;
+        (optimization_scalar, final_metrics_plain_dict, wandb_run_id)
+        First element is normally checkpoint-best score for the ModelCheckpoint monitor
+        (val/overall_relative_mae or val/overall_abs_mae from val_monitor_metric). When cfg sets
+        hyperparam_optimization_metric (injected by hyperparam_opt), that key is used instead if it
+        differs from the checkpoint monitor (values come from last trainer.callback_metrics or
+        final_* aggregates); when it matches the checkpoint monitor, the checkpoint best is returned.
+        Second maps keys like final_validation/acc_all_rel_mae ... to floats after val+test phases.
         Third is W&B run id when use_wandb else None.
     """
     # Print train cfg

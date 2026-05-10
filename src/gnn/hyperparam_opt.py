@@ -17,7 +17,7 @@ import json
 import math
 from pathlib import Path
 import wandb as wb_sdk
-from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_sweep_performance_plot, wandb_summary_log_plot
+from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_summary_metric_plot, save_sweep_performance_plot, wandb_summary_log_plot
 import matplotlib
 import matplotlib.pyplot as plt
 import optuna
@@ -26,7 +26,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 from src.gnn.train import run_train_pipeline
-from src.gnn.training.pareto_metric_config import resolve_pareto_metric_keys
+from src.gnn.training.pareto_metric_config import resolve_pareto_metric_pairs
 matplotlib.use("Agg")
 plt.ioff()
 
@@ -71,6 +71,25 @@ def format_swept_value_label(option_overrides):
     if len(values) == 1:
         return values[0]
     return "(" + ", ".join(values) + ")"
+
+def _parse_val_monitor_metric(optimization_metric):
+    """
+    Maps an optimization_metric short name to the val_monitor_metric value expected by training.
+
+    Supported values: overall_abs_mae → overall_abs_mae,
+    overall_relative_mae (or the legacy full key val/overall_relative_mae) → overall_relative_mae.
+
+    Args:
+        optimization_metric: str
+            Value from sweeps.yaml optimization_metric field.
+    return: str
+        val_monitor_metric override value for training.
+    """
+    norm = optimization_metric.strip().lower()
+    if norm == "overall_abs_mae" or norm == "val/overall_abs_mae":
+        return "overall_abs_mae"
+    return "overall_relative_mae"
+
 
 class SweepOption:
     """
@@ -128,8 +147,8 @@ class SweepRunner:
     train_conf_dir: Path
     repo_root: Path
     optimization_metric_key: str
-    pareto_x_key: str
-    pareto_y_key: str
+    val_monitor_metric_override: str
+    pareto_pairs: list
     train_compose_config_name: str
     sweeps_list: list
     best_so_far_overrides: list
@@ -158,8 +177,10 @@ class SweepRunner:
                 "Train compose config missing: %s (set train_compose_config in conf/hyperparam/sweeps.yaml)"
                 % train_compose_path
             )
-        self.optimization_metric_key = str(parent_cfg.optimization_metric)
-        self.pareto_x_key, self.pareto_y_key = resolve_pareto_metric_keys(
+        raw_opt_metric = str(parent_cfg.optimization_metric).strip()
+        self.optimization_metric_key = raw_opt_metric
+        self.val_monitor_metric_override = _parse_val_monitor_metric(raw_opt_metric)
+        self.pareto_pairs = resolve_pareto_metric_pairs(
             OmegaConf.select(parent_cfg, "pareto_metric_source"),
             OmegaConf.select(parent_cfg, "pareto_x_metric"),
             OmegaConf.select(parent_cfg, "pareto_y_metric"),
@@ -246,6 +267,7 @@ class SweepRunner:
             merged.append("++wandb_project=%s" % self._wandb_project)
             off_lit = _resolve_offline_flag(self._wandb_offline_raw)
             merged.append("++wandb_offline=%s" % str(off_lit).lower())
+            merged.append("++val_monitor_metric=%s" % self.val_monitor_metric_override)
             trial.set_user_attr("option_label_for_record", chosen_option.label)
             trial.set_user_attr("chosen_option_overrides", list(chosen_option.overrides))
             score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
@@ -255,12 +277,16 @@ class SweepRunner:
                       "swept_value_label": format_swept_value_label(chosen_option.overrides),
                       "swept_overrides": list(chosen_option.overrides),
                       "full_overrides": merged,
-                      "best_val_relative_mae": score_val_mae,
+                      "best_val_mae": score_val_mae,
                       "final_metrics": metrics_plain,
                       "wandb_run_id": wb_id}
             self.trial_records.append(record)
-            trial.set_user_attr("pareto_x", metrics_plain.get(self.pareto_x_key))
-            trial.set_user_attr("pareto_y", metrics_plain.get(self.pareto_y_key))
+            pi = 0
+            while pi < len(self.pareto_pairs):
+                px_key, py_key = self.pareto_pairs[pi]
+                trial.set_user_attr("pareto_x_%d" % pi, metrics_plain.get(px_key))
+                trial.set_user_attr("pareto_y_%d" % pi, metrics_plain.get(py_key))
+                pi = pi + 1
             return score_val_mae
 
         return optuna_objective
@@ -327,7 +353,8 @@ class SweepRunner:
     def report_global_best_run(self):
         """
         return: dict | None
-            Record with minimum best_val_relative_mae or None if empty.
+            Record with minimum best_val_mae (checkpoint best for the configured optimization
+            metric) or None if no trials were run.
         """
         if len(self.trial_records) == 0:
             print("No trial records; nothing to report.")
@@ -339,7 +366,7 @@ class SweepRunner:
             if best_rec is None:
                 best_rec = candidate
             else:
-                if candidate["best_val_relative_mae"] < best_rec["best_val_relative_mae"]:
+                if candidate["best_val_mae"] < best_rec["best_val_mae"]:
                     best_rec = candidate
             br = br + 1
         print("\n" + "=" * 80 + "\nBest run by %s among all trials (smaller is better):" % self.optimization_metric_key)
@@ -364,13 +391,38 @@ def main(cfg):
         json.dump(runner.trial_records, fh_out, indent=2, default=str)
 
     runner.report_global_best_run()
-    png_path_here = save_pareto_plot(runner.trial_records, runner.pareto_x_key, runner.pareto_y_key, outp)
-    print("Saved Pareto plot to %s" % png_path_here)
 
     off_lit = _resolve_offline_flag(OmegaConf.select(cfg, "wandb_offline"))
     study_nm = str(OmegaConf.select(cfg, "study_name"))
     wandb_proj = str(OmegaConf.select(cfg, "wandb_project"))
-    wandb_summary_log_plot(study_nm, png_path_here, wandb_proj, off_lit)
+
+    # One Pareto plot per configured (x, y) pair.
+    pareto_plot_paths = []
+    pi = 0
+    while pi < len(runner.pareto_pairs):
+        px_key, py_key = runner.pareto_pairs[pi]
+        pareto_filename = "pareto_%d.png" % pi
+        png_path_here = save_pareto_plot(runner.trial_records, px_key, py_key, outp, pareto_filename)
+        pareto_plot_paths.append(png_path_here)
+        print("Saved Pareto plot %d to %s" % (pi, png_path_here))
+        pi = pi + 1
+
+    # Fixed summary plots across all trials.
+    abs_summary_path = save_summary_metric_plot(
+        runner.trial_records, "final_test/overall_abs_mae", outp, "summary_abs_mae.png"
+    )
+    rel_summary_path = save_summary_metric_plot(
+        runner.trial_records, "final_test/overall_relative_mae", outp, "summary_rel_mae.png"
+    )
+    print("Saved summary abs MAE plot to %s" % abs_summary_path)
+    print("Saved summary relative MAE plot to %s" % rel_summary_path)
+
+    # Log all plots to W&B.
+    all_plot_paths = list(pareto_plot_paths) + [abs_summary_path, rel_summary_path]
+    ap = 0
+    while ap < len(all_plot_paths):
+        wandb_summary_log_plot(study_nm, all_plot_paths[ap], wandb_proj, off_lit)
+        ap = ap + 1
 
 
 if __name__ == "__main__":

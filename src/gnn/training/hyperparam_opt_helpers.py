@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 matplotlib.use("Agg")
 plt.ioff()
 
-def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
+def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filename="pareto.png"):
     """
     Args:
         records_list: list of dict
@@ -15,9 +15,11 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
         pareto_y_key: str
             Y axis scalar key inside final_metrics.
         output_dir: Path
-            Directory for pareto.png .
+            Directory where the plot is written.
+        filename: str
+            Output filename (default pareto.png); use different names for multiple pairs.
     return: Path
-            Path to pareto.png .
+            Path to the saved plot.
     """
     xs = []
     ys = []
@@ -61,7 +63,7 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
         )
         axe.text(0.5, 0.5, diag, ha="center", va="center")
         axe.set_axis_off()
-        outp_empty = Path(output_dir) / "pareto.png"
+        outp_empty = Path(output_dir) / filename
         outp_empty.parent.mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
         plt.savefig(outp_empty, dpi=120)
@@ -89,7 +91,7 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir):
     axi.set_title("Pareto set (multi-objective, lower-left better)")
     axi.legend(loc="best")
     axi.grid(alpha=0.25)
-    out_path_png = Path(output_dir) / "pareto.png"
+    out_path_png = Path(output_dir) / filename
     out_path_png.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
     plt.savefig(out_path_png, dpi=170)
@@ -136,6 +138,68 @@ def save_sweep_performance_plot(sweep_name, x_labels, y_values, y_metric_name, o
     plt.savefig(out_path, dpi=170)
     plt.close(fig)
     return out_path
+
+def save_summary_metric_plot(records_list, metric_key, output_dir, filename):
+    """
+    Saves a summary bar/line plot with one point per trial across all sweeps.
+
+    X-axis: sweep_name__option_label for each trial record.
+    Y-axis: the value of metric_key inside final_metrics.
+
+    Args:
+        records_list: list of dict
+            Trial records (each has sweep_name, option_label, final_metrics).
+        metric_key: str
+            Key to extract from final_metrics (e.g. final_test/overall_abs_mae).
+        output_dir: Path
+            Directory where the plot is written.
+        filename: str
+            Output filename.
+    return: Path
+            Path to the saved plot.
+    """
+    out_path = Path(output_dir) / filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    x_labels = []
+    y_vals = []
+    ri = 0
+    while ri < len(records_list):
+        rec = records_list[ri]
+        val = rec.get("final_metrics", {}).get(metric_key)
+        if val is not None:
+            try:
+                yf = float(val)
+            except (TypeError, ValueError):
+                ri = ri + 1
+                continue
+            if math.isfinite(yf):
+                label = "%s__%s" % (rec.get("sweep_name", ""), rec.get("option_label", ""))
+                x_labels.append(label)
+                y_vals.append(yf)
+        ri = ri + 1
+    if len(x_labels) == 0:
+        fig_empty, ax_empty = plt.subplots(figsize=(8, 4.8))
+        ax_empty.text(0.5, 0.5, "No data for %s" % metric_key, ha="center", va="center")
+        ax_empty.set_axis_off()
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=160)
+        plt.close(fig_empty)
+        return out_path
+    x_idx = list(range(len(x_labels)))
+    fig, ax = plt.subplots(figsize=(max(8, int(len(x_labels) * 0.9)), 4.8))
+    ax.plot(x_idx, y_vals, marker="o", linewidth=1.6, alpha=0.95)
+    ax.scatter(x_idx, y_vals, s=40, zorder=3)
+    ax.set_xticks(x_idx)
+    ax.set_xticklabels(x_labels, rotation=30, ha="right")
+    ax.set_xlabel("trial (sweep__option)")
+    ax.set_ylabel(metric_key)
+    ax.set_title("All trials: %s" % metric_key)
+    ax.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=170)
+    plt.close(fig)
+    return out_path
+
 
 def _pareto_non_dominated_minimize(points_xy):
     """
