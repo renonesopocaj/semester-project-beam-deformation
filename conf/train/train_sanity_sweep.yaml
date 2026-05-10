@@ -5,7 +5,7 @@ defaults:
   - computational: no_torch_compile
   - model: mgn_sanity
   - training: sanity # contains .total_epochs
-  - noise: noise_per_epoch
+  - noise: noise_per_epoch_noprev
   - loss: default
   - validation: default
   - data: default
