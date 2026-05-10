@@ -24,7 +24,8 @@ base_dir: /scratch/izar/senoner/dataset # NOTE: if it's on slurm it's "/scratch/
 
 sweeps:
   - name: graphunet
-    fixed_overrides: []
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
     options:
       - label: deep
         overrides:

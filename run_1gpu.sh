@@ -28,12 +28,9 @@ conda activate semesterproject
 # mgn_deep w/ z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot
 mkdir -p saved_models
 srun python -m src.gnn.train computational=in_memory_slurm_1gpu \
-  computational.torch_compile=False \
+  computational.torch_compile=True \
   lr_scheduler=plateau_long \
   training=slurm \
   training.total_epochs=300 \
-  model=mgn_biggest \
-  devices=one_gpu \
-  data=slurm \
-  noise=noise_per_epoch_noprev \
-  data.dataset_dir="/scratch/izar/senoner/dataset/processed/rotated_beam/large"
+  model=mgn_deep_midmsg \
+  data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_all/medium"

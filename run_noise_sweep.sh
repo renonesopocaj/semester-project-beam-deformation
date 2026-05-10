@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sweep
+#SBATCH --job-name=sweep_noise
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -24,4 +24,4 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 mkdir -p saved_models
 
-srun python -m src.gnn.hyperparam_opt
+srun python -m src.gnn.hyperparam_opt -cn noise_sweeps
