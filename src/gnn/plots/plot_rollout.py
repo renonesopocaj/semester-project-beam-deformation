@@ -945,7 +945,6 @@ def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_pre
     return: None
         Saves all requested validation plots.
     """
-    print("Printing validation scatter plots and edge correlation...")
     output_dir = Path(output_dir)  # Ensure pathlib for filename joins.
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)  # Same cache as error GIFs (concat nodal data).
     num_timesteps = len(true_rollout)  # Title/context for scatter PNGs.
