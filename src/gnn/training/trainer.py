@@ -219,9 +219,9 @@ class LitModule(L.LightningModule):
         # Keep strict epoch-based step semantics: do not emit per-batch watch logs.
         if self.enable_wandb_watch:
             print("W&B watch disabled: enforcing one W&B step per epoch.")
-        # Log initial epoch value
+        # Log initial epoch value (epoch is a custom x-axis metric, not the internal W&B step)
         epoch_number = self._current_wandb_epoch()
-        self.logger.experiment.log({"epoch": epoch_number}, step=epoch_number, commit=True)
+        self.logger.experiment.log({"epoch": epoch_number}, commit=True)
 
     ##############################################################################################################
     #                                            SETUP FUNCTIONS
@@ -235,12 +235,11 @@ class LitModule(L.LightningModule):
 
     def _current_wandb_epoch(self):
         """
-        Returns the epoch number used as W&B step.
+        Returns the epoch number logged as a custom x-axis metric in W&B.
         During fit: the current training epoch (0-based).
         During test (final evaluation): _last_fit_epoch + split_offset, where split_offset is 0
-        for "validation" and 1 for "test". This places final-eval metrics at consecutive steps
-        strictly after the last training step, avoiding the monotonic-step constraint violation
-        even when both final-validation and final-test evals log into the same run.
+        for "validation" and 1 for "test". This places final-eval media at consecutive epoch values
+        strictly after the last training epoch.
         """
         if self.trainer is not None and self.trainer.testing:
             split_offset = 1 if self.eval_split_name == "test" else 0
@@ -249,7 +248,8 @@ class LitModule(L.LightningModule):
 
     def _log_wandb_epoch_marker(self, commit):
         """
-        Writes an explicit epoch marker to W&B with step=epoch.
+        Writes an explicit epoch marker to W&B.
+        epoch is a custom x-axis metric, not the W&B internal step.
 
         Args:
             commit: bool
@@ -258,7 +258,7 @@ class LitModule(L.LightningModule):
         if not self._has_wandb_logger() or not self.trainer.is_global_zero:
             return
         epoch_number = self._current_wandb_epoch()
-        self.logger.experiment.log({"epoch": epoch_number}, step=epoch_number, commit=commit)
+        self.logger.experiment.log({"epoch": epoch_number}, commit=commit)
 
     def _to_wandb_scalar(self, value):
         """
@@ -315,7 +315,8 @@ class LitModule(L.LightningModule):
 
     def _log_callback_metrics_to_wandb(self, include_prefixes, include_exact, commit):
         """
-        Logs selected callback metrics to W&B at step=current_epoch.
+        Logs selected callback metrics to W&B. epoch is included as a custom x-axis
+        metric in the payload and must NOT be passed as step= to experiment.log.
 
         Args:
             include_prefixes: list[str]
@@ -332,7 +333,7 @@ class LitModule(L.LightningModule):
             return
         epoch_number = self._current_wandb_epoch()
         payload["epoch"] = epoch_number
-        self.logger.experiment.log(payload, step=epoch_number, commit=commit)
+        self.logger.experiment.log(payload, commit=commit)
 
     def _write_final_eval_to_summary(self, include_prefixes, include_exact):
         """
@@ -391,8 +392,8 @@ class LitModule(L.LightningModule):
         """
         Called at the end of fit. Writes final parameter distribution plot, logs it to W&B when enabled,
         and unwatches the model to prevent memory leaks.
-        Sets _last_fit_epoch so that test-phase W&B logging (final evaluation) uses epoch+1 as the step,
-        placing final-eval artifacts cleanly after the last training point.
+        Sets _last_fit_epoch so that test-phase W&B logging (final evaluation) uses epoch+1 as the
+        custom x-axis value, placing final-eval artifacts cleanly after the last training point.
         """
         if self.trainer is not None and self.trainer.is_global_zero:
             out_path = self.training_plots_dir / "final_parameter_distributions.png"
@@ -404,11 +405,10 @@ class LitModule(L.LightningModule):
                         "epoch": epoch_step,
                         "train/final_parameter_distributions": wandb.Image(str(out_path)),
                     },
-                    step=epoch_step,
                     commit=True,
                 )
-        # Store last fit epoch + 1 so that on_test_epoch_end logs at a fresh step
-        # strictly greater than any step committed during training.
+        # Store last fit epoch + 1 so that on_test_epoch_end media logs at a fresh epoch value
+        # strictly greater than any epoch value committed during training.
         self._last_fit_epoch = int(self.current_epoch) + 1
         if self._has_wandb_logger() and self.trainer.is_global_zero and self.enable_wandb_watch:
             self.logger.experiment.unwatch(self.model)
@@ -984,15 +984,9 @@ class LitModule(L.LightningModule):
                  prog_bar=True, logger=False, sync_dist=False, rank_zero_only=True)
         self.log(name=f"{wb_prefix}/rollout_volume_mae", value=avg_rollout_volume_mae_tensor,
                  prog_bar=True, logger=False, sync_dist=False, rank_zero_only=True)
-        if self.eval_split_name == "validation":
-            self.log(name="final_validation/rollout_pos_mae_all_trajectories", value=avg_rollout_pos_mae_tensor,
-                     prog_bar=False, logger=False, sync_dist=False, rank_zero_only=True)
-        include_exact = []
-        if self.eval_split_name == "validation":
-            include_exact.append("final_validation/rollout_pos_mae_all_trajectories")
         self._write_final_eval_to_summary(
             include_prefixes=[f"{wb_prefix}/"],
-            include_exact=include_exact,
+            include_exact=[],
         )
         if not self.log_test_media: # If not logging, skip the rest
             return
@@ -1001,10 +995,14 @@ class LitModule(L.LightningModule):
         # 4. Generate overall/summary plots (across all trajectories)
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
+        summary_scalars = self._collect_callback_metrics_for_wandb(
+            include_prefixes=["val/", "train/", "final_validation/", "final_test/"],
+            include_exact=[],
+        )
         overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                                           per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
                                           all_rollout_volume_mae, overall_output_dir,
-                                          self.eval_split_name, selected)
+                                          self.eval_split_name, selected, summary_scalars)
         # 5. Generate in-depth plots for selected trajectories only
         per_traj_paths = {}
         for traj_idx in selected:
