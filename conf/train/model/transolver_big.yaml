@@ -1,11 +1,21 @@
 model_name: "transolver"
+# Control parameters: # layers = # of stacked Transformer blocks
 transolver_n_layers: 8
+# Hidden dimension
 transolver_n_hidden: 512
-transolver_dropout: 0.0
+# Number of attention heads
 transolver_n_head: 10
-transolver_time_input: false
+transolver_dropout: 0.0
 transolver_act: "gelu"
+# If true, the model expects a per-graph scalar time ingraph.t, builds a sinusoidal time embedding, refines it with
+# time_fc, and adds it to every node embedding.
+transolver_time_input: false
+# FFN expansion ratio inside each Transolver_block: the pointwise MLP expands from n_hidden to mlp_ratio * n_hidden
+# (then back). 1 means no expansion relative to hidden width; values like 4 are common in transformer-style FFNs for
+# more nonlinear capacity.
 transolver_mlp_ratio: 1
 transolver_slice_num: 32
+# Only used if transolver_unified_pos==true. It's the side length of a regular ref × ref grid on the unit square;
+# each node is described by ref² distances to those reference points instead of raw coordinates in the first embedding.
 transolver_ref: 8
 transolver_unified_pos: false

@@ -437,8 +437,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     checkpoint_str_dir = str(lightning_module.model_dir / "checkpoints")
     # ALlocate a callback for checkpoints of model every time I get the "best model"
     if train_cfg.enable_val:
-        _ckpt_monitor = ("val/overall_abs_mae"
-                         if train_cfg.val_monitor_metric == "overall_abs_mae"
+        _ckpt_monitor = ("val/overall_abs_mae" if train_cfg.val_monitor_metric == "overall_abs_mae"
                          else "val/overall_relative_mae")
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="best",
                                          monitor=_ckpt_monitor, mode="min",

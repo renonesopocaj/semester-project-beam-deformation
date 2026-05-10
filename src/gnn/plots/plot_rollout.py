@@ -789,7 +789,7 @@ def _plot_roll_err_pos_vs_time(true_rollout, pred_rollout, output_path, split_na
             Destination image path.
         return: None
     """
-    print("Plot rollout position error vs timestep...")
+    # print("Plot rollout position error vs timestep...")
     errors = []  # One scalar MAE per rollout step for the y-axis series.
     for true_graph, pred_graph in zip(true_rollout, pred_rollout):
         diff = torch.abs(true_graph.x_pos_t - pred_graph.x_pos_t)  # Per-node L1 position error at this timestep.
@@ -945,7 +945,6 @@ def _plot_scatter_edge_corr(true_rollout, pred_rollout, output_dir, filename_pre
     return: None
         Saves all requested validation plots.
     """
-    print("Printing validation scatter plots and edge correlation...")
     output_dir = Path(output_dir)  # Ensure pathlib for filename joins.
     rollout_summary = _build_rollout_summary(true_rollout, pred_rollout)  # Same cache as error GIFs (concat nodal data).
     num_timesteps = len(true_rollout)  # Title/context for scatter PNGs.

@@ -1,0 +1,30 @@
+defaults:
+  - computational: default
+  - model: mgn_sanity
+  - training: sanity # contains .total_epochs
+  - noise: default
+  - loss: default
+  - validation: default
+  - data: default
+  - lr_scheduler: step
+  - residuals: default
+  - devices: one_gpu
+  - _self_
+
+seed: 42
+# Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
+# not already adjacent (undirected) on the current graph; merged with existing edge_index.
+random_online: 0.0
+use_wandb: true
+initial_lr: 1e-3
+optimizer: adam
+protect_from_oom: True # disables cuda reduce overhead which causes oom errors
+
+hydra:
+  run:
+    dir: hydra/outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false
