@@ -248,6 +248,26 @@ semester-project/
 4. Train a model with `src/gnn/train.py`.
 5. Evaluate saved checkpoints and produce rollout diagnostics with `src/gnn/validate.py` or the final evaluation phase inside `src/gnn/train.py`.
 
+## Hyperparameter optimization outputs
+
+### hyperparam opt sweep order and overrides
+
+Sequential sweeps in `conf/hyperparam/sweeps.yaml` are run in list order by `src/gnn/hyperparam_opt.py`. After each sweep stage, only the winning **option** overrides (the `overrides` under the best grid point) are prepended for later stages; each stage’s `fixed_overrides` apply only within that stage and are not carried forward.
+
+For a two-stage YAML like the following pattern (noise fixed per stage, `residuals` swept as options):
+
+- Sweep 1 runs the four `residuals=...` options with `noise=no_noise` every time.
+- Sweep 2 runs the four options with `noise=noise_per_epoch_noprev` every time, and prepends the winning `residuals=...` overrides from sweep 1 (e.g. if `volume` won, you carry `residuals=volume` into every trial of sweep 2).
+
+Artifacts produced by one invocation of `python -m src.gnn.hyperparam_opt`:
+
+- `saved_models/<trial_timestamp>/` per trial, containing `train.yaml`, `preprocess.yaml`, `checkpoints/`, `training/`, `model_evaluation/`, optional `profiles/`, and the per-trial offline `wandb/` subfolder.
+- `hyperparam_outputs/<study_name>/` (timestamp = driver start), containing `all_trials.json`, `sweep_<name>_overall_mae.png` (one per sweep stage), `pareto_<i>.png` (one per pareto pair), `summary_abs_mae.png`, `summary_rel_mae.png`.
+- `hydra/outputs/hyperparam/<date>/<HH-MM-SS>/` from the driver's `hydra.main`.
+- W&B offline runs:
+  - one per trial (under `saved_models/<trial_timestamp>/wandb/`),
+  - plus one extra `<study_name>__summary` offline run per generated plot (pareto pairs + 2 summary plots), under `./wandb/`.
+
 ## Notes
 
 - The repository currently has no committed `tests/`, `scripts/`, or `notebooks/` directories.
