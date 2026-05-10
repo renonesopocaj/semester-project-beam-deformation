@@ -1,0 +1,1993 @@
+ _____                             _
+|  __ \                           | |
+| |__) |   _ _ __  _ __   ___   __| |
+|  _  / | | | '_ \| '_ \ / _ \ / _` |
+| | \ \ |_| | | | | |_) | (_) | (_| |
+|_|  \_\__,_|_| |_| .__/ \___/ \__,_|
+                  | |
+                  |_|
+For detailed documentation and guides, please visit:
+https://docs.runpod.io/ and https://blog.runpod.io/
+
+
+root@70a8f3412516:/# cd /workspace
+root@70a8f3412516:/workspace# cd semester-project-beam-deformation/
+root@70a8f3412516:/workspace/semester-project-beam-deformation# ls
+README.md    conf     environments  run.sh       run_1gpu_extramem.sh  run_2gpu_bf16.sh      run_2gpu_test.sh  run_nonoise_test.sh   run_sweep.sh  src
+all_deep.sh  dataset  hydra         run_1gpu.sh  run_2gpu.sh           run_2gpu_extramem.sh  run_fem_gen.sh    run_preprocessing.sh  saved_models  tests
+root@70a8f3412516:/workspace/semester-project-beam-deformation# python -m src.gnn.hyperparam_opt
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 19, in <module>
+    import wandb as wb_sdk
+ModuleNotFoundError: No module named 'wandb'
+root@70a8f3412516:/workspace/semester-project-beam-deformation# conda activate semesterproject
+(semesterproject) root@70a8f3412516:/workspace/semester-project-beam-deformation# python -m src.gnn.hyperparam_opt
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers
+is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+[I 2026-05-09 21:56:35,184] A new study created in memory with name: no-name-9a5c93fc-b1cb-4ff4-91a1-e90364626ac4
+
+================================================================================
+
+computational:
+  num_workers: 0
+  batch_size: 16
+  precision: 32-true
+  torch_compile: true
+  profiling: false
+  fused_adam: true
+  pin_memory: true
+  rollout_batch_size: 1
+  accumulate_grad_batches: 1
+  activation_checkpointing: false
+  foreach_optim: false
+model:
+  model_name: MGN
+  num_messages: 12
+  latent_dim: 312
+  num_layers_graphnetblock: 2
+  layer_norm_enable_encoder: true
+  layer_norm_enable_processor: true
+  layer_norm_enable_decoder: false
+  num_layers_heads: 3
+  num_layers_encoder: 2
+  dropout_head: 0.05
+  dropout_encoder: 0.05
+  dropout_processor: 0.0
+training:
+  training_type: slurm
+  total_epochs: 150
+  resume_from: null
+  checkpoint_interval: 20
+noise:
+  noise_scale_train: 0
+  noise_scale_test: 0
+  noise_gamma: 1.0
+  noise_seed: 42
+  noise_also_prev: false
+  noise_prev_scale_train: 1.0e-05
+  noise_feature_update_mode: exact
+  noise_per_epoch: false
+loss:
+  loss_type: mse
+  exp_mises: false
+  stress_weight: 1.0
+validation:
+  enable_val: true
+  validation_interval: 1
+  profile_loss_stress_vs_acceleration: false
+  enable_wandb_watch: false
+  enable_rollout_val: false
+  log_test_media: true
+  plot_diagnostics_advanced: false
+  selected_validation_trajectories: null
+  selected_test_trajectories: null
+data:
+  dataset_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium
+  train_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/train
+  val_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/val
+  test_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/test
+  stats_path: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/train/stats/stats.json
+  preprocess_config_path: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/config.yaml
+  extra_info_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/extra_info
+lr_scheduler:
+  type: plateau
+  factor: 0.7
+  patience: 9
+  min_lr: 1.0e-07
+  early_stopping_patience: 20
+  threshold: 0.0001
+residuals:
+  residual_list: []
+  curvature_loss_weight: 1.0
+  volume_loss_weight: 1.0
+devices:
+  devices: 1
+random_online: 0.0
+seed: 42
+use_wandb: true
+initial_lr: 0.0008
+optimizer: adam
+protect_from_oom: true
+wandb_run_name: hp_opt_2026-05-09_21-56-35__features__nonlin
+wandb_group: hp_opt_2026-05-09_21-56-35
+wandb_project: beam_deformation
+wandb_offline: true
+
+================================================================================
+
+
+Seed set to 42
+
+================================================================================
+
+size:
+  dataset_size: medium
+  limit_timesteps: 50
+dataset_path:
+  dataset_type: biax_longer
+  base_dir: dataset
+  raw_data_dir: dataset/raw/raw/biax_longer/medium
+  save_dir: dataset/processed/biax_longer
+  extra_info_dir: dataset/raw/raw/biax_longer/medium/extra_info
+normalizer:
+  isotropic_normalizer: true
+  normalizer_method: z
+features:
+  name_features: nonlin
+  mises_log: true
+  enable_absolute_pos: false
+  enable_past_history: true
+  enable_node_norms: false
+  enable_edge_velocity: false
+  enable_force_edge: false
+  enable_displ_edge: false
+  enable_abs_pos_edge: false
+  enable_abs_rest_pos_edge: false
+  enable_abs_pos_edge_norm: true
+  enable_rest_pos_edge_norm: true
+  enable_force_edge_norm: true
+  enable_edge_velocity_norm: true
+  enable_stretch_edge: true
+  enable_rotation_angle: true
+device: cpu
+dt: 0.08
+seed: 42
+time_discretization_method: second_order_central
+edge_augmentation:
+  k_hop: 0
+  random_offline: 0.0
+  add_wall_edges: null
+  wall_border_percentage: 0.0
+  wall_internal_percentage: 0.0
+node_channels: 13
+edge_channels: 9
+train_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/train
+test_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/test
+val_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/val
+extra_info_dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/extra_info
+
+================================================================================
+
+
+Extra info dir: dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/extra_info
+Selected validation trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+Selected test trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+Selected trajectory final-eval rollout limit: 400
+Using device: cuda
+Loading stats from dataset/processed/biax_longer/z_isotr_centr_nonlin/medium/train...
+        Node features: mean shape = torch.Size([12]), std shape = torch.Size([12])
+        Edge features: mean shape = torch.Size([9]), std shape = torch.Size([9])
+        Target features: mean shape = torch.Size([4]), std shape = torch.Size([4])
+Train dataset:
+        Found 675 sample files
+        Loaded the dataset with 33075 samples (675 trajectories)
+        One stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: 0.165 MB (173332 bytes)
+
+
+
+
+
+One training batch (collated, tensor storage only): 2.672 MB (2802248 bytes), num_graphs=16, config batch_size=16
+(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)
+
+
+Validation dataset:
+        Found 84 sample files
+        Loaded the dataset with 4474 samples (84 trajectories)
+        One stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: 0.174 MB (182332 bytes)
+
+
+
+
+
+Model info:
+        Model params+buffers before torch.compile: 44.011 MB (46148560 bytes)
+        Model params+buffers after torch.compile: 44.011 MB (46148560 bytes) (same tensor storage; torch.compile may still increase peak VRAM for kernels/ca
+ching.)
+        Total parameters: 11,537,140
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available
+on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /workspac
+e/semester-project-beam-deformation/src/gnn ...
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+Training ID: 2026-05-09_21-57-31
+         Initial learning rate: 0.0008
+        LR scheduler: plateau
+         Total epochs: 150
+        Validation interval: 1
+         Loss type: mse
+        Using wandb: True
+         Model directory: /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31
+You are using a CUDA device ('NVIDIA GeForce RTX 5090') that has Tensor Cores. To properly utilize them, you should set `torch.set_float32_matmul_precision(
+'medium' | 'high')` which will trade-off precision for performance. For more details, read https://pytorch.org/docs/stable/generated/torch.set_float32_matmu
+l_precision.html#torch.set_float32_matmul_precision
+wandb: WARNING The anonymous setting has no effect and will be removed in a future version.
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: WARNING `resume` will be ignored since W&B syncing is set to `offline`. Starting a new run with run id dyvuqgvw.
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/wandb/offline-run-20260509_215735-dyvuqgvw
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+  | Name         | Type            | Params | Mode
+---------------------------------------------------------
+0 | model        | OptimizedModule | 11.5 M | train
+1 | node_stats   | StatsModule     | 0      | train
+2 | edge_stats   | StatsModule     | 0      | train
+3 | target_stats | StatsModule     | 0      | train
+---------------------------------------------------------
+11.5 M    Trainable params
+0         Non-trainable params
+11.5 M    Total params
+46.149    Total estimated model params size (MB)
+274       Modules in train mode
+0         Modules in eval mode
+Sanity Checking: |                                                                                                                    | 0/? [00:00<?, ?it/s]
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'val_dataloader' doe
+s not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to i
+mprove performance.
+Sanity Checking DataLoader 0:   0%|                                                                                                   | 0/2 [00:00<?, ?it/s]
+I0509 21:57:41.042000 2717 site-packages/torch/_dynamo/utils.py:1826] [0/0] ChromiumEventLogger initialized with id dac55d0f-c1e8-46d6-8ab7-4c32135af08f
+I0509 21:57:41.112000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/0] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0509 21:57:41.115000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/0] create_env
+I0509 21:57:49.135000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/0] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0509 21:57:49.228000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/0] Step 2: calling compiler function inductor
+I0509 21:58:24.032000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/0] Step 2: done compiler function inductor
+I0509 21:58:24.144000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/0] produce_guards
+I0509 21:58:24.233000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/0] put_code_state: no cache key, skipping
+I0509 21:58:24.242000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/0] run_gc_after_compile: running gc
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'train_dataloader' d
+oes not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to
+ improve performance.
+Epoch 0:   0%|                                                                                                                     | 0/2068 [00:00<?, ?it/s]
+I0509 21:58:25.079000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/1] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0509 21:58:25.101000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/1] create_env
+I0509 21:58:25.701000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/1] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0509 21:58:25.754000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/1] Step 2: calling compiler function inductor
+I0509 21:58:26.335000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/1] Step 2: done compiler function inductor
+I0509 21:58:26.368000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/1] produce_guards
+I0509 21:58:26.447000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/1] put_code_state: no cache key, skipping
+I0509 21:58:26.457000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/1] run_gc_after_compile: running gc
+Epoch 0:  42%|███████████████████████████████████████▋                                                       | 864/2068 [00:46<01:04, 18.60it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▋                                                       | 865/2068 [00:46<01:04, 18.60it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▊                                                       | 866/2068 [00:46<01:04, 18.60it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▊                                                       | 867/2068 [00:46<01:04, 18.60it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▊                                                       | 868/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▉                                                       | 869/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|███████████████████████████████████████▉                                                       | 870/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|████████████████████████████████████████                                                       | 871/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|████████████████████████████████████████                                                       | 872/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|████████████████████████████████████████                                                       | 873/2068 [00:46<01:04, 18.61it/s, v_num=qgvw]
+Epoch 0:  42%|████████████████████████████████████████▏                                                      | 874/2068 [00:46<01:04, 18.62it/s, v_num=qgvw]
+Epoch 0:  42%|████████████████████████████████████████▏                                                      | 875/2068 [00:47<01:04, 18.62it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▌                                                   | 948/2068 [00:50<01:00, 18.66it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▌                                                   | 949/2068 [00:50<00:59, 18.66it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▋                                                   | 950/2068 [00:50<00:59, 18.66it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▋                                                   | 951/2068 [00:50<00:59, 18.66it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▋                                                   | 952/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▊                                                   | 953/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▊                                                   | 954/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▊                                                   | 955/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▉                                                   | 956/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|███████████████████████████████████████████▉                                                   | 957/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|████████████████████████████████████████████                                                   | 958/2068 [00:51<00:59, 18.67it/s, v_num=qgvw]
+Epoch 0:  46%|████████████████████████████████████████████                                                   | 959/2068 [00:51<00:59, 18.68it/s, v_num=qgvw]
+Epoch 0:  46%|████████████████████████████████████████████▏                                                  | 961/2068 [00:51<00:59, 18.68it/s, v_num=qgvw]
+Epoch 0:  47%|████████████████████████████████████████████▍                                                  | 966/2068 [00:51<00:58, 18.69it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████                                                | 1012/2068 [00:54<00:56, 18.74it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████                                                | 1013/2068 [00:54<00:56, 18.74it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████                                                | 1014/2068 [00:54<00:56, 18.74it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▏                                               | 1015/2068 [00:54<00:56, 18.74it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▏                                               | 1016/2068 [00:54<00:56, 18.74it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▏                                               | 1017/2068 [00:54<00:56, 18.75it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▎                                               | 1019/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▎                                               | 1020/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▍                                               | 1021/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▍                                               | 1022/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  49%|██████████████████████████████████████████████▌                                               | 1023/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  50%|██████████████████████████████████████████████▌                                               | 1024/2068 [00:54<00:55, 18.75it/s, v_num=qgvw]
+Epoch 0:  50%|██████████████████████████████████████████████▌                                               | 1025/2068 [00:54<00:55, 18.76it/s, v_num=qgvw]
+Epoch 0:  50%|██████████████████████████████████████████████▋                                               | 1026/2068 [00:54<00:55, 18.76it/s, v_num=qgvw]
+Epoch 0:  50%|██████████████████████████████████████████████▊                                               | 1029/2068 [00:54<00:55, 18.76it/s, v_num=qgvw]
+Epoch 0:  50%|██████████████████████████████████████████████▉                                               | 1032/2068 [00:55<00:55, 18.76it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▎                                 | 1326/2068 [01:09<00:39, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▎                                 | 1327/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▎                                 | 1328/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▍                                 | 1329/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▍                                 | 1330/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▍                                 | 1331/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▌                                 | 1332/2068 [01:09<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  64%|████████████████████████████████████████████████████████████▌                                 | 1333/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▋                                 | 1334/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▋                                 | 1335/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▋                                 | 1336/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▊                                 | 1337/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▊                                 | 1338/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▉                                 | 1340/2068 [01:10<00:38, 19.03it/s, v_num=qgvw]
+Epoch 0:  65%|████████████████████████████████████████████████████████████▉                                 | 1341/2068 [01:10<00:38, 19.04it/s, v_num=qgvw]
+Epoch 0:  65%|█████████████████████████████████████████████████████████████                                 | 1343/2068 [01:10<00:38, 19.04it/s, v_num=qgvw]
+Epoch 0:  65%|█████████████████████████████████████████████████████████████▏                                | 1345/2068 [01:10<00:37, 19.04it/s, v_num=qgvw]
+Epoch 0:  66%|██████████████████████████████████████████████████████████████▎                               | 1370/2068 [01:11<00:36, 19.05it/s, v_num=qgvw]
+Epoch 0:  67%|███████████████████████████████████████████████████████████████                               | 1387/2068 [01:12<00:35, 19.07it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▋                            | 1445/2068 [01:15<00:32, 19.10it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▋                            | 1446/2068 [01:15<00:32, 19.10it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▊                            | 1448/2068 [01:15<00:32, 19.10it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▊                            | 1449/2068 [01:15<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▉                            | 1450/2068 [01:15<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|█████████████████████████████████████████████████████████████████▉                            | 1451/2068 [01:15<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|██████████████████████████████████████████████████████████████████                            | 1452/2068 [01:15<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|██████████████████████████████████████████████████████████████████                            | 1453/2068 [01:16<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|██████████████████████████████████████████████████████████████████                            | 1454/2068 [01:16<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  70%|██████████████████████████████████████████████████████████████████▏                           | 1455/2068 [01:16<00:32, 19.11it/s, v_num=qgvw]
+Epoch 0:  71%|██████████████████████████████████████████████████████████████████▎                           | 1458/2068 [01:16<00:31, 19.11it/s, v_num=qgvw]
+Epoch 0:  71%|██████████████████████████████████████████████████████████████████▎                           | 1459/2068 [01:16<00:31, 19.11it/s, v_num=qgvw]
+Epoch 0:  71%|██████████████████████████████████████████████████████████████████▍                           | 1461/2068 [01:16<00:31, 19.11it/s, v_num=qgvw]
+Epoch 0:  74%|█████████████████████████████████████████████████████████████████████▏                        | 1522/2068 [01:19<00:28, 19.15it/s, v_num=qgvw]
+Epoch 0:  74%|█████████████████████████████████████████████████████████████████████▎                        | 1524/2068 [01:19<00:28, 19.15it/s, v_num=qgvw]
+Epoch 0:  74%|█████████████████████████████████████████████████████████████████████▎                        | 1526/2068 [01:19<00:28, 19.15it/s, v_num=qgvw]
+Epoch 0:  74%|█████████████████████████████████████████████████████████████████████▌                        | 1529/2068 [01:19<00:28, 19.15it/s, v_num=qgvw]
+Epoch 0:  82%|█████████████████████████████████████████████████████████████████████████████▎                | 1701/2068 [01:28<00:19, 19.23it/s, v_num=qgvw]
+Epoch 0:  83%|██████████████████████████████████████████████████████████████████████████████                | 1716/2068 [01:29<00:18, 19.24it/s, v_num=qgvw]
+Epoch 0: 100%|█████████████████████████████████████████████████████████████████████████████████████████████▉| 2067/2068 [01:46<00:00, 19.36it/s, v_num=qgvw]
+I0509 22:00:11.801000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/2] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0509 22:00:11.827000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/2] create_env
+I0509 22:00:12.271000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/2] create_symbol s97 = 675 for L['ingraph']._store._mapping['x'].
+size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>),
+ for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:12.321000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/2] create_symbol s68 = 6912 for L['ingraph']._store._mapping['edg
+e_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <
+lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:12.366000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/2] create_symbol s42 = 6912 for L['ingraph']._store._mapping['edg
+e_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forwa
+rd (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run wi
+th TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:12.386000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0509 22:00:12.436000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/2] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0509 22:00:12.951000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/2] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0509 22:00:13.040000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/2] Step 2: calling compiler function inductor
+I0509 22:00:13.678000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval (IntTrueDiv(4056*s97, 325*s97 + 4056)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(4056*s97, 325*s97 + 4056)) > 0.019032569102207"
+I0509 22:00:13.692000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval (IntTrueDiv(2808*s42, 321*s42 + 2808)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(2808*s42, 321*s42 + 2808)) > 0.019032569102207"
+I0509 22:00:13.713000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDi
+v(936*s97, 315*s97 + 936)) > 0.019032569102207"
+I0509 22:00:13.723000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 312*s97 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0509 22:00:13.734000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 624*s97 <= 2147483959 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0509 22:00:13.746000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 312*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0509 22:00:13.757000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 936*s42 <= 2147484271 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0509 22:00:13.769000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 2*s42 <= 2147483647 [guard added] (_functorch/_aot_autogr
+ad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0509 22:00:13.780000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 936*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0509 22:00:13.790000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval s97 > 312 [guard added] (_functorch/_aot_autograd/autogra
+d_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 > 312"
+I0509 22:00:13.802000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 312*s97 < 5242880 [guard added] (_functorch/_aot_autograd
+/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 < 5242880"
+I0509 22:00:13.820000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval s42 > 312 [guard added] (_functorch/_aot_autograd/autogra
+d_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 > 312"
+I0509 22:00:13.831000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 312*s42 < 5242880 [guard added] (_functorch/_aot_autograd
+/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 < 5242880"
+I0509 22:00:13.841000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 4*s97 <= 2147483647 [guard added] (_functorch/_aot_autogr
+ad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="4*s97 <= 2147483647"
+I0509 22:00:13.854000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 18*(((s97 + 5)//6)) <= 2147483647 [guard added] (_functor
+ch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="18*(((s97 + 5)//6)) <= 2147483647
+"
+I0509 22:00:13.927000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 1872*(((s97 + 5)//6)) <= 2147483647 [guard added] (_funct
+orch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="1872*(((s97 + 5)//6)) <= 214748
+3647"
+I0509 22:00:13.939000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 624*s97 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483647"
+I0509 22:00:13.954000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval 16848*(((s42 + 53)//54)) <= 2147483647 [guard added] (_fu
+nctorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="16848*(((s42 + 53)//54)) <=
+2147483647"
+I0509 22:00:13.967000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval s97 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0509 22:00:13.986000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/2] eval s42 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/aot_autograd_result.py:567 in wrap_post_compile), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0509 22:00:13.999000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/2] Step 2: done compiler function inductor
+I0509 22:00:14.044000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/2] produce_guards
+I0509 22:00:14.146000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/2] put_code_state: no cache key, skipping
+I0509 22:00:14.153000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/2] run_gc_after_compile: running gc
+Epoch 0: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 2068/2068 [01:49<00:00, 18.94it/s, v_num=qgvwI
+0509 22:00:19.307000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/3] Step 1: torchdynamo start tracing forward /workspace/semester-project-
+beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0509 22:00:19.322000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/3] create_env
+I0509 22:00:19.432000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/3] create_symbol s97 = 2250 for L['ingraph']._store._mapping['x']
+.size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>)
+, for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:19.521000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/3] create_symbol s68 = 23040 for L['ingraph']._store._mapping['ed
+ge_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in
+<lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:19.593000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/3] create_symbol s42 = 23040 for L['ingraph']._store._mapping['ed
+ge_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forw
+ard (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run w
+ith TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0509 22:00:19.640000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0509 22:00:19.655000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/3] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0509 22:00:20.438000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/3] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0509 22:00:20.536000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/3] Step 2: calling compiler function inductor
+I0509 22:00:21.330000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDi
+v(936*s97, 315*s97 + 936)) > 0.019032569102207"
+I0509 22:00:21.338000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval (IntTrueDiv(2808*s42, 321*s42 + 2808)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(2808*s42, 321*s42 + 2808)) > 0.019032569102207"
+I0509 22:00:21.345000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval (IntTrueDiv(4056*s97, 325*s97 + 4056)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(4056*s97, 325*s97 + 4056)) > 0.019032569102207"
+I0509 22:00:21.349000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 312*s97 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0509 22:00:21.360000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 624*s97 <= 2147483959 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0509 22:00:21.368000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 312*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0509 22:00:21.375000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 936*s42 <= 2147484271 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0509 22:00:21.382000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 2*s42 <= 2147483647 [guard added] (_functorch/_aot_autogr
+ad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0509 22:00:21.390000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval 936*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0509 22:00:21.397000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval s97 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0509 22:00:21.401000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/3] eval s42 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/aot_autograd_result.py:567 in wrap_post_compile), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0509 22:00:21.416000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/3] Step 2: done compiler function inductor
+I0509 22:00:21.486000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/3] produce_guards
+I0509 22:00:21.617000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/3] put_code_state: no cache key, skipping
+I0509 22:00:21.627000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/3] run_gc_after_compile: running gc
+Epoch 149: 100%|███████████████████████████████████| 2068/2068 [01:50<00:00, 18.80it/s, v_num=qgvw, val/rel_mae=0.942, train/loss=0.00396, train/lr=9.41e-5]
+`Trainer.fit` stopped: `max_epochs=150` reached.
+Epoch 149: 100%|███████████████████████████████████| 2068/2068 [01:50<00:00, 18.80it/s, v_num=qgvw, val/rel_mae=0.942, train/loss=0.00396, train/lr=9.41e-5]
+============================================================
+Validation dataset plots and evaluation...
+============================================================
+
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available
+on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /workspac
+e/semester-project-beam-deformation/src/gnn ...
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'test_dataloader' do
+es not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to
+improve performance.
+Testing DataLoader 0:   0%|                                                                                                         | 0/280 [00:00<?, ?it/s]
+I0510 02:33:00.900000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/4] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0510 02:33:00.912000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/4] create_env
+I0510 02:33:00.967000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/4] create_symbol s97 = 3600 for L['ingraph']._store._mapping['x']
+.size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>)
+, for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:33:01.015000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/4] create_symbol s68 = 36864 for L['ingraph']._store._mapping['ed
+ge_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in
+<lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:33:01.046000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/4] create_symbol s42 = 36864 for L['ingraph']._store._mapping['ed
+ge_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forw
+ard (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run w
+ith TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:33:01.057000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0510 02:33:01.060000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/4] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0510 02:33:01.531000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/4] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0510 02:33:01.574000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/4] Step 2: calling compiler function inductor
+I0510 02:33:02.069000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDi
+v(936*s97, 315*s97 + 936)) > 0.019032569102207"
+I0510 02:33:02.075000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval (IntTrueDiv(2808*s42, 321*s42 + 2808)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(2808*s42, 321*s42 + 2808)) > 0.019032569102207"
+I0510 02:33:02.079000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval (IntTrueDiv(4056*s97, 325*s97 + 4056)) > 0.01903256910220
+7 [guard added] (_functorch/_aot_autograd/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrue
+Div(4056*s97, 325*s97 + 4056)) > 0.019032569102207"
+I0510 02:33:02.083000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 312*s97 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0510 02:33:02.085000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 624*s97 <= 2147483959 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0510 02:33:02.088000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 312*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0510 02:33:02.092000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 936*s42 <= 2147484271 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0510 02:33:02.095000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 2*s42 <= 2147483647 [guard added] (_functorch/_aot_autogr
+ad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0510 02:33:02.097000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval 936*s42 <= 2147483647 [guard added] (_functorch/_aot_auto
+grad/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0510 02:33:02.100000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval s97 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/autograd_cache.py:797 in evaluate_guards), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0510 02:33:02.110000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/4] eval s42 <= 2147483647 [guard added] (_functorch/_aot_autograd
+/aot_autograd_result.py:567 in wrap_post_compile), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0510 02:33:02.115000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/4] Step 2: done compiler function inductor
+I0510 02:33:02.148000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/4] produce_guards
+I0510 02:33:02.218000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/4] put_code_state: no cache key, skipping
+I0510 02:33:02.222000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/4] run_gc_after_compile: running gc
+Testing DataLoader 0: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 280/280 [00:06<00:00, 46.61it/s]
+GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj1/traj1_validation_beam_compariso
+n.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj5/traj5_validation_beam_c
+omparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj11/traj11_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj15/traj15_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj20/traj20_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj24/traj24_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj30/traj30_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj34/traj34_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/validation/traj40/traj40_validation_beam
+_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+Testing DataLoader 0: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 280/280 [02:49<00:00,  1.66it/s]
+============================================================
+Test dataset plots and evaluation...
+============================================================
+
+        Found 85 sample files
+        Loaded the dataset with 4872 samples (85 trajectories)
+        One stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: 0.174 MB (182332 bytes)
+
+
+
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available
+on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /workspac
+e/semester-project-beam-deformation/src/gnn ...
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'test_dataloader' do
+es not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to
+improve performance.
+Testing DataLoader 0: 100%|████████████████████████████████████████████████████████████████████████████████████████████| 4872/4872 [00:15<00:00, 308.26it/s]
+GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj1/traj1_test_beam_comparison.gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj5/traj5_test_beam_comparison.gi
+f
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj11/traj11_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj15/traj15_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj20/traj20_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj24/traj24_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj30/traj30_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj34/traj34_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+        GIF saved => /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/model_evaluation/test/traj40/traj40_test_beam_comparison.
+gif
+Plot rollout position error vs timestep...
+Printing validation scatter plots and edge correlation...
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+Testing DataLoader 0: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4872/4872 [03:57<00:00, 20.49it/s]
+wandb:
+wandb: Run history:
+wandb:                    epoch ▁▁▁▁▁▂▂▂▂▂▃▃▃▃▃▃▃▄▄▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▇▇▇▇██
+wandb:               train/loss █▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:                 train/lr ██████▆▆▆▆▆▆▆▆▆▆▆▄▄▄▄▄▄▃▃▃▃▃▃▂▂▂▁▁▁▁▁▁▁▁
+wandb: val/overall_relative_mae █▃▂▃▂▂▂▂▂▂▂▂▂▂▂▂▁▁▁▂▁▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:
+wandb: Run summary:
+wandb:     epoch 150
+wandb: train_cfg computational:
+wandb:   num...
+wandb:
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /workspace/semester-project-beam-deformation/saved_models/2026-05-09_21-57-31/wandb/offline-run-20260509_215735-dyvuqgvw
+wandb: Find logs at: ./saved_models/2026-05-09_21-57-31/wandb/offline-run-20260509_215735-dyvuqgvw/logs
+wandb: WARNING Tried to log to step 0 that is less than the current step 1. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 0 that is less than the current step 1. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 0 that is less than the current step 1. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 1 that is less than the current step 2. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 1 that is less than the current step 2. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 2 that is less than the current step 3. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 2 that is less than the current step 3. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 3 that is less than the current step 4. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 3 that is less than the current step 4. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 4 that is less than the current step 5. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 4 that is less than the current step 5. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 5 that is less than the current step 6. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 5 that is less than the current step 6. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 6 that is less than the current step 7. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 6 that is less than the current step 7. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 7 that is less than the current step 8. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 7 that is less than the current step 8. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 8 that is less than the current step 9. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 8 that is less than the current step 9. Steps must be monotonically increasing, so this data will be ignored. See https:
+//wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 9 that is less than the current step 10. Steps must be monotonically increasing, so this data will be ignored. See https
+://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 9 that is less than the current step 10. Steps must be monotonically increasing, so this data will be ignored. See https
+://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 10 that is less than the current step 11. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 10 that is less than the current step 11. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 11 that is less than the current step 12. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 11 that is less than the current step 12. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 12 that is less than the current step 13. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 12 that is less than the current step 13. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 13 that is less than the current step 14. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 13 that is less than the current step 14. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 14 that is less than the current step 15. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 14 that is less than the current step 15. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 15 that is less than the current step 16. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 15 that is less than the current step 16. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 16 that is less than the current step 17. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 16 that is less than the current step 17. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 17 that is less than the current step 18. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 17 that is less than the current step 18. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 18 that is less than the current step 19. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 18 that is less than the current step 19. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 19 that is less than the current step 20. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 19 that is less than the current step 20. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 20 that is less than the current step 21. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 20 that is less than the current step 21. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 21 that is less than the current step 22. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 21 that is less than the current step 22. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 22 that is less than the current step 23. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 22 that is less than the current step 23. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 23 that is less than the current step 24. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 23 that is less than the current step 24. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 24 that is less than the current step 25. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 24 that is less than the current step 25. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 25 that is less than the current step 26. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 25 that is less than the current step 26. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 26 that is less than the current step 27. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 26 that is less than the current step 27. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 27 that is less than the current step 28. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 27 that is less than the current step 28. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 28 that is less than the current step 29. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 28 that is less than the current step 29. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 29 that is less than the current step 30. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 29 that is less than the current step 30. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 30 that is less than the current step 31. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 30 that is less than the current step 31. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 31 that is less than the current step 32. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 31 that is less than the current step 32. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 32 that is less than the current step 33. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 32 that is less than the current step 33. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 33 that is less than the current step 34. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 33 that is less than the current step 34. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 34 that is less than the current step 35. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 34 that is less than the current step 35. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 35 that is less than the current step 36. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 35 that is less than the current step 36. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 36 that is less than the current step 37. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 36 that is less than the current step 37. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 37 that is less than the current step 38. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 37 that is less than the current step 38. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 38 that is less than the current step 39. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 38 that is less than the current step 39. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 39 that is less than the current step 40. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 39 that is less than the current step 40. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 40 that is less than the current step 41. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 40 that is less than the current step 41. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 41 that is less than the current step 42. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 41 that is less than the current step 42. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 42 that is less than the current step 43. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 42 that is less than the current step 43. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 43 that is less than the current step 44. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 43 that is less than the current step 44. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 44 that is less than the current step 45. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 44 that is less than the current step 45. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 45 that is less than the current step 46. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 45 that is less than the current step 46. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 46 that is less than the current step 47. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 46 that is less than the current step 47. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 47 that is less than the current step 48. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 47 that is less than the current step 48. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 48 that is less than the current step 49. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 48 that is less than the current step 49. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 49 that is less than the current step 50. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 49 that is less than the current step 50. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 50 that is less than the current step 51. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 50 that is less than the current step 51. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 51 that is less than the current step 52. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 51 that is less than the current step 52. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 52 that is less than the current step 53. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 52 that is less than the current step 53. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 53 that is less than the current step 54. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 53 that is less than the current step 54. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 54 that is less than the current step 55. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 54 that is less than the current step 55. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 55 that is less than the current step 56. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 55 that is less than the current step 56. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 56 that is less than the current step 57. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 56 that is less than the current step 57. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 57 that is less than the current step 58. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 57 that is less than the current step 58. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 58 that is less than the current step 59. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 58 that is less than the current step 59. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 59 that is less than the current step 60. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 59 that is less than the current step 60. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 60 that is less than the current step 61. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 60 that is less than the current step 61. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 61 that is less than the current step 62. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 61 that is less than the current step 62. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 62 that is less than the current step 63. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 62 that is less than the current step 63. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 63 that is less than the current step 64. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 63 that is less than the current step 64. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 64 that is less than the current step 65. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 64 that is less than the current step 65. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 65 that is less than the current step 66. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 65 that is less than the current step 66. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 66 that is less than the current step 67. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 66 that is less than the current step 67. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 67 that is less than the current step 68. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 67 that is less than the current step 68. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 68 that is less than the current step 69. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 68 that is less than the current step 69. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 69 that is less than the current step 70. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 69 that is less than the current step 70. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 70 that is less than the current step 71. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 70 that is less than the current step 71. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 71 that is less than the current step 72. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 71 that is less than the current step 72. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 72 that is less than the current step 73. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 72 that is less than the current step 73. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 73 that is less than the current step 74. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 73 that is less than the current step 74. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 74 that is less than the current step 75. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 74 that is less than the current step 75. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 75 that is less than the current step 76. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 75 that is less than the current step 76. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 76 that is less than the current step 77. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 76 that is less than the current step 77. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 77 that is less than the current step 78. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 77 that is less than the current step 78. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 78 that is less than the current step 79. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 78 that is less than the current step 79. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 79 that is less than the current step 80. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 79 that is less than the current step 80. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 80 that is less than the current step 81. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 80 that is less than the current step 81. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 81 that is less than the current step 82. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 81 that is less than the current step 82. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 82 that is less than the current step 83. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 82 that is less than the current step 83. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 83 that is less than the current step 84. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 83 that is less than the current step 84. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 84 that is less than the current step 85. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 84 that is less than the current step 85. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 85 that is less than the current step 86. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 85 that is less than the current step 86. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 86 that is less than the current step 87. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 86 that is less than the current step 87. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 87 that is less than the current step 88. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 87 that is less than the current step 88. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 88 that is less than the current step 89. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 88 that is less than the current step 89. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 89 that is less than the current step 90. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 89 that is less than the current step 90. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 90 that is less than the current step 91. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 90 that is less than the current step 91. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 91 that is less than the current step 92. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 91 that is less than the current step 92. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 92 that is less than the current step 93. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 92 that is less than the current step 93. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 93 that is less than the current step 94. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 93 that is less than the current step 94. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 94 that is less than the current step 95. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 94 that is less than the current step 95. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 95 that is less than the current step 96. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 95 that is less than the current step 96. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 96 that is less than the current step 97. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 96 that is less than the current step 97. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 97 that is less than the current step 98. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 97 that is less than the current step 98. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 98 that is less than the current step 99. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 98 that is less than the current step 99. Steps must be monotonically increasing, so this data will be ignored. See http
+s://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 99 that is less than the current step 100. Steps must be monotonically increasing, so this data will be ignored. See htt
+ps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 99 that is less than the current step 100. Steps must be monotonically increasing, so this data will be ignored. See htt
+ps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 100 that is less than the current step 101. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 100 that is less than the current step 101. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 101 that is less than the current step 102. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 101 that is less than the current step 102. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 102 that is less than the current step 103. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 102 that is less than the current step 103. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 103 that is less than the current step 104. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 103 that is less than the current step 104. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 104 that is less than the current step 105. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 104 that is less than the current step 105. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 105 that is less than the current step 106. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 105 that is less than the current step 106. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 106 that is less than the current step 107. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 106 that is less than the current step 107. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 107 that is less than the current step 108. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 107 that is less than the current step 108. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 108 that is less than the current step 109. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 108 that is less than the current step 109. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 109 that is less than the current step 110. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 109 that is less than the current step 110. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 110 that is less than the current step 111. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 110 that is less than the current step 111. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 111 that is less than the current step 112. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 111 that is less than the current step 112. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 112 that is less than the current step 113. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 112 that is less than the current step 113. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 113 that is less than the current step 114. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 113 that is less than the current step 114. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 114 that is less than the current step 115. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 114 that is less than the current step 115. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 115 that is less than the current step 116. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 115 that is less than the current step 116. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 116 that is less than the current step 117. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 116 that is less than the current step 117. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 117 that is less than the current step 118. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 117 that is less than the current step 118. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 118 that is less than the current step 119. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 118 that is less than the current step 119. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 119 that is less than the current step 120. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 119 that is less than the current step 120. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 120 that is less than the current step 121. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 120 that is less than the current step 121. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 121 that is less than the current step 122. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 121 that is less than the current step 122. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 122 that is less than the current step 123. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 122 that is less than the current step 123. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 123 that is less than the current step 124. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 123 that is less than the current step 124. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 124 that is less than the current step 125. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 124 that is less than the current step 125. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 125 that is less than the current step 126. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 125 that is less than the current step 126. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 126 that is less than the current step 127. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 126 that is less than the current step 127. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 127 that is less than the current step 128. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 127 that is less than the current step 128. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 128 that is less than the current step 129. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 128 that is less than the current step 129. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 129 that is less than the current step 130. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 129 that is less than the current step 130. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 130 that is less than the current step 131. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 130 that is less than the current step 131. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 131 that is less than the current step 132. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 131 that is less than the current step 132. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 132 that is less than the current step 133. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 132 that is less than the current step 133. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 133 that is less than the current step 134. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 133 that is less than the current step 134. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 134 that is less than the current step 135. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 134 that is less than the current step 135. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 135 that is less than the current step 136. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 135 that is less than the current step 136. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 136 that is less than the current step 137. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 136 that is less than the current step 137. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 137 that is less than the current step 138. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 137 that is less than the current step 138. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 138 that is less than the current step 139. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 138 that is less than the current step 139. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 139 that is less than the current step 140. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 139 that is less than the current step 140. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 140 that is less than the current step 141. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 140 that is less than the current step 141. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 141 that is less than the current step 142. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 141 that is less than the current step 142. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 142 that is less than the current step 143. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 142 that is less than the current step 143. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 143 that is less than the current step 144. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 143 that is less than the current step 144. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 144 that is less than the current step 145. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 144 that is less than the current step 145. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 145 that is less than the current step 146. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 145 that is less than the current step 146. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 146 that is less than the current step 147. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 146 that is less than the current step 147. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 147 that is less than the current step 148. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 147 that is less than the current step 148. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 148 that is less than the current step 149. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 148 that is less than the current step 149. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 149 that is less than the current step 150. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 149 that is less than the current step 150. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+wandb: WARNING Tried to log to step 150 that is less than the current step 151. Steps must be monotonically increasing, so this data will be ignored. See ht
+tps://wandb.me/define-metric to log data out of order.
+[I 2026-05-10 02:39:53,599] Trial 0 finished with value: 0.8850899934768677 and parameters: {'option_idx': 1}. Best is trial 0 with value: 0.885089993476867
+7.
+
+================================================================================
+
+computational:
+  num_workers: 0
+  batch_size: 16
+  precision: 32-true
+  torch_compile: true
+  profiling: false
+  fused_adam: true
+  pin_memory: true
+  rollout_batch_size: 1
+  accumulate_grad_batches: 1
+  activation_checkpointing: false
+  foreach_optim: false
+model:
+  model_name: MGN
+  num_messages: 12
+  latent_dim: 312
+  num_layers_graphnetblock: 2
+  layer_norm_enable_encoder: true
+  layer_norm_enable_processor: true
+  layer_norm_enable_decoder: false
+  num_layers_heads: 3
+  num_layers_encoder: 2
+  dropout_head: 0.05
+  dropout_encoder: 0.05
+  dropout_processor: 0.0
+training:
+  training_type: slurm
+  total_epochs: 150
+  resume_from: null
+  checkpoint_interval: 20
+noise:
+  noise_scale_train: 0
+  noise_scale_test: 0
+  noise_gamma: 1.0
+  noise_seed: 42
+  noise_also_prev: false
+  noise_prev_scale_train: 1.0e-05
+  noise_feature_update_mode: exact
+  noise_per_epoch: false
+loss:
+  loss_type: mse
+  exp_mises: false
+  stress_weight: 1.0
+validation:
+  enable_val: true
+  validation_interval: 1
+  profile_loss_stress_vs_acceleration: false
+  enable_wandb_watch: false
+  enable_rollout_val: false
+  log_test_media: true
+  plot_diagnostics_advanced: false
+  selected_validation_trajectories: null
+  selected_test_trajectories: null
+data:
+  dataset_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium
+  train_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/train
+  val_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/val
+  test_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/test
+  stats_path: dataset/processed/biax_longer/z_isotr_centr_all/medium/train/stats/stats.json
+  preprocess_config_path: dataset/processed/biax_longer/z_isotr_centr_all/medium/config.yaml
+  extra_info_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/extra_info
+lr_scheduler:
+  type: plateau
+  factor: 0.7
+  patience: 9
+  min_lr: 1.0e-07
+  early_stopping_patience: 20
+  threshold: 0.0001
+residuals:
+  residual_list: []
+  curvature_loss_weight: 1.0
+  volume_loss_weight: 1.0
+devices:
+  devices: 1
+random_online: 0.0
+seed: 42
+use_wandb: true
+initial_lr: 0.0008
+optimizer: adam
+protect_from_oom: true
+wandb_run_name: hp_opt_2026-05-09_21-56-35__features__all
+wandb_group: hp_opt_2026-05-09_21-56-35
+wandb_project: beam_deformation
+wandb_offline: true
+
+================================================================================
+
+
+Seed set to 42
+
+================================================================================
+
+size:
+  dataset_size: medium
+  limit_timesteps: 50
+dataset_path:
+  dataset_type: biax_longer
+  base_dir: dataset
+  raw_data_dir: dataset/raw/raw/biax_longer/medium
+  save_dir: dataset/processed/biax_longer
+  extra_info_dir: dataset/raw/raw/biax_longer/medium/extra_info
+normalizer:
+  isotropic_normalizer: true
+  normalizer_method: z
+features:
+  name_features: all
+  mises_log: true
+  enable_absolute_pos: true
+  enable_past_history: true
+  enable_node_norms: true
+  enable_edge_velocity: true
+  enable_force_edge: true
+  enable_displ_edge: true
+  enable_abs_pos_edge: true
+  enable_abs_rest_pos_edge: true
+  enable_abs_pos_edge_norm: true
+  enable_rest_pos_edge_norm: true
+  enable_force_edge_norm: true
+  enable_edge_velocity_norm: true
+  enable_stretch_edge: true
+  enable_rotation_angle: true
+device: cpu
+dt: 0.08
+seed: 42
+time_discretization_method: second_order_central
+edge_augmentation:
+  k_hop: 0
+  random_offline: 0.0
+  add_wall_edges: null
+  wall_border_percentage: 0.0
+  wall_internal_percentage: 0.0
+node_channels: 26
+edge_channels: 30
+train_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/train
+test_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/test
+val_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/val
+extra_info_dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/extra_info
+
+================================================================================
+
+
+Extra info dir: dataset/processed/biax_longer/z_isotr_centr_all/medium/extra_info
+Selected validation trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+Selected test trajectories: [1, 5, 11, 15, 20, 24, 30, 34, 40]
+Selected trajectory final-eval rollout limit: 400
+Using device: cuda
+Loading stats from dataset/processed/biax_longer/z_isotr_centr_all/medium/train...
+        Node features: mean shape = torch.Size([25]), std shape = torch.Size([25])
+        Edge features: mean shape = torch.Size([30]), std shape = torch.Size([30])
+        Target features: mean shape = torch.Size([4]), std shape = torch.Size([4])
+Train dataset:
+        Found 675 sample files
+        Loaded the dataset with 33075 samples (675 trajectories)
+        One stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: 0.361 MB (378568 bytes)
+
+
+
+
+
+One training batch (collated, tensor storage only): 5.804 MB (6086024 bytes), num_graphs=16, config batch_size=16
+(Excludes activations, gradients, optimizer state, and allocator overhead; GPU VRAM is typically larger.)
+
+
+Validation dataset:
+        Found 84 sample files
+        Loaded the dataset with 4474 samples (84 trajectories)
+        One stored timestep graph size (CPU, pre-__getitem__ noise) tensor storage: 0.370 MB (387568 bytes)
+
+
+
+
+
+Model info:
+        Model params+buffers before torch.compile: 44.051 MB (46190992 bytes)
+        Model params+buffers after torch.compile: 44.051 MB (46190992 bytes) (same tensor storage; torch.compile may still increase peak VRAM for kernels/ca
+ching.)
+        Total parameters: 11,547,748
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available
+on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /workspac
+e/semester-project-beam-deformation/src/gnn ...
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+Training ID: 2026-05-10_02-41-19
+         Initial learning rate: 0.0008
+        LR scheduler: plateau
+         Total epochs: 150
+        Validation interval: 1
+         Loss type: mse
+        Using wandb: True
+         Model directory: /workspace/semester-project-beam-deformation/saved_models/2026-05-10_02-41-19
+wandb: WARNING `resume` will be ignored since W&B syncing is set to `offline`. Starting a new run with run id vmtgofaj.
+wandb: Tracking run with wandb version 0.26.1
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /workspace/semester-project-beam-deformation/saved_models/2026-05-10_02-41-19/wandb/offline-run-20260510_024119-vmtgofaj
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+  | Name         | Type            | Params | Mode
+---------------------------------------------------------
+0 | model        | OptimizedModule | 11.5 M | train
+1 | node_stats   | StatsModule     | 0      | train
+2 | edge_stats   | StatsModule     | 0      | train
+3 | target_stats | StatsModule     | 0      | train
+---------------------------------------------------------
+11.5 M    Trainable params
+0         Non-trainable params
+11.5 M    Total params
+46.191    Total estimated model params size (MB)
+274       Modules in train mode
+0         Modules in eval mode
+Sanity Checking: |                                                                                                                    | 0/? [00:00<?, ?it/s]
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'val_dataloader' doe
+s not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to i
+mprove performance.
+Sanity Checking DataLoader 0:   0%|                                                                                                   | 0/2 [00:00<?, ?it/s]
+I0510 02:41:22.811000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/5] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0510 02:41:22.815000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/5] create_env
+I0510 02:41:22.869000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/5] create_symbol s97 = 3600 for L['ingraph']._store._mapping['x']
+.size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>)
+, for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:22.872000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/5] create_symbol s57 = 26 for L['ingraph']._store._mapping['x'].s
+ize()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>),
+for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s57" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:22.880000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval Eq(s57, 26) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s57, 26)"
+I0510 02:41:22.883000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/5] set_replacement s57 = 26 (range_refined_to_singleton) VR[26, 2
+6]
+I0510 02:41:22.924000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/5] create_symbol s68 = 36864 for L['ingraph']._store._mapping['ed
+ge_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in
+<lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:22.928000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/5] create_symbol s21 = 30 for L['ingraph']._store._mapping['edge_
+attr'].size()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <la
+mbda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s21" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:22.935000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval Eq(s21, 30) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s21, 30)"
+I0510 02:41:22.938000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/5] set_replacement s21 = 30 (range_refined_to_singleton) VR[30, 3
+0]
+I0510 02:41:22.972000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/5] create_symbol s42 = 36864 for L['ingraph']._store._mapping['ed
+ge_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forw
+ard (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run w
+ith TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:22.983000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0510 02:41:23.000000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/5] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0510 02:41:23.475000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/5] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0510 02:41:23.524000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/5] Step 2: calling compiler function inductor
+I0510 02:41:26.015000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(936*s97,
+315*s97 + 936)) > 0.019032569102207"
+I0510 02:41:26.085000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval (IntTrueDiv(9360*s42, 342*s42 + 9360)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(9360*s4
+2, 342*s42 + 9360)) > 0.019032569102207"
+I0510 02:41:26.137000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval (IntTrueDiv(8112*s97, 338*s97 + 8112)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(8112*s9
+7, 338*s97 + 8112)) > 0.019032569102207"
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float
+32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+  warnings.warn(
+I0510 02:41:28.199000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 312*s97 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0510 02:41:28.274000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval s97 <= 2147483647 [guard added] (_inductor/codegen/simd.p
+y:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0510 02:41:28.278000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 624*s97 <= 2147483959 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0510 02:41:28.302000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 312*s42 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0510 02:41:28.328000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval s42 <= 2147483647 [guard added] (_inductor/codegen/simd.p
+y:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0510 02:41:28.332000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 936*s42 <= 2147484271 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0510 02:41:28.349000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 2*s42 <= 2147483647 [guard added] (_inductor/codegen/simd
+.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0510 02:41:28.407000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/5] eval 936*s42 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0510 02:41:29.206000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/5] produce_guards
+I0510 02:41:29.227000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/5] produce_guards
+I0510 02:41:29.239000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/5] Step 2: done compiler function inductor
+I0510 02:41:29.276000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/5] produce_guards
+I0510 02:41:29.355000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/5] put_code_state: no cache key, skipping
+I0510 02:41:29.363000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/5] run_gc_after_compile: running gc
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'train_dataloader' d
+oes not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to
+ improve performance.
+Epoch 0:   0%|                                                                                                                     | 0/2068 [00:00<?, ?it/s]
+I0510 02:41:29.741000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/6] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0510 02:41:29.748000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/6] create_env
+I0510 02:41:29.810000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/6] create_symbol s97 = 3600 for L['ingraph']._store._mapping['x']
+.size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>)
+, for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:29.816000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/6] create_symbol s57 = 26 for L['ingraph']._store._mapping['x'].s
+ize()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>),
+for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s57" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:29.825000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Eq(s57, 26) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s57, 26)"
+I0510 02:41:29.831000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/6] set_replacement s57 = 26 (range_refined_to_singleton) VR[26, 2
+6]
+I0510 02:41:29.874000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/6] create_symbol s68 = 36864 for L['ingraph']._store._mapping['ed
+ge_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in
+<lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:29.881000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/6] create_symbol s21 = 30 for L['ingraph']._store._mapping['edge_
+attr'].size()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <la
+mbda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s21" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:29.902000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Eq(s21, 30) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s21, 30)"
+I0510 02:41:29.917000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/6] set_replacement s21 = 30 (range_refined_to_singleton) VR[30, 3
+0]
+I0510 02:41:29.963000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/6] create_symbol s42 = 36864 for L['ingraph']._store._mapping['ed
+ge_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forw
+ard (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run w
+ith TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:41:29.978000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0510 02:41:29.986000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/6] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0510 02:41:30.494000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/6] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0510 02:41:30.539000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/6] Step 2: calling compiler function inductor
+I0510 02:41:33.095000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval (IntTrueDiv(8112*s97, 338*s97 + 8112)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(8112*s9
+7, 338*s97 + 8112)) > 0.019032569102207"
+I0510 02:41:33.146000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval (IntTrueDiv(9360*s42, 342*s42 + 9360)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(9360*s4
+2, 342*s42 + 9360)) > 0.019032569102207"
+I0510 02:41:33.332000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(936*s97,
+315*s97 + 936)) > 0.019032569102207"
+I0510 02:41:36.471000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 312*s97 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0510 02:41:36.481000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 624*s97 <= 2147483959 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0510 02:41:36.529000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 312*s42 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0510 02:41:36.564000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval s97 <= 2147483647 [guard added] (_inductor/codegen/simd.p
+y:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0510 02:41:36.576000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval s42 <= 2147483647 [guard added] (_inductor/codegen/simd.p
+y:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0510 02:41:36.579000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 936*s42 <= 2147484271 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0510 02:41:36.593000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 2*s42 <= 2147483647 [guard added] (_inductor/codegen/simd
+.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0510 02:41:36.645000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 936*s42 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0510 02:41:37.401000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/6] produce_guards
+I0510 02:41:39.247000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Max(312, s97)*Min(312, s97) < 5242880 [guard added] (_ind
+uctor/scheduler.py:282 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s97)*Min(312, s97) < 5242880"
+I0510 02:41:39.272000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Max(312, s42)*Min(312, s42) >= 5242880 [guard added] (_in
+ductor/scheduler.py:282 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s42)*Min(312, s42) >= 5242880"
+I0510 02:41:39.277000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Max(312, s42) >= 2*Min(312, s42) [guard added] (_inductor
+/scheduler.py:288 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s42) >= 2*Min(312, s42)"
+I0510 02:41:39.280000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Max(312, s42) >= 4096 [guard added] (_inductor/scheduler.
+py:294 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s42) >= 4096"
+I0510 02:41:39.285000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval Eq(312, Min(312, s42)) [guard added] (_inductor/scheduler
+.py:299 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(312, Min(312, s42))"
+I0510 02:41:40.343000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 4*s97 <= 2147483647 [guard added] (_inductor/codegen/simd
+.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="4*s97 <= 2147483647"
+I0510 02:41:40.378000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 87*(((s97 + 28)//29)) <= 2147483647 [guard added] (_induc
+tor/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="87*(((s97 + 28)//29)) <= 2147483647"
+I0510 02:41:40.421000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 9048*(((s97 + 28)//29)) <= 2147483647 [guard added] (_ind
+uctor/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="9048*(((s97 + 28)//29)) <= 2147483647"
+I0510 02:41:40.575000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 624*s97 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483647"
+I0510 02:41:40.623000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval s42 > 312 [guard added] (_inductor/codegen/simd.py:1627 i
+n _codegen_mix_order_reduction), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 > 312"
+I0510 02:41:40.672000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/6] eval 89856*(((s42 + 287)//288)) <= 2147483647 [guard added] (_
+inductor/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="89856*(((s42 + 287)//288)) <= 21474
+83647"
+I0510 02:41:44.227000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/6] produce_guards
+I0510 02:41:44.273000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/6] produce_guards
+I0510 02:41:44.314000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/6] Step 2: done compiler function inductor
+I0510 02:41:44.353000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/6] produce_guards
+I0510 02:41:44.442000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/6] put_code_state: no cache key, skipping
+I0510 02:41:44.447000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/6] run_gc_after_compile: running gc
+Epoch 0: 100%|█████████████████████████████████████████████████████████████████████████████████████████████▉| 2067/2068 [02:01<00:00, 17.02it/s, v_num=ofaj]
+I0510 02:43:31.250000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4447] [0/7] Step 1: torchdynamo start tracing forward /workspace/semester-project
+-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:202
+I0510 02:43:31.258000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:3876] [0/7] create_env
+I0510 02:43:31.323000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/7] create_symbol s97 = 675 for L['ingraph']._store._mapping['x'].
+size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>),
+ for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s97" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:43:31.326000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/7] create_symbol s57 = 26 for L['ingraph']._store._mapping['x'].s
+ize()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <lambda>),
+for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s57" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:43:31.331000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval Eq(s57, 26) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s57, 26)"
+I0510 02:43:31.334000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/7] set_replacement s57 = 26 (range_refined_to_singleton) VR[26, 2
+6]
+I0510 02:43:31.381000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/7] create_symbol s68 = 6912 for L['ingraph']._store._mapping['edg
+e_attr'].size()[0] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <
+lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s68" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:43:31.384000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/7] create_symbol s21 = 30 for L['ingraph']._store._mapping['edge_
+attr'].size()[1] [2, int_oo] return F.linear(input, self.weight, self.bias)  # nn/modules/linear.py:134 in forward (_dynamo/variables/builder.py:3702 in <la
+mbda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s21" or to suppress this message run with TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:43:31.401000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval Eq(s21, 30) [guard added] return F.linear(input, self.wei
+ght, self.bias)  # nn/modules/linear.py:134 in forward (_meta_registrations.py:2272 in meta_mm), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADD
+ED="Eq(s21, 30)"
+I0510 02:43:31.413000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/7] set_replacement s21 = 30 (range_refined_to_singleton) VR[30, 3
+0]
+I0510 02:43:31.450000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5225] [0/7] create_symbol s42 = 6912 for L['ingraph']._store._mapping['edg
+e_index'].size()[1] [2, int_oo] senders, receivers = edge_index  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphnet.py:92 in forwa
+rd (_dynamo/variables/builder.py:3702 in <lambda>), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_CREATE_SYMBOL="s42" or to suppress this message run wi
+th TORCHDYNAMO_EXTENDED_ADVICE="0"
+I0510 02:43:31.463000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval Eq(s68, s42) [guard added] edge_attr_ = self.edge_net(tor
+ch.hstack((node_embedding[senders], node_embedding[receivers], edge_embedding)))  # semester-project-beam-deformation/src/gnn/models/meshgraphnet/meshgraphn
+et.py:96 in forward (_prims/__init__.py:1829 in _cat_meta), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Eq(s68, s42)"
+I0510 02:43:31.467000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:6904] [0/7] set_replacement s68 = s42 (solve) VR[2, int_oo]
+I0510 02:43:31.997000 2717 site-packages/torch/_dynamo/symbolic_convert.py:4669] [0/7] Step 1: torchdynamo done tracing forward (RETURN_VALUE)
+I0510 02:43:32.042000 2717 site-packages/torch/_dynamo/output_graph.py:2408] [0/7] Step 2: calling compiler function inductor
+I0510 02:43:34.609000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval (IntTrueDiv(8112*s97, 338*s97 + 8112)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(8112*s9
+7, 338*s97 + 8112)) > 0.019032569102207"
+I0510 02:43:34.627000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval (IntTrueDiv(9360*s42, 342*s42 + 9360)) > 0.01903256910220
+7 [guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(9360*s4
+2, 342*s42 + 9360)) > 0.019032569102207"
+I0510 02:43:34.784000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval (IntTrueDiv(936*s97, 315*s97 + 936)) > 0.019032569102207
+[guard added] (_inductor/fx_passes/pad_mm.py:475 in _should_pad_bench), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="(IntTrueDiv(936*s97,
+315*s97 + 936)) > 0.019032569102207"
+I0510 02:43:35.638000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 312*s97 <= 2147483647 [guard added] (_inductor/codecache.
+py:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s97 <= 2147483647"
+I0510 02:43:35.644000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 624*s97 <= 2147483959 [guard added] (_inductor/codecache.
+py:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483959"
+I0510 02:43:35.649000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 312*s42 <= 2147483647 [guard added] (_inductor/codecache.
+py:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="312*s42 <= 2147483647"
+I0510 02:43:35.654000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 936*s42 <= 2147484271 [guard added] (_inductor/codecache.
+py:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147484271"
+I0510 02:43:35.657000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 2*s42 <= 2147483647 [guard added] (_inductor/codecache.py
+:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="2*s42 <= 2147483647"
+I0510 02:43:35.662000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 936*s42 <= 2147483647 [guard added] (_inductor/codecache.
+py:1349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="936*s42 <= 2147483647"
+I0510 02:43:35.667000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval s97 <= 2147483647 [guard added] (_inductor/codecache.py:1
+349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s97 <= 2147483647"
+I0510 02:43:35.671000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval s42 <= 2147483647 [guard added] (_inductor/codecache.py:1
+349 in _lookup_graph), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="s42 <= 2147483647"
+I0510 02:43:38.596000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval Max(312, s97)*Min(312, s97) < 5242880 [guard added] (_ind
+uctor/scheduler.py:282 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s97)*Min(312, s97) < 5242880"
+I0510 02:43:38.631000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval Max(312, s42)*Min(312, s42) < 5242880 [guard added] (_ind
+uctor/scheduler.py:282 in can_fuse), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="Max(312, s42)*Min(312, s42) < 5242880"
+I0510 02:43:39.549000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 4*s97 <= 2147483647 [guard added] (_inductor/codegen/simd
+.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="4*s97 <= 2147483647"
+I0510 02:43:39.575000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 18*(((s97 + 5)//6)) <= 2147483647 [guard added] (_inducto
+r/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="18*(((s97 + 5)//6)) <= 2147483647"
+I0510 02:43:39.614000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 1872*(((s97 + 5)//6)) <= 2147483647 [guard added] (_induc
+tor/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="1872*(((s97 + 5)//6)) <= 2147483647"
+I0510 02:43:39.827000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 624*s97 <= 2147483647 [guard added] (_inductor/codegen/si
+md.py:1860 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="624*s97 <= 2147483647"
+I0510 02:43:39.858000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:7292] [0/7] eval 16848*(((s42 + 53)//54)) <= 2147483647 [guard added] (_in
+ductor/codegen/simd.py:1858 in can_use_32bit_indexing), for more info run with TORCHDYNAMO_EXTENDED_DEBUG_GUARD_ADDED="16848*(((s42 + 53)//54)) <= 214748364
+7"
+I0510 02:43:42.113000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/7] produce_guards
+I0510 02:43:42.145000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/7] produce_guards
+I0510 02:43:42.186000 2717 site-packages/torch/_dynamo/output_graph.py:2413] [0/7] Step 2: done compiler function inductor
+I0510 02:43:42.228000 2717 site-packages/torch/fx/experimental/symbolic_shapes.py:5353] [0/7] produce_guards
+I0510 02:43:42.319000 2717 site-packages/torch/_dynamo/pgo.py:900] [0/7] put_code_state: no cache key, skipping
+I0510 02:43:42.325000 2717 site-packages/torch/_dynamo/convert_frame.py:1826] [0/7] run_gc_after_compile: running gc
+Epoch 120: 100%|██████████████████████████████████| 2068/2068 [01:48<00:00, 19.09it/s, v_num=ofaj, val/rel_mae=1.080, train/loss=0.00641, train/lr=0.000192]
+
+
+
+============================================================
+Stopping training early because scheduler indicated it should stop at epoch 120.
+
+
+
+
+============================================================
+Epoch 120: 100%|██████████████████████████████████| 2068/2068 [01:48<00:00, 19.09it/s, v_num=ofaj, val/rel_mae=1.080, train/loss=0.00641, train/lr=0.000192]
+============================================================
+Validation dataset plots and evaluation...
+============================================================
+
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/fabric/plugins/environments/slurm.py:204: The `srun` command is available
+on your system but is not used. HINT: If your intention is to run Lightning on SLURM, prepend your python command with `srun` like so: srun python /workspac
+e/semester-project-beam-deformation/src/gnn ...
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is depre
+cated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/connectors/data_connector.py:433: The 'test_dataloader' do
+es not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` to `num_workers=31` in the `DataLoader` to
+improve performance.
+Testing DataLoader 0:   0%|                                                                                                         | 0/280 [00:00<?, ?it/s]
+W0510 06:23:13.762000 2717 site-packages/torch/_dynamo/convert_frame.py:1676] [0/8] torch._dynamo hit config.recompile_limit (8)
+W0510 06:23:13.762000 2717 site-packages/torch/_dynamo/convert_frame.py:1676] [0/8]    function: 'forward' (/workspace/semester-project-beam-deformation/src
+/gnn/models/meshgraphnet/meshgraphnet.py:202)
+W0510 06:23:13.762000 2717 site-packages/torch/_dynamo/convert_frame.py:1676] [0/8]    last reason: 0/5: tensor 'ingraph._store._mapping['x']' dispatch key
+set mismatch. expected DispatchKeySet(CUDA, BackendSelect, ADInplaceOrView, AutogradCUDA), actual DispatchKeySet(CUDA, BackendSelect)
+W0510 06:23:13.762000 2717 site-packages/torch/_dynamo/convert_frame.py:1676] [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+W0510 06:23:13.762000 2717 site-packages/torch/_dynamo/convert_frame.py:1676] [0/8] To diagnose recompilation issues, see https://pytorch.org/docs/main/comp
+ile/programming_model.recompilation.html
+[W 2026-05-10 06:23:13,782] Trial 1 failed because of the following error: FailOnRecompileLimitHit('recompile_limit reached with fullgraph=True. Excessive r
+ecompilations can degrade performance due to the compilation overhead of each recompilation. To monitor recompilations, enable TORCH_LOGS=recompiles. If rec
+ompilations are expected, consider increasing torch._dynamo.config.cache_size_limit to an appropriate value.')
+Traceback (most recent call last):
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/_optimize.py", line 213, in _run_trial
+    value_or_values = func(trial)
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 251, in optuna_objective
+    score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 208, in compose_and_run_training
+    return run_train_pipeline(train_cfg_out)
+  File "/workspace/semester-project-beam-deformation/src/gnn/train.py", line 560, in run_train_pipeline
+    fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 774, in test
+    return call._call_and_handle_interrupt(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 816, in _test_impl
+    results = self._run(model, ckpt_path=ckpt_path)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 1011, in _run
+    results = self._run_stage()
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 1048, in _run_stage
+    return self._evaluation_loop.run()
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/utilities.py", line 179, in _decorator
+    return loop_run(self, *args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/evaluation_loop.py", line 145, in run
+    self._evaluation_step(batch, batch_idx, dataloader_idx, dataloader_iter)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/evaluation_loop.py", line 437, in _evaluation_step
+    output = call._call_strategy_hook(trainer, hook_name, *step_args)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/call.py", line 329, in _call_strategy_hook
+    output = fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/strategies/strategy.py", line 425, in test_step
+    return self.lightning_module.test_step(*args, **kwargs)
+  File "/workspace/semester-project-beam-deformation/src/gnn/training/trainer.py", line 862, in test_step
+    pred = self(batch)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/semester-project-beam-deformation/src/gnn/training/trainer.py", line 458, in forward
+    return self.model(batch)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 465, in __call__
+    return super().__call__(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 953, in compile_wrapper
+    return fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 2202, in __call__
+    result = self._torchdynamo_orig_backend(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 707, in __call__
+    result = _compile(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1693, in _compile
+    raise FailOnRecompileLimitHit(
+torch._dynamo.exc.FailOnRecompileLimitHit: recompile_limit reached with fullgraph=True. Excessive recompilations can degrade performance due to the compilat
+ion overhead of each recompilation. To monitor recompilations, enable TORCH_LOGS=recompiles. If recompilations are expected, consider increasing torch._dyna
+mo.config.cache_size_limit to an appropriate value.
+Error executing job with overrides: []
+Traceback (most recent call last):
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 358, in main
+    runner.run_all_sweeps()
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 324, in run_all_sweeps
+    self.run_one_sweep(self.sweeps_list[si])
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 283, in run_one_sweep
+    study_obj.optimize(fun, n_trials=len(sweep_entity.options))
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/study.py", line 400, in optimize
+    _optimize(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/_optimize.py", line 66, in _optimize
+    _optimize_sequential(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/_optimize.py", line 163, in _optimize_sequential
+    trial = _run_trial(study, func, catch)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/_optimize.py", line 264, in _run_trial
+    raise func_err
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/optuna/study/_optimize.py", line 213, in _run_trial
+    value_or_values = func(trial)
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 251, in optuna_objective
+    score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
+  File "/workspace/semester-project-beam-deformation/src/gnn/hyperparam_opt.py", line 208, in compose_and_run_training
+    return run_train_pipeline(train_cfg_out)
+  File "/workspace/semester-project-beam-deformation/src/gnn/train.py", line 560, in run_train_pipeline
+    fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 774, in test
+    return call._call_and_handle_interrupt(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 816, in _test_impl
+    results = self._run(model, ckpt_path=ckpt_path)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 1011, in _run
+    results = self._run_stage()
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/trainer.py", line 1048, in _run_stage
+    return self._evaluation_loop.run()
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/utilities.py", line 179, in _decorator
+    return loop_run(self, *args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/evaluation_loop.py", line 145, in run
+    self._evaluation_step(batch, batch_idx, dataloader_idx, dataloader_iter)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/loops/evaluation_loop.py", line 437, in _evaluation_step
+    output = call._call_strategy_hook(trainer, hook_name, *step_args)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/trainer/call.py", line 329, in _call_strategy_hook
+    output = fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/lightning/pytorch/strategies/strategy.py", line 425, in test_step
+    return self.lightning_module.test_step(*args, **kwargs)
+  File "/workspace/semester-project-beam-deformation/src/gnn/training/trainer.py", line 862, in test_step
+    pred = self(batch)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/semester-project-beam-deformation/src/gnn/training/trainer.py", line 458, in forward
+    return self.model(batch)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 465, in __call__
+    return super().__call__(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 953, in compile_wrapper
+    return fn(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1776, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1787, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 2202, in __call__
+    result = self._torchdynamo_orig_backend(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 707, in __call__
+    result = _compile(
+  File "/workspace/miniforge3/envs/semesterproject/lib/python3.10/site-packages/torch/_dynamo/convert_frame.py", line 1693, in _compile
+    raise FailOnRecompileLimitHit(
+torch._dynamo.exc.FailOnRecompileLimitHit: recompile_limit reached with fullgraph=True. Excessive recompilations can degrade performance due to the compilat
+ion overhead of each recompilation. To monitor recompilations, enable TORCH_LOGS=recompiles. If recompilations are expected, consider increasing torch._dyna
+mo.config.cache_size_limit to an appropriate value.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+wandb:
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /workspace/semester-project-beam-deformation/saved_models/2026-05-10_02-41-19/wandb/offline-run-20260510_024119-vmtgofaj
+wandb: Find logs at: saved_models/2026-05-10_02-41-19/wandb/offline-run-20260510_024119-vmtgofaj/logs
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666] TorchDynamo attempted to trace the following frames: [
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666]   * forward /workspace/semester-project-beam-deformation/src/gnn/models/meshgraphn
+et/meshgraphnet.py:202
+I0510 06:23:14.312000 2717 site-packages/torch/_dynamo/eval_frame.py:666] ]
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] TorchDynamo compilation metrics:
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] Function, Runtimes (s)
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] _compile.compile_inner, 83.0443
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] compile_attempt_0, 81.8353
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] bytecode_tracing, 13.2724
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] OutputGraph.call_user_compiler, 67.4711
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] inductor_codecache_torch_key, 28.9763
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] _recursive_pre_grad_passes, 0.1502
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] AOTAutogradCache.inductor_load, 0.5296
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] TritonBundler.read_and_emit, 0.0144
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] TritonBundler.load_cached_static_autotuners, 0.0070
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] PyCodeCache.load_by_key_path, 1.9739
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] StaticAutotunerFuture.warm_precompile, 0.1020
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] CachingAutotuner.synchronize, 0.0135
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] async_compile.wait, 1.7199
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] build_guards, 0.9392
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] gc, 0.0574
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] reload_kernel_in_parent, 0.0152
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] CachingAutotuner.benchmark_all_configs, 2.7966
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] InductorBenchmarker.benchmark, 2.7809
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] InductorBenchmarker.benchmark_gpu, 2.8716
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] pgo.dynamic_whitelist, 0.0005
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] create_aot_dispatcher_function, 28.1675
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] aot_collect_metadata, 0.8002
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] compile_fx.<locals>.fw_compiler_base, 6.9716
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] _recursive_joint_graph_passes, 1.3351
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] pad_mm_benchmark, 0.3493
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] pad_mm_benchmark_get_do_bench, 0.0603
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] compile_fx_inner, 19.6047
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] fx_codegen_and_compile, 19.5655
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] additional_fake_tensor_prop, 0.8086
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] _recursive_post_grad_passes, 0.8280
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] GraphLowering.run, 2.1297
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] GraphLowering.compile_to_fn, 13.4158
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] GraphLowering.compile_to_module, 13.4154
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] GraphLowering.codegen, 11.6630
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] Scheduler.__init__, 4.2928
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] Scheduler.fused_nodes, 1.8655
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] Scheduler.codegen, 7.0085
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] PythonWrapperCodegen.generate, 0.2708
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] TritonBundler.collect, 0.0329
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] aot_trace_joint_graph, 3.3174
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] min_cut_rematerialization_partition, 1.3868
+I0510 06:23:14.315000 2717 site-packages/torch/_dynamo/utils.py:860] compile_fx.<locals>.bw_compiler, 13.2173
+Testing DataLoader 0:   0%|                                                                                                         | 0/280 [00:01<?, ?it/s]
+(semesterproject) root@70a8f3412516:/workspace/semester-project-beam-deformation# tmux ls
+train: 1 windows (created Sat May  9 21:53:26 2026) (attached)
+(semesterproject) root@70a8f3412516:/workspace/semester-project-beam-deformation# tmux capture-pane -t train -p -S - > train_output.log
+
