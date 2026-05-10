@@ -19,12 +19,16 @@ _COLOR_STRIPE_B = "royalblue"
 
 
 def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                 per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
                  all_rollout_volume_mae, output_dir, split, selected_trajectory_indices):
     """
     Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
     - all_rollout_pos_mae
     - per_traj_acc_rel_mae
     - per_traj_stress_rel_mae
+    - per_traj_acc_abs_mae
+    - per_traj_stress_abs_mae
+    - per_traj_overall_abs_mae
     - all_rollout_volume_mae
     Main access point called by trainer.
 
@@ -35,6 +39,12 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
             Per-trajectory acceleration relative MAE (no rollout).
         per_traj_stress_rel_mae: list[float]
             Per-trajectory stress relative MAE (no rollout).
+        per_traj_acc_abs_mae: list[float]
+            Per-trajectory acceleration absolute MAE (no rollout).
+        per_traj_stress_abs_mae: list[float]
+            Per-trajectory stress absolute MAE (no rollout).
+        per_traj_overall_abs_mae: list[float]
+            Per-trajectory overall absolute MAE (no rollout).
         all_rollout_volume_mae: list[float]
             Per-trajectory rollout volume MAE averaged over all timesteps.
         output_dir: Path
@@ -87,17 +97,53 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
     )
     paths["images"]["stress_rel_mae_noroll_per_traj"] = p3  # Store path.
 
-    # 4) Absolute rollout volume MAE per trajectory
-    p4 = output_dir / "rollout_volume_mae_per_traj.png"
+    # 4) Acceleration absolute MAE per trajectory (no rollout)
+    p4 = output_dir / "acc_all_abs_mae_noroll_per_traj.png"
+    _plot_sorted_per_traj_histogram(
+        np.asarray(per_traj_acc_abs_mae, dtype=float),
+        ylabel="Acceleration Absolute MAE",
+        title=f"Acceleration Absolute MAE per Trajectory (no rollout) averaged over all nodes [{split}]",
+        output_path=p4,
+        x_sort_caption="acceleration absolute MAE (ascending)",
+        selected_trajectory_indices=selected_trajectory_indices,
+    )
+    paths["images"]["acc_all_abs_mae_noroll_per_traj"] = p4
+
+    # 5) Stress absolute MAE per trajectory (no rollout)
+    p5 = output_dir / "stress_abs_mae_noroll_per_traj.png"
+    _plot_sorted_per_traj_histogram(
+        np.asarray(per_traj_stress_abs_mae, dtype=float),
+        ylabel="Stress Absolute MAE",
+        title=f"Stress Absolute MAE per Trajectory (no rollout) averaged over all nodes [{split}]",
+        output_path=p5,
+        x_sort_caption="stress absolute MAE (ascending)",
+        selected_trajectory_indices=selected_trajectory_indices,
+    )
+    paths["images"]["stress_abs_mae_noroll_per_traj"] = p5
+
+    # 6) Overall absolute MAE per trajectory (no rollout)
+    p6 = output_dir / "overall_abs_mae_noroll_per_traj.png"
+    _plot_sorted_per_traj_histogram(
+        np.asarray(per_traj_overall_abs_mae, dtype=float),
+        ylabel="Overall Absolute MAE",
+        title=f"Overall Absolute MAE per Trajectory (no rollout) averaged over all nodes [{split}]",
+        output_path=p6,
+        x_sort_caption="overall absolute MAE (ascending)",
+        selected_trajectory_indices=selected_trajectory_indices,
+    )
+    paths["images"]["overall_abs_mae_noroll_per_traj"] = p6
+
+    # 7) Absolute rollout volume MAE per trajectory
+    p7 = output_dir / "rollout_volume_mae_per_traj.png"
     _plot_sorted_per_traj_histogram(
         np.asarray(all_rollout_volume_mae, dtype=float),
         ylabel="Rollout Volume MAE",
         title=f"Rollout Volume MAE per Trajectory averaged over all timesteps [{split}]",
-        output_path=p4,
+        output_path=p7,
         x_sort_caption="rollout volume MAE (ascending)",
         selected_trajectory_indices=selected_trajectory_indices,
     )
-    paths["images"]["rollout_volume_mae_per_traj"] = p4  # Register fourth summary figure.
+    paths["images"]["rollout_volume_mae_per_traj"] = p7  # Register last summary figure.
 
     return paths  # Return map of artifact names to paths (images only populated here).
 

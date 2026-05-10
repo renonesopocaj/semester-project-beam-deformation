@@ -118,3 +118,62 @@ def test_volume_residual_returns_finite_scalar_and_backpropagates_with_list_conn
     assert pred.grad is not None
     assert pred.grad.shape == pred.shape
     assert torch.isfinite(pred.grad).all()
+
+
+def test_volume_residual_backpropagates_with_high_rank_batched_connectivity_tensor():
+    """
+    Informal specification: volume residual must support batched connectivity payloads where each graph carries
+    an extra nesting dimension (e.g. batch collation yielding shape `(B, 1, T, 4)`), and still allow backward pass.
+    """
+    batch = SimpleNamespace(
+        x_pos_t=torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [2.0, 1.0, 0.0],
+                [2.0, 0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        ),
+        x_vel_t=torch.zeros((8, 3), dtype=torch.float32),
+        x_element_connectivity=torch.tensor(
+            [[[[0, 1, 2, 3]]], [[[0, 1, 2, 3]]]],
+            dtype=torch.long,
+        ),
+        ptr=torch.tensor([0, 4, 8], dtype=torch.long),
+        _slice_dict={"x_element_connectivity": torch.tensor([0, 1, 2], dtype=torch.long)},
+    )
+    pred = torch.tensor(
+        [
+            [0.08, -0.01, 0.03, 0.0],
+            [0.02, 0.02, -0.04, 0.0],
+            [-0.03, 0.04, 0.01, 0.0],
+            [0.01, -0.02, 0.02, 0.0],
+            [0.04, 0.01, -0.02, 0.0],
+            [0.01, -0.01, 0.01, 0.0],
+            [-0.02, 0.02, 0.00, 0.0],
+            [0.01, 0.00, 0.03, 0.0],
+        ],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    target = torch.zeros_like(pred)
+    residual_value = volume_residual(
+        pred,
+        target,
+        batch,
+        _target_stats(),
+        dt=0.1,
+        time_discretizer=create_time_discretizer("second_order_central"),
+        loss_fn=F.mse_loss,
+    )
+    assert residual_value.ndim == 0
+    assert torch.isfinite(residual_value)
+    residual_value.backward()
+    assert pred.grad is not None
+    assert pred.grad.shape == pred.shape
+    assert torch.isfinite(pred.grad).all()

@@ -48,6 +48,23 @@ THETA_MAX_MARGIN = 1e-6
 MAX_SELECTED_TIMESTEPS = 400
 
 
+class DeferredFinishWandbLogger(WandbLogger):
+    """
+    WandbLogger subclass that suppresses the automatic wandb.finish() triggered by Lightning's
+    internal Trainer._teardown() / logger.finalize() calls at the end of fit() and test().
+
+    Without this, the run is closed at the end of fit(), so the subsequent test() calls
+    (final validation and test split evaluation) log into a brand-new run starting at step 0,
+    causing the monotonic-step warnings and losing all final-eval artifacts.
+
+    wandb.finish() must be called explicitly by the caller (run_train_pipeline) after all
+    evaluation phases complete.
+    """
+
+    def finalize(self, status):
+        pass
+
+
 def _load_traj_metadata(split_dir, extra_info_dir):
     """
     Build a map traj_idx -> metadata dict for in-depth plot subtitles.
@@ -403,13 +420,15 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         wb_run_display_name = training_id if train_cfg.wandb_run_name is None else train_cfg.wandb_run_name
         wb_offline_flag = train_cfg.wandb_offline
         if train_cfg.wandb_group is not None:
-            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name, group=train_cfg.wandb_group,
-                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
-                                 reinit=True, config=cfg_for_wandb(train_dict))
+            logger = DeferredFinishWandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
+                                            group=train_cfg.wandb_group, save_dir=str(lightning_module.model_dir),
+                                            log_model=False, offline=wb_offline_flag,
+                                            reinit="finish_previous", config=cfg_for_wandb(train_dict))
         else:
-            logger = WandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
-                                 save_dir=str(lightning_module.model_dir), log_model=False, offline=wb_offline_flag,
-                                 reinit=True, config=cfg_for_wandb(train_dict))
+            logger = DeferredFinishWandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
+                                               save_dir=str(lightning_module.model_dir), log_model=False,
+                                               offline=wb_offline_flag, reinit="finish_previous",
+                                               config=cfg_for_wandb(train_dict))
     else:
         logger = False
 
@@ -418,8 +437,11 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
     checkpoint_str_dir = str(lightning_module.model_dir / "checkpoints")
     # ALlocate a callback for checkpoints of model every time I get the "best model"
     if train_cfg.enable_val:
+        _ckpt_monitor = ("val/overall_abs_mae"
+                         if train_cfg.val_monitor_metric == "overall_abs_mae"
+                         else "val/overall_relative_mae")
         callbacks.append(ModelCheckpoint(dirpath=checkpoint_str_dir, filename="best",
-                                         monitor="val/overall_relative_mae", mode="min",
+                                         monitor=_ckpt_monitor, mode="min",
                                          save_top_k=1))
     # periodic save every cfg.checkpoint_interval epoch
     if train_cfg.checkpoint_interval > 0:
@@ -576,9 +598,12 @@ def run_train_pipeline(cfg):
 
     best_val_relative_mae = float("nan")
     if train_cfg.enable_val:
+        _ckpt_monitor = ("val/overall_abs_mae"
+                         if train_cfg.val_monitor_metric == "overall_abs_mae"
+                         else "val/overall_relative_mae")
         for chk in fit_trainer.checkpoint_callbacks:
             monitored = getattr(chk, "monitor", "")
-            if monitored == "val/overall_relative_mae":
+            if monitored == _ckpt_monitor:
                 best_score_tensor = chk.best_model_score
                 if best_score_tensor is not None:
                     best_val_relative_mae = float(best_score_tensor.detach().item())

@@ -23,12 +23,33 @@ def relative_mae_sum_and_count(pred, target):
             Predictions (same shape as target).
         target: torch.Tensor
             Targets (same shape as pred).
-    return: (torch.Tensor, torch.Tensor)
-        Scalar sum of |pred-target|/max(|target|,1e-12), and scalar count = numel for weighting.
+        return: (torch.Tensor, torch.Tensor)
+            Scalar sum of |pred-target|/max(|target|,1e-12), and scalar count = numel for weighting.
     """
     rel = compute_relative_mae(pred, target)
     n = rel.numel()
     return rel.sum(), torch.as_tensor(n, device=rel.device, dtype=rel.dtype)
+
+
+def compute_mean_absolute_mae(pred, target):
+    return torch.mean(torch.abs(pred - target))
+
+
+def absolute_mae_sum_and_count(pred, target):
+    """
+    Sum of elementwise absolute error and element count for pooling across batches or timesteps.
+
+    Args:
+        pred: torch.Tensor
+            Predictions (same shape as target).
+        target: torch.Tensor
+            Targets (same shape as pred).
+        return: (torch.Tensor, torch.Tensor)
+            Scalar sum of |pred-target|, and scalar count = numel for weighting.
+    """
+    abs_err = torch.abs(pred - target)
+    n = abs_err.numel()
+    return abs_err.sum(), torch.as_tensor(n, device=abs_err.device, dtype=abs_err.dtype)
 
 
 def to_numpy(value):

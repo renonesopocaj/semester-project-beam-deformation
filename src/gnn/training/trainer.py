@@ -16,7 +16,14 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
-from src.gnn.misc_helpers.misc import compute_mean_relative_mae, relative_mae_sum_and_count, human_readable_storage, module_param_and_buffer_storage_bytes
+from src.gnn.misc_helpers.misc import (
+    absolute_mae_sum_and_count,
+    compute_mean_absolute_mae,
+    compute_mean_relative_mae,
+    human_readable_storage,
+    module_param_and_buffer_storage_bytes,
+    relative_mae_sum_and_count,
+)
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
 from src.gnn.preprocessing.build_features import make_scripted_feature_builders
@@ -84,7 +91,9 @@ class LitModule(L.LightningModule):
     noise_feature_update_mode: str
     random_online: float
     train_seed: int
+    val_monitor_metric: str
     _online_random_edge_augmenter: Any
+    _last_fit_epoch: int
 
     def __init__(self, model, optimizer, scheduler, loss_type, preprocess_cfg, training_id, model_root,
                  len_train_dataloader, enable_wandb_watch, train_cfg, theta_max, wandb_train_cfg_yaml):
@@ -164,6 +173,7 @@ class LitModule(L.LightningModule):
         self.plot_diagnostics_advanced = train_cfg.plot_diagnostics_advanced
         self.selected_validation_trajectories = train_cfg.selected_validation_trajectories
         self.selected_test_trajectories = train_cfg.selected_test_trajectories
+        self.val_monitor_metric = train_cfg.val_monitor_metric
         self.selected_eval_rollout_limit = min(
             int(getattr(train_cfg, "selected_eval_rollout_limit", MAX_SELECTED_TIMESTEPS)),
             MAX_SELECTED_TIMESTEPS
@@ -185,6 +195,7 @@ class LitModule(L.LightningModule):
         self.random_online = float(train_cfg.random_online)
         self.train_seed = int(train_cfg.seed)
         self._online_random_edge_augmenter = None
+        self._last_fit_epoch = 0
 
     def on_fit_start(self):
         """
@@ -224,8 +235,16 @@ class LitModule(L.LightningModule):
 
     def _current_wandb_epoch(self):
         """
-        Returns the 0-based epoch number used as W&B step.
+        Returns the epoch number used as W&B step.
+        During fit: the current training epoch (0-based).
+        During test (final evaluation): _last_fit_epoch + split_offset, where split_offset is 0
+        for "validation" and 1 for "test". This places final-eval metrics at consecutive steps
+        strictly after the last training step, avoiding the monotonic-step constraint violation
+        even when both final-validation and final-test evals log into the same run.
         """
+        if self.trainer is not None and self.trainer.testing:
+            split_offset = 1 if self.eval_split_name == "test" else 0
+            return self._last_fit_epoch + split_offset
         return int(self.current_epoch)
 
     def _log_wandb_epoch_marker(self, commit):
@@ -315,6 +334,23 @@ class LitModule(L.LightningModule):
         payload["epoch"] = epoch_number
         self.logger.experiment.log(payload, step=epoch_number, commit=commit)
 
+    def _write_final_eval_to_summary(self, include_prefixes, include_exact):
+        """
+        Writes selected callback metrics to W&B run.summary as run-level scalars (no step / time series).
+
+        Args:
+            include_prefixes: list[str]
+                Metric prefixes to include.
+            include_exact: list[str]
+                Exact metric names to include.
+        """
+        if not self._has_wandb_logger() or not self.trainer.is_global_zero:
+            return
+        payload = self._collect_callback_metrics_for_wandb(include_prefixes, include_exact)
+        exp = self.logger.experiment
+        for key, value in payload.items():
+            exp.summary[key] = value
+
     def configure_optimizers(self):
         """
         Returns the optimizer to Lightning's training loop.
@@ -355,6 +391,8 @@ class LitModule(L.LightningModule):
         """
         Called at the end of fit. Writes final parameter distribution plot, logs it to W&B when enabled,
         and unwatches the model to prevent memory leaks.
+        Sets _last_fit_epoch so that test-phase W&B logging (final evaluation) uses epoch+1 as the step,
+        placing final-eval artifacts cleanly after the last training point.
         """
         if self.trainer is not None and self.trainer.is_global_zero:
             out_path = self.training_plots_dir / "final_parameter_distributions.png"
@@ -369,6 +407,9 @@ class LitModule(L.LightningModule):
                     step=epoch_step,
                     commit=True,
                 )
+        # Store last fit epoch + 1 so that on_test_epoch_end logs at a fresh step
+        # strictly greater than any step committed during training.
+        self._last_fit_epoch = int(self.current_epoch) + 1
         if self._has_wandb_logger() and self.trainer.is_global_zero and self.enable_wandb_watch:
             self.logger.experiment.unwatch(self.model)
 
@@ -588,10 +629,16 @@ class LitModule(L.LightningModule):
         target_stress = target[:, 3].contiguous()
         if self.profile_loss_stress_vs_acceleration:
             metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                       f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
+                       f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
+                       f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress),
                        f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
                        f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress)}
         else:
-            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target)}
+            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                       f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
+                       f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
+                       f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress)}
         return metrics
 
     def _noroll_eval_metric_weights(self, pred, metric_names):
@@ -609,11 +656,11 @@ class LitModule(L.LightningModule):
         """
         weights = {}
         for name in metric_names:
-            if name.endswith("overall_relative_mae"):
+            if name.endswith("overall_relative_mae") or name.endswith("overall_abs_mae"):
                 weights[name] = int(pred.numel())
-            elif name.endswith("acc_all_rel_mae") or name.endswith("acc_all_loss"):
+            elif name.endswith("acc_all_rel_mae") or name.endswith("acc_all_abs_mae") or name.endswith("acc_all_loss"):
                 weights[name] = int(pred[:, 0:3].numel())
-            elif name.endswith("stress_rel_mae") or name.endswith("stress_loss"):
+            elif name.endswith("stress_rel_mae") or name.endswith("stress_abs_mae") or name.endswith("stress_loss"):
                 weights[name] = int(pred[:, 3].numel())
             else:
                 raise ValueError("Unknown metric for node-weighted logging: %s" % name)
@@ -702,7 +749,13 @@ class LitModule(L.LightningModule):
         if self.scheduler is None:
             return
         # Collects metrics for scheduler monitoring
-        monitor_name = "val/overall_relative_mae" if self.enable_val else "train/loss"
+        if self.enable_val:
+            if self.val_monitor_metric == "overall_abs_mae":
+                monitor_name = "val/overall_abs_mae"
+            else:
+                monitor_name = "val/overall_relative_mae"
+        else:
+            monitor_name = "train/loss"
         monitor_metric = self.trainer.callback_metrics.get(monitor_name)
         if monitor_metric is None: # additional check
             monitor_metric = self.trainer.callback_metrics["train/loss"]
@@ -745,7 +798,10 @@ class LitModule(L.LightningModule):
         target = batch.y
         metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
         mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
-        self._log_metrics(metrics, prog_bar_keys=["val/overall_relative_mae"], metric_weights=mw,
+        prog_bar_keys = ["val/overall_relative_mae", "val/overall_abs_mae"]
+        if self.val_monitor_metric == "overall_abs_mae":
+            prog_bar_keys = ["val/overall_abs_mae", "val/overall_relative_mae"]
+        self._log_metrics(metrics, prog_bar_keys=prog_bar_keys, metric_weights=mw,
                           sync_dist_keys=list(metrics.keys()))
 
     def predict_step(self, batch, batch_idx):
@@ -866,7 +922,10 @@ class LitModule(L.LightningModule):
         # collects not rollout metrics overall_relative_mae, acc_all_rel_mae, stress_rel_mae
         metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
         mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
-        self._log_metrics(metrics, prog_bar_keys=[f"{wb_prefix}/overall_relative_mae"], metric_weights=mw,
+        prog_bar_keys_test = [f"{wb_prefix}/overall_relative_mae", f"{wb_prefix}/overall_abs_mae"]
+        if self.val_monitor_metric == "overall_abs_mae":
+            prog_bar_keys_test = [f"{wb_prefix}/overall_abs_mae", f"{wb_prefix}/overall_relative_mae"]
+        self._log_metrics(metrics, prog_bar_keys=prog_bar_keys_test, metric_weights=mw,
                           sync_dist_keys=list(metrics.keys()))
         # on_test_epoch_end logs ROLLOUT metrics
 
@@ -878,11 +937,15 @@ class LitModule(L.LightningModule):
         """
         if not self.trainer.is_global_zero:
             return
-        self._log_wandb_epoch_marker(commit=False)
 
         # 1. Compute per-trajectory no-rollout metrics (one-step inference)
         # print(f"\t[{self.eval_split_name}] Computing per-trajectory no-rollout metrics...")
-        per_traj_acc_rel_mae, per_traj_stress_rel_mae = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
+        per_traj_metrics = self._compute_per_trajectory_noroll_metrics(self.test_dataset)
+        per_traj_acc_rel_mae = per_traj_metrics["acc_rel_mae"]
+        per_traj_stress_rel_mae = per_traj_metrics["stress_rel_mae"]
+        per_traj_acc_abs_mae = per_traj_metrics["acc_abs_mae"]
+        per_traj_stress_abs_mae = per_traj_metrics["stress_abs_mae"]
+        per_traj_overall_abs_mae = per_traj_metrics["overall_abs_mae"]
         # 2. Run rollout for every trajectory, collect results, and then log
         all_true_rollouts, all_pred_rollouts, all_rollout_pos_mae, all_rollout_volume_mae = {}, {}, [], []
         num_trajectories = self.test_dataset.num_trajectories
@@ -927,10 +990,9 @@ class LitModule(L.LightningModule):
         include_exact = []
         if self.eval_split_name == "validation":
             include_exact.append("final_validation/rollout_pos_mae_all_trajectories")
-        self._log_callback_metrics_to_wandb(
+        self._write_final_eval_to_summary(
             include_prefixes=[f"{wb_prefix}/"],
             include_exact=include_exact,
-            commit=not self.log_test_media,
         )
         if not self.log_test_media: # If not logging, skip the rest
             return
@@ -940,6 +1002,7 @@ class LitModule(L.LightningModule):
         overall_output_dir = self.model_evaluation_dir / self.eval_split_name / "overall"
         overall_output_dir.mkdir(parents=True, exist_ok=True)
         overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
+                                          per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
                                           all_rollout_volume_mae, overall_output_dir,
                                           self.eval_split_name, selected)
         # 5. Generate in-depth plots for selected trajectories only
@@ -954,6 +1017,7 @@ class LitModule(L.LightningModule):
                                                                        pred_rollout_for_plot, traj_idx)
         # 6. Single wandb logging call (guard: logger may be False when use_wandb=false; do not touch .experiment)
         if self._has_wandb_logger():
+            self._log_wandb_epoch_marker(commit=False)
             log_all_wandb_media(overall_plot_paths, per_traj_paths, self.eval_split_name, self.logger.experiment,
                                 True, self._current_wandb_epoch())
 
@@ -977,8 +1041,11 @@ class LitModule(L.LightningModule):
         pred_stress = pred[:, 3].contiguous()
         target_stress = target[:, 3].contiguous()
         metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
+                   f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
                    f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
-                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress)}
+                   f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
+                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress),
+                   f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress)}
         return metrics
 
     def _run_rollout(self, traj_loader, rollout_steps, rollout_online_tag, traj_idx):
@@ -1040,24 +1107,29 @@ class LitModule(L.LightningModule):
 
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
-        Runs one-step (non-autoregressive) inference on every trajectory and returns per-trajectory relative MAE
-        for acceleration and stress.
+        Runs one-step (non-autoregressive) inference on every trajectory and returns per-trajectory
+        relative and absolute MAE for acceleration, stress, and overall predictions.
 
         Args:
             dataset: InMemoryTimeStepDataset
                 Dataset with trajectory_boundaries.
-        return: (list[float], list[float])
-            Per-trajectory acceleration relative MAE and stress relative MAE.
+        return: dict
+            Keys: acc_rel_mae, stress_rel_mae, acc_abs_mae, stress_abs_mae, overall_abs_mae.
+            Each value is a list[float] with one entry per trajectory.
         """
         per_traj_acc_rel_mae, per_traj_stress_rel_mae = [], []
+        per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae = [], [], []
         self.eval()
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
                 rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
                 max_timesteps = rollout_steps if rollout_steps != 999999 else None
                 traj_loader = self._get_trajectory_loader(dataset, traj_idx, max_timesteps=max_timesteps)
-                acc_sum, acc_cnt = 0.0, 0.0
-                stress_sum, stress_cnt = 0.0, 0.0
+                acc_rel_sum, acc_rel_cnt = 0.0, 0.0
+                stress_rel_sum, stress_rel_cnt = 0.0, 0.0
+                acc_abs_sum, acc_abs_cnt = 0.0, 0.0
+                stress_abs_sum, stress_abs_cnt = 0.0, 0.0
+                overall_abs_sum, overall_abs_cnt = 0.0, 0.0
                 for inner_batch_idx, batch in enumerate(traj_loader):
                     batch = batch.to(self.device)
                     batch = self._with_online_random_edges_noroll(batch, traj_idx, inner_batch_idx)
@@ -1069,13 +1141,31 @@ class LitModule(L.LightningModule):
                     target_stress = target[:, 3].contiguous()
                     s_a, c_a = relative_mae_sum_and_count(pred_acc, target_acc)
                     s_s, c_s = relative_mae_sum_and_count(pred_stress, target_stress)
-                    acc_sum += float(s_a.detach().item())
-                    acc_cnt += float(c_a.detach().item())
-                    stress_sum += float(s_s.detach().item())
-                    stress_cnt += float(c_s.detach().item())
-                per_traj_acc_rel_mae.append(acc_sum / acc_cnt if acc_cnt > 0 else 0.0)
-                per_traj_stress_rel_mae.append(stress_sum / stress_cnt if stress_cnt > 0 else 0.0)
-        return per_traj_acc_rel_mae, per_traj_stress_rel_mae
+                    sa_a, ca_a = absolute_mae_sum_and_count(pred_acc, target_acc)
+                    sa_s, ca_s = absolute_mae_sum_and_count(pred_stress, target_stress)
+                    sa_o, ca_o = absolute_mae_sum_and_count(pred, target)
+                    acc_rel_sum += float(s_a.detach().item())
+                    acc_rel_cnt += float(c_a.detach().item())
+                    stress_rel_sum += float(s_s.detach().item())
+                    stress_rel_cnt += float(c_s.detach().item())
+                    acc_abs_sum += float(sa_a.detach().item())
+                    acc_abs_cnt += float(ca_a.detach().item())
+                    stress_abs_sum += float(sa_s.detach().item())
+                    stress_abs_cnt += float(ca_s.detach().item())
+                    overall_abs_sum += float(sa_o.detach().item())
+                    overall_abs_cnt += float(ca_o.detach().item())
+                per_traj_acc_rel_mae.append(acc_rel_sum / acc_rel_cnt if acc_rel_cnt > 0 else 0.0)
+                per_traj_stress_rel_mae.append(stress_rel_sum / stress_rel_cnt if stress_rel_cnt > 0 else 0.0)
+                per_traj_acc_abs_mae.append(acc_abs_sum / acc_abs_cnt if acc_abs_cnt > 0 else 0.0)
+                per_traj_stress_abs_mae.append(stress_abs_sum / stress_abs_cnt if stress_abs_cnt > 0 else 0.0)
+                per_traj_overall_abs_mae.append(overall_abs_sum / overall_abs_cnt if overall_abs_cnt > 0 else 0.0)
+        return {
+            "acc_rel_mae": per_traj_acc_rel_mae,
+            "stress_rel_mae": per_traj_stress_rel_mae,
+            "acc_abs_mae": per_traj_acc_abs_mae,
+            "stress_abs_mae": per_traj_stress_abs_mae,
+            "overall_abs_mae": per_traj_overall_abs_mae,
+        }
 
     def _log_plot_roll_single_traj(self, true_rollout, pred_rollout, traj_idx):
         """
