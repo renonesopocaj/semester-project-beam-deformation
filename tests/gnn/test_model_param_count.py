@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_CONFIG_DIR = REPO_ROOT / "conf" / "train"
 
 # ---- Change this constant to select any config in conf/train/model/ ----
-MODEL_CONFIG_NAME = "mgn_smallest"
+MODEL_CONFIG_NAME = "gunet_H512_L9_r0.3"
 # ------------------------------------------------------------------------
 
 _SYNTHETIC_NUM_NODES = 64

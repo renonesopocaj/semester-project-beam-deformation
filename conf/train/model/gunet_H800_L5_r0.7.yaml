@@ -6,6 +6,6 @@ sum_res: true
 enable_embedder: true
 encoder_layers: 2
 decoder_layers: 2
-hidden_channels: 4096
+hidden_channels: 800
 dropout_head: 0.05
 dropout_encoder: 0.05
