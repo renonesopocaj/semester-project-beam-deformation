@@ -31,7 +31,12 @@ TRAIN_CONFIG_DIR = REPO_ROOT / "conf" / "train"
 TRAIN_CONFIG_NAME = "train"
 
 # ---- Change this constant to select any config in conf/train/model/ ----
-MODEL_CONFIG_NAME = "gunet_H512_L9_r0.3"
+# MODEL_CONFIG_NAME = "mgn_H128_L10"
+# MODEL_CONFIG_NAME = "mgn_H128_L15"
+# MODEL_CONFIG_NAME = "mgn_H256_L10"
+# MODEL_CONFIG_NAME = "mgn_H256_L15"
+# MODEL_CONFIG_NAME = "mgn_H400_L8"
+MODEL_CONFIG_NAME = "mgn_H400_L13_1layermlp"
 # ------------------------------------------------------------------------
 
 _SYNTHETIC_NUM_NODES = 64
