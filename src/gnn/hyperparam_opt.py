@@ -15,8 +15,7 @@ import math
 import traceback
 from pathlib import Path
 import torch
-import wandb as wb_sdk
-from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_summary_metric_plot, save_sweep_performance_plot, wandb_summary_log_plot
+from src.gnn.training.hyperparam_opt_helpers import save_pareto_plot, save_summary_metric_plot, save_sweep_performance_plot, wandb_summary_log_outputs
 import matplotlib
 import matplotlib.pyplot as plt
 import optuna
@@ -428,12 +427,16 @@ def main(cfg):
             print("Saved summary plot (%s) to %s" % (metric_key_here, sp))
             sm = sm + 1
 
-        # Log all plots to W&B.
-        all_plot_paths = list(pareto_plot_paths) + summary_plot_paths
-        ap = 0
-        while ap < len(all_plot_paths):
-            wandb_summary_log_plot(study_nm, all_plot_paths[ap], wandb_proj, off_lit)
-            ap = ap + 1
+        # Log all hyperparam_outputs files to one trailing W&B summary run.
+        sweep_plot_paths = []
+        sw = 0
+        while sw < len(runner.sweeps_list):
+            sweep_name = runner.sweeps_list[sw].name
+            if sweep_name in runner.per_sweep_plot_records:
+                sweep_plot_paths.append(Path(runner.per_sweep_plot_records[sweep_name]))
+            sw = sw + 1
+        all_plot_paths = sweep_plot_paths + list(pareto_plot_paths) + summary_plot_paths
+        wandb_summary_log_outputs(study_nm, all_plot_paths, [dumped_path], wandb_proj, off_lit)
     except Exception as e:
         traceback.print_exception(type(e), e, e.__traceback__)
 

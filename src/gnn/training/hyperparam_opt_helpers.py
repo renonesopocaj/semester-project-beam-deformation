@@ -5,6 +5,45 @@ import matplotlib.pyplot as plt
 matplotlib.use("Agg")
 plt.ioff()
 
+def update_final_metrics_plain(final_metrics_plain, metric_source):
+    """
+    Adds final-evaluation scalar metrics from one Lightning result source to the accumulated plain dict.
+
+    Args:
+        final_metrics_plain: dict
+            Accumulator mapping final_validation/* and final_test/* metric names to floats.
+        metric_source: dict or list
+            Either Trainer.callback_metrics or the list/dict returned by Trainer.test.
+        return: dict
+            The same accumulator, updated in place for convenient chaining.
+    """
+    if metric_source is None:
+        return final_metrics_plain
+    metric_dicts = []
+    if isinstance(metric_source, dict):
+        metric_dicts.append(metric_source)
+    elif isinstance(metric_source, list):
+        for item in metric_source:
+            if isinstance(item, dict):
+                metric_dicts.append(item)
+    for metrics_map in metric_dicts:
+        for key, value in metrics_map.items():
+            key_str = str(key)
+            if not (key_str.startswith("final_validation/") or key_str.startswith("final_test/")):
+                continue
+            try:
+                if hasattr(value, "detach"):
+                    detached = value.detach()
+                    if detached.numel() != 1:
+                        continue
+                    final_metrics_plain[key_str] = float(detached.item())
+                else:
+                    final_metrics_plain[key_str] = float(value)
+            except (TypeError, ValueError):
+                continue
+    return final_metrics_plain
+
+
 def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filename="pareto.png"):
     """
     Args:
@@ -230,15 +269,42 @@ def _pareto_non_dominated_minimize(points_xy):
         i = i + 1
     return out_idx
 
-def wandb_summary_log_plot(study_name_str, pareto_path, wandb_project, wandb_offline_flag):
+def _safe_wandb_name(raw_name, fallback_name):
     """
-    Logs pareto.png to W&B inside a trailing summary run.
+    Args:
+        raw_name: str
+            Candidate W&B name.
+        fallback_name: str
+            Name used if the candidate has no safe characters.
+    return: str
+            Name containing only characters accepted by W&B artifact/media identifiers.
+    """
+    safe_chars = []
+    ix = 0
+    while ix < len(str(raw_name)):
+        one_char = str(raw_name)[ix]
+        if one_char.isalnum() or one_char in ("_", "-", "."):
+            safe_chars.append(one_char)
+        else:
+            safe_chars.append("_")
+        ix = ix + 1
+    safe_name = "".join(safe_chars).strip("_")
+    if safe_name == "":
+        return fallback_name
+    return safe_name
+
+
+def wandb_summary_log_outputs(study_name_str, plot_paths, file_paths, wandb_project, wandb_offline_flag):
+    """
+    Logs all hyperparameter summary outputs to one trailing W&B summary run.
 
     Args:
         study_name_str: str
             Study basename for grouping.
-        pareto_path: Path
-            pareto.png filesystem path.
+        plot_paths: list of Path
+            Plot image paths to log as W&B Images in a single run step.
+        file_paths: list of Path
+            Non-media files to attach to a W&B artifact.
         wandb_project: str
             W&B project matching training runs.
         wandb_offline_flag: bool
@@ -248,7 +314,26 @@ def wandb_summary_log_plot(study_name_str, pareto_path, wandb_project, wandb_off
 
     run_name_here = "%s__summary" % study_name_str
     wandb_mode = "offline" if wandb_offline_flag else "online"
-    wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
-                mode=wandb_mode)
-    wb_sdk.log({"pareto_plot": wb_sdk.Image(str(pareto_path))})
-    wb_sdk.finish()
+    artifact_name = "%s_hyperparam_outputs" % _safe_wandb_name(study_name_str, "hyperparam_study")
+    with wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
+                     mode=wandb_mode) as run:
+        image_payload = {}
+        pp = 0
+        while pp < len(plot_paths):
+            plot_path = Path(plot_paths[pp])
+            image_key = "hyperparam_outputs/%s" % _safe_wandb_name(plot_path.stem, "plot")
+            image_payload[image_key] = wb_sdk.Image(str(plot_path), caption=plot_path.name)
+            pp = pp + 1
+        if len(image_payload) > 0:
+            run.log(image_payload)
+
+        artifact = wb_sdk.Artifact(name=artifact_name, type="hyperparam-summary")
+        added_file = False
+        fp = 0
+        while fp < len(file_paths):
+            file_path = Path(file_paths[fp])
+            artifact.add_file(str(file_path), name=file_path.name)
+            added_file = True
+            fp = fp + 1
+        if added_file:
+            run.log_artifact(artifact)
