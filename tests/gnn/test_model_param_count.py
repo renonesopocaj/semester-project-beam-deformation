@@ -3,6 +3,13 @@ test_model_param_count.py
 
 Prints and verifies the parameter count of a model built from a chosen config.
 Change MODEL_CONFIG_NAME to any name in conf/train/model/ to probe a different architecture.
+
+Run this test from the fenicsproject conda environment so Hydra imports correctly (the base
+Anaconda Python may pick up a different top-level ``hydra`` package and break compose).
+
+Example:
+
+    conda run -n fenicsproject python -m pytest tests/gnn/test_model_param_count.py -v -s
 """
 
 from pathlib import Path
@@ -21,6 +28,7 @@ from src.gnn.train import create_model
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_CONFIG_DIR = REPO_ROOT / "conf" / "train"
+TRAIN_CONFIG_NAME = "train"
 
 # ---- Change this constant to select any config in conf/train/model/ ----
 MODEL_CONFIG_NAME = "mgn_smallest"
@@ -57,7 +65,7 @@ def test_model_param_count():
     """
     GlobalHydra.instance().clear()
     with initialize_config_dir(version_base=None, config_dir=str(TRAIN_CONFIG_DIR)):
-        cfg = compose(config_name="train", overrides=[f"model={MODEL_CONFIG_NAME}"])
+        cfg = compose(config_name=TRAIN_CONFIG_NAME, overrides=[f"model={MODEL_CONFIG_NAME}"])
     OmegaConf.resolve(cfg)
     train_cfg = TrainYaml(cfg)
 
