@@ -6,7 +6,7 @@
 # Override on CLI, e.g. `train_compose_config=train` to use `train.yaml` as the compose root instead.
 
 train_compose_config: train_sanity_sweep
-study_name: hp_opt_${now:%Y-%m-%d_%H-%M-%S}
+study_name: hp_opt_sanity_${now:%Y-%m-%d_%H-%M-%S}
 output_dir: hyperparam_outputs/${study_name}
 # Minimize this; supported short names: overall_abs_mae, overall_relative_mae.
 # Controls val_monitor_metric injected into training (checkpoint monitors the matching val/* key).
