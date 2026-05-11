@@ -1,0 +1,11 @@
+model_name: "gunet"
+layer_norm: true
+depth: 9
+pool_ratios: [1, 1, 0.95, 0.9, 0.9, 0.85, 0.85, 0.8, 0.8] # 37 %
+sum_res: true
+enable_embedder: true
+encoder_layers: 2
+decoder_layers: 2
+hidden_channels: 650
+dropout_head: 0.05
+dropout_encoder: 0.05

@@ -28,15 +28,21 @@ sweeps:
       - computational.torch_compile=False
       - noise=noise_per_epoch_noprev
     options:
-      - label: deep
+      - label: gunet_H512_L9_r0.7
         overrides:
-          - model=gunet_deep_0.05
-      - label: mid_0.05
+          - model=gunet_H512_L9_r0.7
+      - label: gunet_H512_L9_r0.3
         overrides:
-          - model=gunet_mid_0.05
-      - label: mid_0.1
+          - model=gunet_H512_L9_r0.3
+      - label: gunet_H512_L15_r0.3
         overrides:
-          - model=gunet_mid_0.1
+          - model=gunet_H512_L15_r0.3
+      - label: gunet_H650_L9_r0.3
+        overrides:
+          - model=gunet_H650_L9_r0.3
+      - label: gunet_H800_L5_r0.7
+        overrides:
+          - model=gunet_H800_L5_r0.7
 
 hydra:
   run:
