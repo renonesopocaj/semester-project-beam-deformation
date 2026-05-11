@@ -41,6 +41,7 @@ from src.gnn.training.scheduler import scheduler_factory
 from src.gnn.training.trainer import LitModule
 from src.gnn.misc_helpers.custom_pbar import ShortMetricProgressBar
 from src.gnn.training.optimizers import optimizer_factory
+from src.gnn.training.hyperparam_opt_helpers import update_final_metrics_plain
 
 matplotlib.use("Agg")
 plt.ioff()
@@ -600,13 +601,17 @@ def run_train_pipeline(cfg):
     lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader = \
         train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
+    final_metrics_plain = {}
+
     # =================== Final validation ===================
     if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
         val_traj_metadata = _load_traj_metadata(train_cfg.val_dir, train_cfg.extra_info_dir)
         lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
                                           traj_metadata=val_traj_metadata)
-        fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader, ckpt_path=None)
+        validation_test_results = fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader,
+                                                   ckpt_path=None)
+        update_final_metrics_plain(final_metrics_plain, validation_test_results)
 
     # =================== Testing ===================
     print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
@@ -621,7 +626,8 @@ def run_train_pipeline(cfg):
     test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
     lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
                                        traj_metadata=test_traj_metadata)
-    fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
+    test_results = fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
+    update_final_metrics_plain(final_metrics_plain, test_results)
 
     best_val_relative_mae = float("nan")
     if train_cfg.enable_val:
@@ -636,14 +642,7 @@ def run_train_pipeline(cfg):
                     best_val_relative_mae = float(best_score_tensor.detach().item())
                 break
 
-    final_metrics_plain = {}
-    for key, value in fit_trainer.callback_metrics.items():
-        if not (str(key).startswith("final_validation/") or str(key).startswith("final_test/")):
-            continue
-        if hasattr(value, "detach"):
-            final_metrics_plain[str(key)] = float(value.detach().item())
-        else:
-            final_metrics_plain[str(key)] = float(value)
+    update_final_metrics_plain(final_metrics_plain, fit_trainer.callback_metrics)
 
     wandb_run_id = None
     if train_cfg.use_wandb:
