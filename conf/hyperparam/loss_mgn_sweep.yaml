@@ -1,0 +1,44 @@
+# Hyperparameter study driver: edit `sweeps` below to change what is swept (no code changes).
+# Each sweep runs every option once (grid); the override set that wins is carried into the next sweep.
+# Training composes `conf/train/{train_compose_config}.yaml` (default: train_default_hyperopt).
+# `train_default_hyperopt.yaml` mirrors `train.yaml` (full defaults + top-level fields); edit that file for hyperopt baselines.
+# Override on CLI, e.g. `train_compose_config=train` to use `train.yaml` as the compose root instead.
+
+train_compose_config: train_sweep_defaults
+study_name: hp_opt_integration_scheme_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+# Minimize this; supported short names: overall_abs_mae, overall_relative_mae.
+# Controls val_monitor_metric injected into training (checkpoint monitors the matching val/* key).
+optimization_metric: overall_abs_mae
+# Pareto plot axes: each list entry is one (x, y) pair → one plot per pair.
+# Omit pareto_metric_source when using explicit lists below.
+pareto_x_metric:
+  - final_test/acc_all_rel_mae
+  - final_test/acc_all_abs_mae
+pareto_y_metric:
+  - final_test/stress_rel_mae
+  - final_test/stress_abs_mae
+wandb_project: beam_deformation
+wandb_offline: true
+base_dir: /scratch/izar/senoner/dataset # NOTE: if it's on slurm it's "/scratch/izar/senoner/dataset" else "dataset"
+
+sweeps:
+  - name: loss_mgn
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+    options:
+      - label: mae
+        overrides:
+          - loss=mae
+      - label: mse
+        overrides:
+          - loss=default
+      - label: exp_mises_mae
+        overrides:
+          - loss=exp_mises_mae
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
