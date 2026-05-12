@@ -20,12 +20,36 @@ sweeps:
     fixed_overrides:
       - noise=noise_per_epoch_noprev
     options:
-      - label: base
+      - label: transolver_mid_S128
         overrides:
-          - model=transolver
-      - label: big
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=128
+      - label: transolver_mid_S64
         overrides:
-          - model=transolver_big
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=64
+      - label: transolver_mid_S32
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+      - label: transolver_mid_S16
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=16
+      - label: transolver_big_S128
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=128
+      - label: transolver_big_S64
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=64
+      - label: transolver_big_S32
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+      - label: transolver_big_S16
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=16
 
 hydra:
   run:
