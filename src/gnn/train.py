@@ -612,6 +612,11 @@ def run_train_pipeline(cfg):
         validation_test_results = fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader,
                                                    ckpt_path=None)
         update_final_metrics_plain(final_metrics_plain, validation_test_results)
+        # Read callback_metrics immediately after this phase so epoch-hook metrics logged with
+        # rank_zero_only=True (e.g. final_validation/rollout_pos_mae from on_test_epoch_end)
+        # are captured before the subsequent test-split Trainer.test() call resets the
+        # internal Lightning result collection and overwrites callback_metrics.
+        update_final_metrics_plain(final_metrics_plain, fit_trainer.callback_metrics)
 
     # =================== Testing ===================
     print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")

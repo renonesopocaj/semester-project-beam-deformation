@@ -201,6 +201,8 @@ def save_summary_metric_plot(records_list, metric_key, output_dir, filename):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     x_labels = []
     y_vals = []
+    missing_count = 0
+    non_finite_count = 0
     ri = 0
     while ri < len(records_list):
         rec = records_list[ri]
@@ -209,16 +211,30 @@ def save_summary_metric_plot(records_list, metric_key, output_dir, filename):
             try:
                 yf = float(val)
             except (TypeError, ValueError):
+                missing_count = missing_count + 1
                 ri = ri + 1
                 continue
             if math.isfinite(yf):
                 label = "%s__%s" % (rec.get("sweep_name", ""), rec.get("option_label", ""))
                 x_labels.append(label)
                 y_vals.append(yf)
+            else:
+                non_finite_count = non_finite_count + 1
+        else:
+            missing_count = missing_count + 1
         ri = ri + 1
+    print(
+        "Summary plot '%s': %d valid points, %d missing-key records, %d non-finite records."
+        % (metric_key, len(x_labels), missing_count, non_finite_count)
+    )
     if len(x_labels) == 0:
+        diag = (
+            "No data for %s\n"
+            "Missing-key records: %d  Non-finite records: %d"
+            % (metric_key, missing_count, non_finite_count)
+        )
         fig_empty, ax_empty = plt.subplots(figsize=(8, 4.8))
-        ax_empty.text(0.5, 0.5, "No data for %s" % metric_key, ha="center", va="center")
+        ax_empty.text(0.5, 0.5, diag, ha="center", va="center")
         ax_empty.set_axis_off()
         plt.tight_layout()
         plt.savefig(out_path, dpi=160)
