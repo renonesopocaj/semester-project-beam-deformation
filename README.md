@@ -370,3 +370,15 @@ The repository tracks different metrics for training, validation, and final eval
 On disk, plots still live under `saved_models/<run_id>/model_evaluation/validation/` or `…/test/`; only the W&B log keys use the `final_*` namespaces above.
 
 In short, the task is to learn a graph-based surrogate model that maps the current beam state and forcing to the next-step nodal acceleration and stress, and then to assess both one-step prediction quality and long-horizon rollout quality.
+
+## Tests
+
+Test that a given config "compiles" (is composed and interpolated) correctly
+```shell
+python -m pytest tests/gnn/test_config_hyperparam_opt.py --cn loss_mgn_sweep
+```
+
+See number of parameters
+```shell
+python -m pytest tests/gnn/test_model_param_count.py
+```

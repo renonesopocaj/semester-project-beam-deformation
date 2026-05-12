@@ -31,12 +31,13 @@ TRAIN_CONFIG_DIR = REPO_ROOT / "conf" / "train"
 TRAIN_CONFIG_NAME = "train"
 
 # ---- Change this constant to select any config in conf/train/model/ ----
-# MODEL_CONFIG_NAME = "mgn_H128_L10"
-# MODEL_CONFIG_NAME = "mgn_H128_L15"
-# MODEL_CONFIG_NAME = "mgn_H256_L10"
-# MODEL_CONFIG_NAME = "mgn_H256_L15"
-# MODEL_CONFIG_NAME = "mgn_H400_L8"
-MODEL_CONFIG_NAME = "mgn_H400_L13_1layermlp"
+# MODEL_CONFIG_NAME = "transolver_5L_HD256_AH8_S32_R1"
+# MODEL_CONFIG_NAME = "transolver_5L_HD512_AH10_S32_R1"
+# MODEL_CONFIG_NAME = "transolver_3L_HD512_AH10_S32_R1"
+# MODEL_CONFIG_NAME = "transolver_5L_HD256_AH30_S32_R1"
+# MODEL_CONFIG_NAME = "transolver_10L_HD256_AH30_S32_R4"
+# MODEL_CONFIG_NAME = "transolver_3L_HD512_AH5_S32_R4"
+MODEL_CONFIG_NAME = "transolver_7L_HD312_AH15_S32_R4"
 # ------------------------------------------------------------------------
 
 _SYNTHETIC_NUM_NODES = 64
