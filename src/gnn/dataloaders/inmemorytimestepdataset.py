@@ -281,6 +281,8 @@ class _NoisedMixin:
                     x_pos_tm1_prev=x_pos_tm1_prev,
                     x_pos_t=x_noised,
                     x_vel_t=v_noised,
+                    rest_pos=data.rest_pos,
+                    node_force=data.node_force,
                     boundary_left_tri_index=data.boundary_left_tri_index,
                     boundary_right_tri_index=data.boundary_right_tri_index,
                     t=data.t)
