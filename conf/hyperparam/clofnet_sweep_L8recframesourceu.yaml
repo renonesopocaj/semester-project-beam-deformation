@@ -2,7 +2,7 @@
 # Training composes `conf/train/{train_compose_config}.yaml`.
 
 train_compose_config: train_sweep_defaults
-study_name: hp_opt_clofnet_${now:%Y-%m-%d_%H-%M-%S}
+study_name: hp_opt_clofnet_L8recframesourceu_${now:%Y-%m-%d_%H-%M-%S}
 output_dir: hyperparam_outputs/${study_name}
 optimization_metric: overall_abs_mae
 pareto_x_metric:
@@ -18,11 +18,12 @@ base_dir: /scratch/izar/senoner/dataset
 sweeps:
   - name: clofnet
     fixed_overrides:
-      - model=clofnet
       - noise=noise_per_epoch_noprev
     options:
-      - label: default
-        overrides: []
+      - label: clofnet_rec_L8_softeps_framesourceu
+        overrides:
+          - model=clofnet_rec_L8_softeps_framesourceu
+
 
 hydra:
   run:

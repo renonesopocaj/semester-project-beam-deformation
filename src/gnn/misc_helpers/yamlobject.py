@@ -286,6 +286,11 @@ class TrainYaml:
             self.rescalarize_per_layer = flattened_cfg["rescalarize_per_layer"]
             self.include_v_branch = flattened_cfg["include_v_branch"]
             self.include_force = flattened_cfg["include_force"]
+            self.m_ij_init = flattened_cfg["m_ij_init"]
+            self.n_layers_gate_mlp = flattened_cfg["n_layers_gate_mlp"]
+            self.n_layers_node_mlp = flattened_cfg["n_layers_node_mlp"]
+            self.n_layers_message_mlp = flattened_cfg["n_layers_message_mlp"]
+            self.eps_mode = flattened_cfg["eps_mode"]
         elif self.model_name == "transolver":
             self.transolver_n_layers = flattened_cfg["transolver_n_layers"]
             self.transolver_n_hidden = flattened_cfg["transolver_n_hidden"]
