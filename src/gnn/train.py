@@ -255,6 +255,17 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             "split_idx_edge": int(split_idx_edge),
             "node_channels": int(preprocess_cfg.node_channels),
             "edge_channels": int(preprocess_cfg.edge_channels),
+            "use_neighbor_diff_norms": bool(train_cfg.use_neighbor_diff_norms),
+            "frame_source": str(train_cfg.frame_source),
+            "include_u_tm1": bool(train_cfg.include_u_tm1),
+            "rescalarize_per_layer": bool(train_cfg.rescalarize_per_layer),
+            "include_v_branch": bool(train_cfg.include_v_branch),
+            "include_force": bool(train_cfg.include_force),
+            "m_ij_init": str(train_cfg.m_ij_init),
+            "n_layers_gate_mlp": int(train_cfg.n_layers_gate_mlp),
+            "n_layers_node_mlp": int(train_cfg.n_layers_node_mlp),
+            "n_layers_message_mlp": int(train_cfg.n_layers_message_mlp),
+            "eps_mode": str(train_cfg.eps_mode),
         }
         variant = str(train_cfg.clofnet_variant).lower()
         if variant == "recurrent":

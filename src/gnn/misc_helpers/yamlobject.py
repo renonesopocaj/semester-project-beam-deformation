@@ -280,6 +280,12 @@ class TrainYaml:
             self.embedding_edge_dim = flattened_cfg["embedding_edge_dim"]
             self.clofnet_activation = flattened_cfg["clofnet_activation"]
             self.leakyrelu_negative_slope = flattened_cfg["leakyrelu_negative_slope"]
+            self.use_neighbor_diff_norms = flattened_cfg["use_neighbor_diff_norms"]
+            self.frame_source = flattened_cfg["frame_source"]
+            self.include_u_tm1 = flattened_cfg["include_u_tm1"]
+            self.rescalarize_per_layer = flattened_cfg["rescalarize_per_layer"]
+            self.include_v_branch = flattened_cfg["include_v_branch"]
+            self.include_force = flattened_cfg["include_force"]
         elif self.model_name == "transolver":
             self.transolver_n_layers = flattened_cfg["transolver_n_layers"]
             self.transolver_n_hidden = flattened_cfg["transolver_n_hidden"]

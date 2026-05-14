@@ -6,7 +6,7 @@ Defines helper functions for ClofNet.
 
 import torch
 
-def coord2localframe(edge_index, coord_xi, enable_norm_diff, crossdim1):
+def coord2localframe(edge_index, field_xi, enable_norm_diff, crossdim1, eps_mode):
     """
     Construct the complete local frame per edge.
     This is the code counterpart of paper Eq. (2):
@@ -17,24 +17,28 @@ def coord2localframe(edge_index, coord_xi, enable_norm_diff, crossdim1):
     Args:
         edge_index: tuple[torch.Tensor, torch.Tensor]
             Edge list as (row, col).
-        coord_xi: torch.Tensor
-            Coordinates of shape [N, 3].
+        field_xi: torch.Tensor
+            Centered per-node R^3 field of shape [N, 3]. The interpretation
+            (absolute position or displacement u(t)) depends on `frame_source` in
+            the caller; the function only requires a centroid-centered vector per node.
         enable_norm_diff: bool
             normalize the difference
         crossdim1: bool
             distinguish between two different implementations
+        eps_mode: str
+            "soft" uses EPS=1e-5; "hard" uses EPS=1.0
     return: (radial_rij, coord_diff, coord_cross, coord_vertical)
         radial_rij: squared edge lengths [E, 1]; the three frame directions each [E, 3].
     """
-    EPS = 1e-5 # note =1 it's a heavy choice FIXME: try EPS=1e-5
+    EPS = 1e-5 if eps_mode == "soft" else 1.0
     row, col = edge_index
-    coord_diff_aij = coord_xi[row] - coord_xi[col] # unnormalized a_ij, shape [E, 3]
+    coord_diff_aij = field_xi[row] - field_xi[col] # unnormalized a_ij, shape [E, 3]
     radial_rij = torch.sum(coord_diff_aij ** 2, dim=1).unsqueeze(1)  # r_ij := norm^2(x_i-x_j), shape [E, 1]
     # Cross product of the endpoint position vectors.
     if crossdim1:
-        coord_cross_bij = torch.cross(coord_xi[row], coord_xi[col]) # [E, 3]
+        coord_cross_bij = torch.cross(field_xi[row], field_xi[col]) # [E, 3]
     else:
-        coord_cross_bij = torch.cross(coord_xi[row], coord_xi[col], dim=1) # [E, 3]
+        coord_cross_bij = torch.cross(field_xi[row], field_xi[col], dim=1) # [E, 3]
     if enable_norm_diff:
         norm = torch.sqrt(radial_rij) + EPS # [N, 3]
         coord_diff_aij = coord_diff_aij / norm # [N, 3]
@@ -117,9 +121,10 @@ def _scalarize_edge_vector(frame_basis_e33, vec_edge_e3):
     """
     return torch.matmul(frame_basis_e33, vec_edge_e3.unsqueeze(-1)).squeeze(-1)
 
-def build_s_ij(a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge_index_tuple):
+def build_s_ij(a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge_index_tuple, force_vec):
     """
     Concatenate invariant scalarizations of all static node edge-vector triplets, acceleration, and edge vectors.
+    Optionally appends an endpoint scalarization of per-node force (+6 dims per edge).
 
     Args:
         a_i: torch.Tensor
@@ -132,6 +137,9 @@ def build_s_ij(a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge
             [E, 3, 3] basis matrix per edge.
         edge_index_tuple: tuple
             (row, col).
+        force_vec: torch.Tensor or None
+            Per-node force [N, 3]. When not None, projected onto the local frame for both endpoints
+            and appended to the scalarization (+6 dims).
     return: torch.Tensor
         s_ij tensor [E, s_ij_dim] before concatenation with edge scalars.
     """
@@ -145,6 +153,8 @@ def build_s_ij(a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge
     coeff_i_a = acc_end[:, 0:3]
     coeff_j_a = acc_end[:, 3:6]
     pseudo = _compute_angle_feat(coeff_i_a, coeff_j_a, eps)
+    if force_vec is not None:
+        parts.append(_scalarize_node_endpoints(edge_index_tuple, local_frame_basis_ij, force_vec))
     num_ek = int(edge_vec_chunks.shape[1])
     for t in range(num_ek):
         parts.append(_scalarize_edge_vector(local_frame_basis_ij, edge_vec_chunks[:, t, :]))
