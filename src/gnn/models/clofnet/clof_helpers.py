@@ -4,64 +4,24 @@ clof_helpers.py
 Defines helper functions for ClofNet.
 """
 
-import torch
-
-def coord2localframe(edge_index, coord_xi, enable_norm_diff, crossdim1):
+def split_edge_features(edge_attr, split_idx_edge):
     """
-    Construct the complete local frame per edge.
-    This is the code counterpart of paper Eq. (2):
-        a_ij = (x_i - x_j) / ||x_i - x_j||
-        b_ij = (x_i x x_j) / ||x_i x x_j||
-        c_ij = a_ij x b_ij
+    Split edge attribute tensor into stacked R^3-valued chunks and remaining scalars.
 
     Args:
-        edge_index: tuple[torch.Tensor, torch.Tensor]
-            Edge list as (row, col).
-        coord_xi: torch.Tensor
-            Coordinates of shape [N, 3].
-        enable_norm_diff: bool
-            normalize the difference
-        crossdim1: bool
-            distinguish between two different implementations
-    return: (radial_rij, coord_diff, coord_cross, coord_vertical)
-        radial_rij: squared edge lengths [E, 1]; the three frame directions each [E, 3].
+        edge_attr: torch.Tensor
+            Edge features of shape [E, C_e].
+        split_idx_edge: int
+            Leading width of vector triplets (must be divisible by 3).
+    return: (vec_chunks, scalars)
+        vec_chunks: torch.Tensor [E, k, 3] with k = split_idx_edge // 3
+        scalars: torch.Tensor [E, C_e - split_idx_edge]
     """
-    EPS = 1 # note =1 it's a heavy choice, TODO: try EPS=1e-5
-    row, col = edge_index
-    coord_diff_aij = coord_xi[row] - coord_xi[col] # unnormalized a_ij, shape [E, 3]
-    radial_rij = torch.sum(coord_diff_aij ** 2, dim=1).unsqueeze(1)  # r_ij := norm^2(x_i-x_j), shape [E, 1]
-    # Cross product of the endpoint position vectors.
-    if crossdim1:
-        coord_cross_bij = torch.cross(coord_xi[row], coord_xi[col]) # [E, 3]
-    else:
-        coord_cross_bij = torch.cross(coord_xi[row], coord_xi[col], dim=1) # [E, 3]
-    if enable_norm_diff:
-        norm = torch.sqrt(radial_rij) + EPS # [N, 3]
-        coord_diff_aij = coord_diff_aij / norm # [N, 3]
-        cross_norm = torch.sqrt(torch.sum(coord_cross_bij ** 2, dim=1).unsqueeze(1)) + EPS # [E, 1]
-        coord_cross_bij = coord_cross_bij / cross_norm  # b_ij [E, 3]
-    coord_vertical_cij = torch.cross(coord_diff_aij, coord_cross_bij, dim=1) # [E, 3]
-    return radial_rij, coord_diff_aij, coord_cross_bij, coord_vertical_cij
-
-def compute_angle_feat(coord_frame_xi, coord_frame_xj, EPS):
-    """
-    Computes additional features representing the angle between two scalar coefficients.
-
-    Args
-        coff_i: torch.Tensor [E, 3]
-        coff_j: torch.Tensor [E, 3]
-        EPS: denominator eps
-    :return: torch.Tensor [E, 2]
-    """
-    coords_ij_inner_prod = (coord_frame_xi * coord_frame_xj).sum(dim=-1, keepdim=True) # [E, 1]
-    coff_i_norm = coord_frame_xi.norm(dim=-1, keepdim=True) # [E, 1]
-    coff_j_norm = coord_frame_xj.norm(dim=-1, keepdim=True) # [E, 1]
-    # Compute cosine similarity
-    cosine_sim = coords_ij_inner_prod / (coff_i_norm * coff_j_norm + EPS) # [E, 1]
-    # sin(x) = sqrt(1 - cos^2(x))
-    sin_sim = torch.sqrt(torch.clamp(1 - cosine_sim ** 2, min=0.0)) # [E,1]
-    pseudo_angle = torch.cat([sin_sim, cosine_sim], dim=-1) # [E, 2]
-    return pseudo_angle # [E, 2]
+    vec_flat = edge_attr[:, :split_idx_edge]
+    scalars = edge_attr[:, split_idx_edge:]
+    num_triplets = split_idx_edge // 3
+    vec_chunks = vec_flat.reshape(edge_attr.shape[0], num_triplets, 3)
+    return vec_chunks, scalars
 
 def split_node_features(x, split_idx_node):
     """
@@ -83,77 +43,3 @@ def split_node_features(x, split_idx_node):
     num_triplets = split_idx_node // 3
     vec_chunks = vec_flat.reshape(x.shape[0], num_triplets, 3)
     return bc, vec_chunks, scalars
-
-
-def split_edge_features(edge_attr, split_idx_edge):
-    """
-    Split edge attribute tensor into stacked R^3-valued chunks and remaining scalars.
-
-    Args:
-        edge_attr: torch.Tensor
-            Edge features of shape [E, C_e].
-        split_idx_edge: int
-            Leading width of vector triplets (must be divisible by 3).
-    return: (vec_chunks, scalars)
-        vec_chunks: torch.Tensor [E, k, 3] with k = split_idx_edge // 3
-        scalars: torch.Tensor [E, C_e - split_idx_edge]
-    """
-    vec_flat = edge_attr[:, :split_idx_edge]
-    scalars = edge_attr[:, split_idx_edge:]
-    num_triplets = split_idx_edge // 3
-    vec_chunks = vec_flat.reshape(edge_attr.shape[0], num_triplets, 3)
-    return vec_chunks, scalars
-
-
-def frame_basis_from_edges(coord_diff_e3, coord_cross_e3, coord_vertical_e3):
-    """
-    Stack three edge-local basis directions into a matrix suitable for torch.matmul.
-
-    Args:
-        coord_diff_e3: torch.Tensor
-            First basis, shape [E, 3].
-        coord_cross_e3: torch.Tensor
-            Second basis, shape [E, 3].
-        coord_vertical_e3: torch.Tensor
-            Third basis, shape [E, 3].
-    return: torch.Tensor
-        Basis matrix of shape [E, 3, 3] (rows are a_ij, b_ij, c_ij per edge).
-    """
-    return torch.stack([coord_diff_e3, coord_cross_e3, coord_vertical_e3], dim=1)
-
-
-def scalarize_node_endpoints(edges, frame_basis_e33, vec_node_n3):
-    """
-    Project one per-node equivariant vector on both edge endpoints in the local frame.
-
-    Args:
-        edges: tuple[torch.Tensor, torch.Tensor]
-            Directed edges (row, col).
-        frame_basis_e33: torch.Tensor
-            Frame matrix of shape [E, 3, 3].
-        vec_node_n3: torch.Tensor
-            Node vectors of shape [N, 3].
-    return: torch.Tensor
-        Concatenated coefficients [E, 6] = [coeff_i (3), coeff_j (3)].
-    """
-    row, col = edges
-    vi = vec_node_n3[row]
-    vj = vec_node_n3[col]
-    coeff_i = torch.matmul(frame_basis_e33, vi.unsqueeze(-1)).squeeze(-1)
-    coeff_j = torch.matmul(frame_basis_e33, vj.unsqueeze(-1)).squeeze(-1)
-    return torch.cat([coeff_i, coeff_j], dim=-1)
-
-
-def scalarize_edge_vector(frame_basis_e33, vec_edge_e3):
-    """
-    Project one per-edge equivariant vector onto the local frame.
-
-    Args:
-        frame_basis_e33: torch.Tensor
-            Frame matrix of shape [E, 3, 3].
-        vec_edge_e3: torch.Tensor
-            Edge vectors of shape [E, 3].
-    return: torch.Tensor
-        Coefficients of shape [E, 3].
-    """
-    return torch.matmul(frame_basis_e33, vec_edge_e3.unsqueeze(-1)).squeeze(-1)

@@ -1,5 +1,5 @@
 """
-aggregators.py
+clof_aggregators.py
 
 Defines the function to aggregate, with sum or mean, all the messages
 """

@@ -1,20 +1,29 @@
 """
-mp_blocks.py
+clof_mp_blocks.py
 
 Message-passing blocks for ClofNet acceleration-target variants (recurrent, multi-head, single-message).
+Common notation
+                        Δᵢ⁽q,θ⁾(m) = w_c * (1 / |𝒩(i)|) * ∑ⱼ∈𝒩(i) Vectorize_θ(mᵢⱼ, Fᵢⱼ⁰)
+                        q ∈ {a, v, x}
+                        Fᵢⱼ⁰ = EquiFrame(xᵢ⁰, xⱼ⁰)
+                        ẽᵢⱼ⁰ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(a⁰, Fᵢⱼ⁰)])
 """
 
 import torch
 from torch import nn
-from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
-
+from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_mean, unsorted_segment_sum
 
 class RecurrentMPBlock(nn.Module):
     """
     Variant 6: recurrent edge messages m_ij^{l+1} = phi_m(h_i, h_j, r_ij, fused_edge, m_ij^l),
     node update, then acceleration update from vectorized m.
-    """
 
+    RecurrentMPBlock message passing:
+                            ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
+                            mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˡ)
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾))
+                            aᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾)
+    """
     coords_weight: float
     skip_connection: bool
     attention: bool
@@ -95,7 +104,16 @@ class RecurrentMPBlock(nn.Module):
 
 class MultiHeadMPBlock(nn.Module):
     """
-    Variant 4: three independent messages m^a, m^v, m^x; three vectorizations; phi_vel-style gates on a only.
+    Three independent messages m^a, m^v, m^x; three vectorizations; phi_vel-style gates on a only.
+
+                            mᵢⱼᵃ,⁽ˡ⁺¹⁾ = φₘᵃ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            mᵢⱼᵛ,⁽ˡ⁺¹⁾ = φₘᵛ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            mᵢⱼˣ,⁽ˡ⁺¹⁾ = φₘˣ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i)(mᵢⱼᵃ,⁽ˡ⁺¹⁾ + mᵢⱼᵛ,⁽ˡ⁺¹⁾ + mᵢⱼˣ,⁽ˡ⁺¹⁾)))
+                            vᵢ⁽ˡ⁺¹⁾ = vᵢˡ + Δᵢ⁽ᵛ,θᵥ⁾(mᵛ,⁽ˡ⁺¹⁾)
+                            xᵢ⁽ˡ⁺¹⁾ = xᵢˡ + Δᵢ⁽ˣ,θₓ⁾(mˣ,⁽ˡ⁺¹⁾)
+                            ãᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(mᵃ,⁽ˡ⁺¹⁾)
+                            aᵢ⁽ˡ⁺¹⁾ = ãᵢ⁽ˡ⁺¹⁾ + φᵥ(hᵢ⁽ˡ⁺¹⁾) ⊙ vᵢ⁽ˡ⁺¹⁾ + φₓ(hᵢ⁽ˡ⁺¹⁾) ⊙ xᵢ⁽ˡ⁺¹⁾
     """
 
     coords_weight: float
@@ -112,9 +130,10 @@ class MultiHeadMPBlock(nn.Module):
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
+        # Node MLP (2 layer)
         self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
-
+        # Vectorization MLPs
         def make_vec_mlp():
             linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
             torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
@@ -122,16 +141,17 @@ class MultiHeadMPBlock(nn.Module):
             if self.tanh:
                 layers.append(nn.Tanh())
             return nn.Sequential(*layers)
-
         self.vectorization_mlp_a = make_vec_mlp()
         self.vectorization_mlp_v = make_vec_mlp()
         self.vectorization_mlp_x = make_vec_mlp()
         if self.tanh:
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
+        # Soft attention MLPs
         if self.attention:
             self.att_mlp_a = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
             self.att_mlp_v = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
             self.att_mlp_x = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+        # Message MLPs (3 layers)
         self.message_mij_mlp_a = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
                                                  nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
                                                  nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
@@ -141,6 +161,7 @@ class MultiHeadMPBlock(nn.Module):
         self.message_mij_mlp_x = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
                                                nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
                                                nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        # Gate mlps to add v, x in acceleration equivariant update (2 layer)
         self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
@@ -210,6 +231,15 @@ class MultiHeadMPBlock(nn.Module):
 class SingleVectorizeMPBlock(nn.Module):
     """
     Variant 3: single message m_ij; three vectorization heads from the same m; phi_vel gates on a.
+
+    SingleVectorizeMPBlock message passing:
+                            mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            μᵢ⁽ˡ⁺¹⁾ = ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, μᵢ⁽ˡ⁺¹⁾))
+                            vᵢ⁽ˡ⁺¹⁾ = vᵢˡ + Δᵢ⁽ᵛ,θᵥ⁾(m⁽ˡ⁺¹⁾)
+                            xᵢ⁽ˡ⁺¹⁾ = xᵢˡ + Δᵢ⁽ˣ,θₓ⁾(m⁽ˡ⁺¹⁾)
+                            ãᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾)
+                            aᵢ⁽ˡ⁺¹⁾ = ãᵢ⁽ˡ⁺¹⁾ + φᵥ(hᵢ⁽ˡ⁺¹⁾) ⊙ vᵢ⁽ˡ⁺¹⁾ + φₓ(hᵢ⁽ˡ⁺¹⁾) ⊙ xᵢ⁽ˡ⁺¹⁾
     """
 
     coords_weight: float
@@ -228,7 +258,7 @@ class SingleVectorizeMPBlock(nn.Module):
         self.clamp = clamp
         self.node_h_mp_mlp = nn.Sequential(nn.Linear(in_node_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, output_node_dim))
-
+        # Vectorization mlps
         def make_vec_mlp():
             linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
             torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
@@ -240,13 +270,16 @@ class SingleVectorizeMPBlock(nn.Module):
         self.vectorization_mlp_a = make_vec_mlp()
         self.vectorization_mlp_v = make_vec_mlp()
         self.vectorization_mlp_x = make_vec_mlp()
+        # Attention mlp
         if self.tanh:
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+        # Message mlp (3 layer)
         self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        # Gate mlps to add v, x in acceleration equivariant update (2 layer)
         self.phi_vel_v = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                        nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.phi_vel_x = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
@@ -295,8 +328,12 @@ class SingleVectorizeMPBlock(nn.Module):
 
 class DirectAccelerationMPBlock(nn.Module):
     """
-    Version 5: single message and one acceleration vectorization; velocity and position are frozen inputs that affect
+    Single message and one acceleration vectorization; velocity and position are frozen inputs that affect
     acceleration only through s_ij and direct phi(h^l) gates.
+
+                        mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                        aᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾) + φᵥ(hᵢˡ) ⊙ vᵢ⁰ + φₓ(hᵢˡ) ⊙ xᵢ⁰
+                        hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾))
     """
 
     coords_weight: float
@@ -317,16 +354,20 @@ class DirectAccelerationMPBlock(nn.Module):
                                              nn.Linear(hidden_dim, output_node_dim))
         linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
         torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
+        # Vectorization MLP
         vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
         if self.tanh:
             vec_layers.append(nn.Tanh())
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         self.vectorization_mlp = nn.Sequential(*vec_layers)
+        # Attention MLP
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+        # Message MLP (3 layers)
         self.message_mij_mlp = nn.Sequential(nn.Linear(in_mij_mlp_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, hidden_dim), act_fn_factory(),
                                              nn.Linear(hidden_dim, hidden_dim), act_fn_factory())
+        # Gate MLPs to add x, v to acceleration in equivariant update (2 layers)
         self.phi_vel = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),
                                      nn.Linear(hidden_dim, vel_mlp_dim_out))
         self.phi_pos = nn.Sequential(nn.Linear(output_node_dim, hidden_dim), act_fn_factory(),

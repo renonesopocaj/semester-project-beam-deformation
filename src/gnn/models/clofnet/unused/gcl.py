@@ -26,7 +26,7 @@ Important implementation notes:
 """
 
 from abc import ABC, abstractmethod
-from src.gnn.models.clofnet.aggregators import unsorted_segment_sum
+from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_sum
 import torch
 from torch import nn
 

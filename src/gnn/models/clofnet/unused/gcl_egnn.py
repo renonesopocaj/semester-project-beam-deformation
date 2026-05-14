@@ -28,7 +28,7 @@ TODO: EgnnGCL is INHERITED AND THUS USED, EgnnGCLVelocity is not
 
 import torch
 from torch import nn
-from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
+from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_mean, unsorted_segment_sum
 
 class EgnnGCL(nn.Module):
     """

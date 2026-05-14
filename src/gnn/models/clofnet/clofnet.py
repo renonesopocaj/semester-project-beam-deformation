@@ -4,6 +4,11 @@ clofnet.py
 ClofNet variants for predicting acceleration (equivariant) and von Mises stress (scalar) from PyG batches.
 Base class handles scalarization of stacked R^3 node/edge features using split_idx_node / split_idx_edge,
 a fixed EquiFrame from input positions, fused edge embeddings, and a stress head.
+Common notation
+                        Δᵢ⁽q,θ⁾(m) = w_c * (1 / |𝒩(i)|) * ∑ⱼ∈𝒩(i) Vectorize_θ(mᵢⱼ, Fᵢⱼ⁰)
+                        q ∈ {a, v, x}
+                        Fᵢⱼ⁰ = EquiFrame(xᵢ⁰, xⱼ⁰)
+                        ẽᵢⱼ⁰ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(a⁰, Fᵢⱼ⁰)])
 """
 
 import numpy as np
@@ -11,11 +16,10 @@ import torch
 from abc import ABC, abstractmethod
 from torch import nn
 
-from src.gnn.models.clofnet.clof_helpers import (compute_angle_feat, coord2localframe, frame_basis_from_edges,
-                                                 scalarize_edge_vector, scalarize_node_endpoints, split_edge_features,
-                                                 split_node_features)
-from src.gnn.models.clofnet.mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock, RecurrentMPBlock,
-                                              SingleVectorizeMPBlock)
+from src.gnn.models.clofnet.scalarizer_localframe import (coord2localframe, frame_basis_from_edges, build_s_ij)
+from src.gnn.models.clofnet.clof_helpers import (split_edge_features, split_node_features)
+from src.gnn.models.clofnet.clof_mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock, RecurrentMPBlock,
+                                                   SingleVectorizeMPBlock)
 
 
 class ClofNetBase(nn.Module, ABC):
@@ -108,40 +112,6 @@ class ClofNetBase(nn.Module, ABC):
         """
         raise NotImplementedError
 
-    def _build_s_ij(self, a_i, node_vec_chunks, edge_vec_chunks, local_frame_basis_ij, edge_index_tuple):
-        """
-        Concatenate invariant scalarizations of all static node edge-vector triplets, acceleration, and edge vectors.
-
-        Args:
-            a_i: torch.Tensor
-                Current acceleration estimate [N, 3] (used for endpoint projections and pseudo-angle).
-            node_vec_chunks: torch.Tensor
-                [N, K, 3] static vectors from node features.
-            edge_vec_chunks: torch.Tensor
-                [E, K, 3] static vectors from edge features.
-            local_frame_basis_ij: torch.Tensor
-                [E, 3, 3] basis matrix per edge.
-            edge_index_tuple: tuple
-                (row, col).
-        return: torch.Tensor
-            s_ij tensor [E, s_ij_dim] before concatenation with edge scalars.
-        """
-        eps = 1e-5
-        parts = []
-        num_k = int(node_vec_chunks.shape[1])
-        for t in range(num_k):
-            parts.append(scalarize_node_endpoints(edge_index_tuple, local_frame_basis_ij, node_vec_chunks[:, t, :]))
-        acc_end = scalarize_node_endpoints(edge_index_tuple, local_frame_basis_ij, a_i)
-        parts.append(acc_end)
-        coeff_i_a = acc_end[:, 0:3]
-        coeff_j_a = acc_end[:, 3:6]
-        pseudo = compute_angle_feat(coeff_i_a, coeff_j_a, eps)
-        num_ek = int(edge_vec_chunks.shape[1])
-        for t in range(num_ek):
-            parts.append(scalarize_edge_vector(local_frame_basis_ij, edge_vec_chunks[:, t, :]))
-        rest = torch.cat(parts, dim=-1)
-        return torch.cat([pseudo, rest], dim=-1)
-
     def _fuse_embed(self, acceleration_n3, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                     edge_index_tuple):
         """
@@ -157,7 +127,7 @@ class ClofNetBase(nn.Module, ABC):
         return: torch.Tensor
             fuse_embed [E, fuse_hid_dim]
         """
-        s_ij = self._build_s_ij(acceleration_n3, node_vec_chunks, edge_vec_chunks, frame_e33, edge_index_tuple)
+        s_ij = build_s_ij(acceleration_n3, node_vec_chunks, edge_vec_chunks, frame_e33, edge_index_tuple)
         fused = torch.cat([edge_scalars, s_ij], dim=-1)
         return self.fuse_mlp_embed(fused)
 
@@ -171,10 +141,10 @@ class ClofNetBase(nn.Module, ABC):
             a_l, v_l, x_l: torch.Tensor [N, 3]
         return: torch.Tensor [N, 1]
         """
-        na = torch.norm(a_l, dim=1, keepdim=True)
-        nv = torch.norm(v_l, dim=1, keepdim=True)
-        nx = torch.norm(x_l, dim=1, keepdim=True)
-        inp = torch.cat([h_final, m_agg, na, nv, nx], dim=-1)
+        norm_a = torch.norm(a_l, dim=1, keepdim=True)
+        norm_v = torch.norm(v_l, dim=1, keepdim=True)
+        norm_x = torch.norm(x_l, dim=1, keepdim=True)
+        inp = torch.cat([h_final, m_agg, norm_a, norm_v, norm_x], dim=-1)
         return self.stress_mlp(inp)
 
     def forward(self, batch):
@@ -209,23 +179,33 @@ class ClofNetBase(nn.Module, ABC):
         else:
             n_per = num_nodes
             num_graphs = 1
+        # Centering graph (subtracting centroid)
         x_resh = x_pos.reshape(num_graphs, n_per, 3)
         centroid = torch.mean(x_resh, dim=1, keepdim=True)
         x_centered = (x_resh - centroid).reshape(-1, 3)
         x0 = x_centered
-        radial, cd, cc, cv = coord2localframe(edge_index_tuple, x_centered, self.enable_norm_diff, False)
-        frame_e33 = frame_basis_from_edges(cd, cc, cv)
+        # First projection coefficients
+        radial, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_centered, self.enable_norm_diff, False)
+        # Construct frame
+        frame_e33 = frame_basis_from_edges(a_ij, b_ij, c_ij)
+        # Run message passing loop (forward through all L layers)
         h_l, a_l, v_l, x_l, m_agg_l = self._run_mp_loop(h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks,
                                                         edge_scalars, frame_e33, radial, edge_index_tuple,
                                                         x_centered)
+        # Final stress prediction
         stress = self._stress_out(h_l, m_agg_l, a_l, v_l, x_l)
         return torch.cat([a_l, stress], dim=-1)
 
 
 class ClofNetRecurrent(ClofNetBase):
     """
-    Variant 6: recurrent messages m_ij^{l+1} depend on m_ij^l; s_ij recomputed each layer from current acceleration;
-    only a is updated (no explicit v/x evolution).
+    Recurrent messages version, i.e. the following.
+    RecurrentMPBlock message passing:
+                            ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
+                            mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˡ)
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾))
+                            aᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾)
+    s_ij recomputed each layer from current acceleration; only a is updated (no explicit v/x evolution).
     """
 
     def _build_mp_blocks(self):
@@ -251,19 +231,29 @@ class ClofNetRecurrent(ClofNetBase):
         h = h0
         a = a0
         num_edges = int(edge_index_tuple[0].shape[0])
+        # m_ij initialized as zero.
         m_ij = torch.zeros(num_edges, self.hidden_dim, device=h.device, dtype=h.dtype)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
-        for block in self.mp_blocks:
+        for mp_block_l in self.mp_blocks:
             fuse_embed = self._fuse_embed(a, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                          edge_index_tuple)
-            _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
-            h, a, m_ij, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, m_ij, a)
+            _, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff,
+                                                   False)
+            h, a, m_ij, m_agg_last = mp_block_l(h, edge_index_tuple, a_ij, b_ij, c_ij, radial, fuse_embed, m_ij, a)
         return h, a, v0, x0, m_agg_last
 
 
 class ClofNetSeparateMessages(ClofNetBase):
     """
-    Variant 4: separate message MLPs for a, v, x channels; fused s_ij fixed from zero acceleration; phi_vel on a.
+    Separate message MLPs for a, v, x channels; fused s_ij fixed from zero acceleration; phi_vel on a.
+                            mᵢⱼᵃ,⁽ˡ⁺¹⁾ = φₘᵃ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            mᵢⱼᵛ,⁽ˡ⁺¹⁾ = φₘᵛ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            mᵢⱼˣ,⁽ˡ⁺¹⁾ = φₘˣ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i)(mᵢⱼᵃ,⁽ˡ⁺¹⁾ + mᵢⱼᵛ,⁽ˡ⁺¹⁾ + mᵢⱼˣ,⁽ˡ⁺¹⁾)))
+                            vᵢ⁽ˡ⁺¹⁾ = vᵢˡ + Δᵢ⁽ᵛ,θᵥ⁾(mᵛ,⁽ˡ⁺¹⁾)
+                            xᵢ⁽ˡ⁺¹⁾ = xᵢˡ + Δᵢ⁽ˣ,θₓ⁾(mˣ,⁽ˡ⁺¹⁾)
+                            ãᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(mᵃ,⁽ˡ⁺¹⁾)
+                            aᵢ⁽ˡ⁺¹⁾ = ãᵢ⁽ˡ⁺¹⁾ + φᵥ(hᵢ⁽ˡ⁺¹⁾) ⊙ vᵢ⁽ˡ⁺¹⁾ + φₓ(hᵢ⁽ˡ⁺¹⁾) ⊙ xᵢ⁽ˡ⁺¹⁾
     """
 
     def _build_mp_blocks(self):
@@ -287,22 +277,27 @@ class ClofNetSeparateMessages(ClofNetBase):
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered):
-        h = h0
-        a = a0
-        v = v0
-        x = x0
+        h = h0; a = a0; v = v0; x = x0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
-            h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
+            h, a, v, x, m_agg_last = block(h, edge_index_tuple, a_ij, b_ij, c_ij, radial, fuse_embed, a, v, x)
         return h, a, v, x, m_agg_last
 
 
 class ClofNetExtraLayer(ClofNetBase):
     """
-    Variant 3: single message m_ij; three vectorization heads; phi_vel on a; fixed s_ij from zero acceleration.
+    Single message m_ij; three vectorization heads; phi_vel on a; fixed s_ij from zero acceleration.
+    SingleVectorizeMPBlock message passing:
+                            mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                            μᵢ⁽ˡ⁺¹⁾ = ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾
+                            hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, μᵢ⁽ˡ⁺¹⁾))
+                            vᵢ⁽ˡ⁺¹⁾ = vᵢˡ + Δᵢ⁽ᵛ,θᵥ⁾(m⁽ˡ⁺¹⁾)
+                            xᵢ⁽ˡ⁺¹⁾ = xᵢˡ + Δᵢ⁽ˣ,θₓ⁾(m⁽ˡ⁺¹⁾)
+                            ãᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾)
+                            aᵢ⁽ˡ⁺¹⁾ = ãᵢ⁽ˡ⁺¹⁾ + φᵥ(hᵢ⁽ˡ⁺¹⁾) ⊙ vᵢ⁽ˡ⁺¹⁾ + φₓ(hᵢ⁽ˡ⁺¹⁾) ⊙ xᵢ⁽ˡ⁺¹⁾
     """
 
     def _build_mp_blocks(self):
@@ -326,23 +321,23 @@ class ClofNetExtraLayer(ClofNetBase):
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered):
-        h = h0
-        a = a0
-        v = v0
-        x = x0
+        h = h0; a = a0; v = v0; x = x0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
-            h, a, v, x, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v, x)
+            h, a, v, x, m_agg_last = block(h, edge_index_tuple, a_ij, b_ij, c_ij, radial, fuse_embed, a, v, x)
         return h, a, v, x, m_agg_last
 
 
 class ClofNetDirectAcceleration(ClofNetBase):
     """
-    Version 5: fixed s_ij, no extra velocity layer, no velocity/position update.
+    Fixed s_ij, no extra velocity layer, no velocity/position update.
     Acceleration receives vectorized messages plus direct gates from h^l times frozen velocity and position.
+                        mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼ⁰)
+                        aᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾) + φᵥ(hᵢˡ) ⊙ vᵢ⁰ + φₓ(hᵢˡ) ⊙ xᵢ⁰
+                        hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾))
     """
 
     def _build_mp_blocks(self):
@@ -372,8 +367,8 @@ class ClofNetDirectAcceleration(ClofNetBase):
         a = a0
         fuse_embed = self._fuse_embed(a0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33,
                                       edge_index_tuple)
-        _, cd, cc, cv = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
+        _, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff, False)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for block in self.mp_blocks:
-            h, a, m_agg_last = block(h, edge_index_tuple, cd, cc, cv, radial, fuse_embed, a, v0, x0)
+            h, a, m_agg_last = block(h, edge_index_tuple, a_ij, b_ij, c_ij, radial, fuse_embed, a, v0, x0)
         return h, a, v0, x0, m_agg_last

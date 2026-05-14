@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.gcl_clofnet import ClofMPBlock
+from src.gnn.models.clofnet.unused.gcl_clofnet import ClofMPBlock
 from src.gnn.models.clofnet.unused.gaussian_layer import GaussianLayer
 
 class ClofNetVelocityGaussian(nn.Module):

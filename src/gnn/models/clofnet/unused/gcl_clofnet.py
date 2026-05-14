@@ -15,8 +15,8 @@ ClofNet graph message passing block with complete local frames.
 
 from torch import nn
 import torch
-from src.gnn.models.clofnet.aggregators import unsorted_segment_mean, unsorted_segment_sum
-from src.gnn.models.clofnet.clof_helpers import coord2localframe
+from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_mean, unsorted_segment_sum
+from src.gnn.models.clofnet.scalarizer_localframe import coord2localframe
 
 
 class ClofMPBlock(nn.Module):
@@ -34,16 +34,12 @@ class ClofMPBlock(nn.Module):
                  out_basis_dim=3
 
         Args:
-            input_dim_node: int
-                Input node feature dimension.
+            in_node_mlp_dim: int
+                input node feature dimension
             output_node_dim: int
                 Output node feature dimension.
             hidden_dim: int
                 Hidden feature dimension.
-            edges_in_d: int
-                Extra edge feature dimension.
-            nodes_att_dim: int
-                Extra node attribute dimension.
             act_fn: nn.Module
                 Activation used by the MLPs.
             recurrent: bool
