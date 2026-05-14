@@ -79,10 +79,18 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
     wandb_logs["epoch"] = epoch_number
     experiment.log(wandb_logs, commit=True)
 
-def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
+def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment, residual_list):
     """
     Define all W&B metrics with epoch as the x-axis and appropriate summaries.
     Should be called once at the start of training, only on rank 0.
+
+    Args:
+        has_wandb_logger: bool
+        is_global_zero: bool
+        experiment: wandb run object
+        residual_list: set or list of str
+            Active residual names (e.g. {"curvature", "volume"}). Only metrics for
+            enabled residuals are registered so the W&B dashboard stays clean.
     """
     # if not self._has_wandb_logger() or not self.trainer.is_global_zero:
     #     return
@@ -104,6 +112,10 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment):
     experiment.define_metric("train/acc_z_rel_mae", summary="min")
     experiment.define_metric("train/stress_rel_mae", summary="min")
     experiment.define_metric("train/lr", summary="last")
+    if "curvature" in residual_list:
+        experiment.define_metric("train/curvature_residual", summary="min")
+    if "volume" in residual_list:
+        experiment.define_metric("train/volume_residual", summary="min")
 
     # Validation metrics
     experiment.define_metric("val/loss", summary="min") # FIXME: currently not implemented, might renitroduce

@@ -223,7 +223,8 @@ class LitModule(L.LightningModule):
             self.logger.experiment.summary["train_cfg"] = self.wandb_train_cfg_yaml
 
         # Define all metrics with epoch as x-axis
-        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment)
+        define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment,
+                             self.residual_list)
         # Keep strict epoch-based step semantics: do not emit per-batch watch logs.
         if self.enable_wandb_watch:
             print("W&B watch disabled: enforcing one W&B step per epoch.")
