@@ -552,6 +552,69 @@ def read_hyperopt_optimization_scalar(callback_metrics, final_metrics_plain, met
     return float(raw)
 
 
+def _warn_use_best_fallback(reason):
+    """
+    Prints a highly visible warning when final eval cannot load the best checkpoint.
+
+    Args:
+        reason: str
+            Short explanation appended after the standard use_best fallback message.
+    """
+    border = "=" * 78
+    print("\n" + border)
+    print("WARNING: use_best=true but final evaluation will use the LAST model weights instead.")
+    print("Reason: %s" % reason)
+    print(border + "\n")
+
+
+def _resolve_final_eval_ckpt_path(fit_trainer, train_cfg):
+    """
+    Resolves Lightning ckpt_path for post-fit test() when use_best is requested.
+
+    Args:
+        fit_trainer: object
+            Lightning Trainer that has already completed fit().
+        train_cfg: TrainYaml
+            Training configuration (use_best, enable_val, val_monitor_metric).
+
+    return: str or None
+        The string "best" when a best checkpoint exists on disk, otherwise None after printing a warning.
+    """
+    if not train_cfg.use_best:
+        return None
+    if not train_cfg.enable_val:
+        _warn_use_best_fallback(
+            "enable_val is False, so no best-checkpoint callback was registered during fit()."
+        )
+        return None
+    ckpt_monitor = (
+        "val/overall_abs_mae" if train_cfg.val_monitor_metric == "overall_abs_mae"
+        else "val/overall_relative_mae"
+    )
+    best_callback = None
+    for chk in fit_trainer.checkpoint_callbacks:
+        if getattr(chk, "monitor", "") == ckpt_monitor:
+            best_callback = chk
+            break
+    if best_callback is None:
+        _warn_use_best_fallback(
+            "no ModelCheckpoint callback matched monitor %r." % ckpt_monitor
+        )
+        return None
+    best_path_raw = getattr(best_callback, "best_model_path", None)
+    if best_path_raw is None or not str(best_path_raw).strip():
+        _warn_use_best_fallback(
+            "ModelCheckpoint.best_model_path is unset (validation may not have run, "
+            "or no checkpoint was written yet)."
+        )
+        return None
+    best_path = Path(str(best_path_raw))
+    if not best_path.is_file():
+        _warn_use_best_fallback("best checkpoint path is not an existing file: %s" % best_path)
+        return None
+    return "best"
+
+
 def run_train_pipeline(cfg):
     """
     Same flow as CLI main(...) but returns metrics when called from hyperparameter tooling (Optuna).
@@ -614,9 +677,7 @@ def run_train_pipeline(cfg):
 
     final_metrics_plain = {}
 
-    # When use_best=True and a best checkpoint was saved, reload it for all eval phases.
-    # Falls back to None (last model state) when enable_val is False (no ModelCheckpoint "best" exists).
-    ckpt_path_eval = "best" if train_cfg.use_best and train_cfg.enable_val else None
+    ckpt_path_eval = _resolve_final_eval_ckpt_path(fit_trainer, train_cfg)
 
     # =================== Final validation ===================
     if validation_dataset is not None:
