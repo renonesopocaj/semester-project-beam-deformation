@@ -37,7 +37,16 @@ TRAIN_CONFIG_NAME = "train"
 # MODEL_CONFIG_NAME = "transolver_5L_HD256_AH30_S32_R1"
 # MODEL_CONFIG_NAME = "transolver_10L_HD256_AH30_S32_R4"
 # MODEL_CONFIG_NAME = "transolver_3L_HD512_AH5_S32_R4"
-MODEL_CONFIG_NAME = "transolver_7L_HD312_AH15_S32_R4"
+# MODEL_CONFIG_NAME = "transolver_7L_HD312_AH15_S32_R4"
+# ------ Clofnet -------
+# MODEL_CONFIG_NAME = "clofnet_rec_L15_softeps"
+# MODEL_CONFIG_NAME = "clofnet_rec_L15_hardeps"
+# MODEL_CONFIG_NAME = "clofnet_rec_L8_hardeps"
+# MODEL_CONFIG_NAME = "clofnet_rec_L8_softeps"
+# MODEL_CONFIG_NAME = "clofnet_rec_L8_softeps_framesourceu"
+MODEL_CONFIG_NAME = "clofnet_rec_L8_gaussian_softeps"
+MODEL_CONFIG_NAME = "mgn_H400_L11_1layermlp"
+
 # ------------------------------------------------------------------------
 
 _SYNTHETIC_NUM_NODES = 64

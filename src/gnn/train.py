@@ -274,7 +274,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             return ClofNetSeparateMessages(**common_kwargs)
         if variant == "extra_layer":
             return ClofNetExtraLayer(**common_kwargs)
-        if variant in {"direct", "version5", "v5"}:
+        if variant in {"direct"}:
             return ClofNetDirectAcceleration(**common_kwargs)
         raise ValueError("Unknown clofnet_variant: %s" % train_cfg.clofnet_variant)
     elif train_cfg.model_name == "gunet":
