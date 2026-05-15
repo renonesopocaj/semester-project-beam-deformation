@@ -205,6 +205,7 @@ class TrainYaml:
         self.selected_validation_trajectories = flattened_cfg["selected_validation_trajectories"]
         self.selected_test_trajectories = flattened_cfg["selected_test_trajectories"]
         self.val_monitor_metric = flattened_cfg.get("val_monitor_metric")
+        self.use_best = bool(flattened_cfg.get("use_best"))
         self.curvature_loss_weight = flattened_cfg["curvature_loss_weight"]
         self.volume_loss_weight = float(flattened_cfg.get("volume_loss_weight", 1.0))
         self.optimizer = flattened_cfg["optimizer"]

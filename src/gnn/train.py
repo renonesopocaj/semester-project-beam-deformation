@@ -614,6 +614,10 @@ def run_train_pipeline(cfg):
 
     final_metrics_plain = {}
 
+    # When use_best=True and a best checkpoint was saved, reload it for all eval phases.
+    # Falls back to None (last model state) when enable_val is False (no ModelCheckpoint "best" exists).
+    ckpt_path_eval = "best" if train_cfg.use_best and train_cfg.enable_val else None
+
     # =================== Final validation ===================
     if validation_dataset is not None:
         print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
@@ -621,7 +625,7 @@ def run_train_pipeline(cfg):
         lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
                                           traj_metadata=val_traj_metadata)
         validation_test_results = fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader,
-                                                   ckpt_path=None)
+                                                   ckpt_path=ckpt_path_eval)
         update_final_metrics_plain(final_metrics_plain, validation_test_results)
         # Read callback_metrics immediately after this phase so epoch-hook metrics logged with
         # rank_zero_only=True (e.g. final_validation/rollout_pos_mae from on_test_epoch_end)
@@ -642,7 +646,7 @@ def run_train_pipeline(cfg):
     test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
     lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
                                        traj_metadata=test_traj_metadata)
-    test_results = fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=None)
+    test_results = fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=ckpt_path_eval)
     update_final_metrics_plain(final_metrics_plain, test_results)
 
     best_val_relative_mae = float("nan")

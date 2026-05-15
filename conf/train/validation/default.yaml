@@ -6,6 +6,7 @@ enable_rollout_val: False
 log_test_media: True
 plot_diagnostics_advanced: False
 val_monitor_metric: overall_abs_mae # options: overall_rel_mae | overall_abs_mae
+use_best: true # load best checkpoint (by val monitor) for final evaluation
 # These two fields decide for which trajectories the validation and test is detailed, i.e. full rollout with the plots,
 # because it overrides the trajectories specified by the fem generation which are just the longer ones (400 time steps)
 selected_validation_trajectories: null
