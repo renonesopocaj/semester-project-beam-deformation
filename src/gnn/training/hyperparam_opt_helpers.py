@@ -44,61 +44,102 @@ def update_final_metrics_plain(final_metrics_plain, metric_source):
     return final_metrics_plain
 
 
-def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filename="pareto.png"):
+def _resolve_pareto_axis_value(fm, key_or_keys):
+    """
+    Resolves a Pareto axis value from a final_metrics dict.
+
+    When key_or_keys is a list the returned value is the sum of all keys;
+    every summand must be present and finite, otherwise None is returned.
+
+    Args:
+        fm: dict
+            final_metrics dict for one trial record.
+        key_or_keys: str or list of str
+            Single metric key or list of keys to sum.
+    return: float or None
+        Resolved scalar, or None when any key is missing or non-finite.
+    """
+    keys = [key_or_keys] if isinstance(key_or_keys, str) else list(key_or_keys)
+    total = 0.0
+    for k in keys:
+        raw = fm.get(k)
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(v):
+            return None
+        total = total + v
+    return total
+
+
+def _axis_label_for_key(key_or_keys):
+    """
+    Builds a human-readable axis label from a metric key or list of keys.
+
+    Args:
+        key_or_keys: str or list of str
+    return: str
+    """
+    if isinstance(key_or_keys, str):
+        return key_or_keys
+    return " + ".join(key_or_keys)
+
+
+def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filename, split_label):
     """
     Args:
         records_list: list of dict
-            Trial records containing final_metrics maps.
-        pareto_x_key: str
-            X axis scalar key inside final_metrics.
-        pareto_y_key: str
-            Y axis scalar key inside final_metrics.
+            Trial records containing final_metrics maps; each record must also have
+            sweep_name and option_label fields for the per-trial legend.
+        pareto_x_key: str or list of str
+            X axis metric key(s). When a list, the x value is the sum of those keys.
+        pareto_y_key: str or list of str
+            Y axis metric key(s). When a list, the y value is the sum of those keys.
         output_dir: Path
             Directory where the plot is written.
         filename: str
-            Output filename (default pareto.png); use different names for multiple pairs.
+            Output filename.
+        split_label: str
+            Short split identifier shown in the plot title (e.g. "test" or "validation").
     return: Path
             Path to the saved plot.
     """
     xs = []
     ys = []
+    labels = []
     missing_pair_count = 0
     non_finite_count = 0
     ri = 0
     while ri < len(records_list):
         rec_item = records_list[ri]
         fm = rec_item.get("final_metrics", {})
-        xa = fm.get(pareto_x_key)
-        ya = fm.get(pareto_y_key)
-        if xa is None or ya is None:
+        xf = _resolve_pareto_axis_value(fm, pareto_x_key)
+        yf = _resolve_pareto_axis_value(fm, pareto_y_key)
+        if xf is None or yf is None:
             missing_pair_count = missing_pair_count + 1
-            ri = ri + 1
-            continue
-        try:
-            xf = float(xa)
-            yf = float(ya)
-        except (TypeError, ValueError):
-            non_finite_count = non_finite_count + 1
-            ri = ri + 1
-            continue
-        if (math.isfinite(xf) is False) or (math.isfinite(yf) is False):
-            non_finite_count = non_finite_count + 1
             ri = ri + 1
             continue
         xs.append(xf)
         ys.append(yf)
+        trial_label = "%s__%s" % (rec_item.get("sweep_name", ""), rec_item.get("option_label", ""))
+        labels.append(trial_label)
         ri = ri + 1
     print(
-        "Pareto plotting: %d valid points, %d missing-key records, %d non-finite records."
-        % (len(xs), missing_pair_count, non_finite_count)
+        "Pareto plotting [%s]: %d valid points, %d missing-key records, %d non-finite records."
+        % (split_label, len(xs), missing_pair_count, non_finite_count)
     )
+    x_axis_label = _axis_label_for_key(pareto_x_key)
+    y_axis_label = _axis_label_for_key(pareto_y_key)
     if len(xs) == 0:
         fig_empty, axe = plt.subplots(figsize=(7, 5))
         diag = (
-            "No valid Pareto points.\n"
-            "Expected keys:\n- %s\n- %s\n"
+            "No valid Pareto points [%s].\n"
+            "Expected x key(s): %s\nExpected y key(s): %s\n"
             "Missing-key records: %d\nNon-finite records: %d"
-            % (pareto_x_key, pareto_y_key, missing_pair_count, non_finite_count)
+            % (split_label, x_axis_label, y_axis_label, missing_pair_count, non_finite_count)
         )
         axe.text(0.5, 0.5, diag, ha="center", va="center")
         axe.set_axis_off()
@@ -114,8 +155,12 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filen
         pairs_xy.append((xs[pi], ys[pi]))
         pi = pi + 1
     nd_local = _pareto_non_dominated_minimize(pairs_xy)
-    fig, axi = plt.subplots(figsize=(7, 5))
-    axi.scatter(xs, ys, c="#888888", s=42, label="all trials", alpha=0.85)
+    nd_set = set(nd_local)
+    fig, axi = plt.subplots(figsize=(10, 5))
+    ti = 0
+    while ti < len(xs):
+        axi.scatter(xs[ti], ys[ti], s=42, alpha=0.85, label=labels[ti])
+        ti = ti + 1
     nd_x = []
     nd_y = []
     ki = 0
@@ -125,15 +170,15 @@ def save_pareto_plot(records_list, pareto_x_key, pareto_y_key, output_dir, filen
         nd_y.append(ys[pj])
         ki = ki + 1
     axi.scatter(nd_x, nd_y, c="#c0392b", s=76, marker="*", label="Pareto frontier", alpha=0.95, zorder=4)
-    axi.set_xlabel(pareto_x_key)
-    axi.set_ylabel(pareto_y_key)
-    axi.set_title("Pareto set (multi-objective, lower-left better)")
-    axi.legend(loc="best")
+    axi.set_xlabel(x_axis_label)
+    axi.set_ylabel(y_axis_label)
+    axi.set_title("Pareto set [%s] (multi-objective, lower-left better)" % split_label)
+    axi.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8)
     axi.grid(alpha=0.25)
     out_path_png = Path(output_dir) / filename
     out_path_png.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(out_path_png, dpi=170)
+    plt.savefig(out_path_png, dpi=170, bbox_inches="tight")
     plt.close(fig)
     return out_path_png
 

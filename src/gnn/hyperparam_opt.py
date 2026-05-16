@@ -398,16 +398,55 @@ def main(cfg):
     study_nm = str(OmegaConf.select(cfg, "study_name"))
     wandb_proj = str(OmegaConf.select(cfg, "wandb_project"))
     try:
-        # One Pareto plot per configured (x, y) pair.
-        pareto_plot_paths = []
+        # Build pareto jobs: for each configured (x, y) pair produce one plot per split
+        # (test and validation), then add the rollout-sum pareto for both splits.
+        pareto_jobs = []
         pi = 0
         while pi < len(runner.pareto_pairs):
             px_key, py_key = runner.pareto_pairs[pi]
-            pareto_filename = "pareto_%d.png" % pi
-            png_path_here = save_pareto_plot(runner.trial_records, px_key, py_key, outp, pareto_filename)
-            pareto_plot_paths.append(png_path_here)
-            print("Saved Pareto plot %d to %s" % (pi, png_path_here))
+            # Detect which split the configured pair belongs to and build both variants.
+            if "final_test/" in px_key or "final_test/" in py_key:
+                original_split = "test"
+                sibling_split = "validation"
+            elif "final_validation/" in px_key or "final_validation/" in py_key:
+                original_split = "validation"
+                sibling_split = "test"
+            else:
+                # No recognisable prefix — keep only the original pair.
+                pareto_jobs.append((px_key, py_key, "", "pareto_%d.png" % pi))
+                pi = pi + 1
+                continue
+            # Original split
+            pareto_jobs.append((
+                px_key, py_key,
+                original_split,
+                "pareto_%d_%s.png" % (pi, original_split),
+            ))
+            # Sibling split — swap the prefix in both keys.
+            sibling_px = px_key.replace("final_%s/" % original_split, "final_%s/" % sibling_split)
+            sibling_py = py_key.replace("final_%s/" % original_split, "final_%s/" % sibling_split)
+            pareto_jobs.append((
+                sibling_px, sibling_py,
+                sibling_split,
+                "pareto_%d_%s.png" % (pi, sibling_split),
+            ))
             pi = pi + 1
+        # Rollout-sum pareto: x = rollout_pos_mae + rollout_volume_mae, y = overall_abs_mae
+        for rollout_split in ("test", "validation"):
+            pareto_jobs.append((
+                ["final_%s/rollout_pos_mae" % rollout_split, "final_%s/rollout_volume_mae" % rollout_split],
+                "final_%s/overall_abs_mae" % rollout_split,
+                rollout_split,
+                "pareto_rollout_sum_%s.png" % rollout_split,
+            ))
+        pareto_plot_paths = []
+        ji = 0
+        while ji < len(pareto_jobs):
+            jx_key, jy_key, j_split, j_filename = pareto_jobs[ji]
+            png_path_here = save_pareto_plot(runner.trial_records, jx_key, jy_key, outp, j_filename, j_split)
+            pareto_plot_paths.append(png_path_here)
+            print("Saved Pareto plot '%s' to %s" % (j_filename, png_path_here))
+            ji = ji + 1
 
         # Fixed summary plots across all trials: final_test and final_validation splits.
         summary_metric_specs = [
@@ -417,6 +456,8 @@ def main(cfg):
             ("final_validation/overall_relative_mae", "summary_val_rel_mae.png"),
             ("final_test/rollout_pos_mae", "summary_test_rollout_pos_mae.png"),
             ("final_validation/rollout_pos_mae", "summary_val_rollout_pos_mae.png"),
+            ("final_test/rollout_volume_mae", "summary_test_vol_mae.png"),
+            ("final_validation/rollout_volume_mae", "summary_val_vol_mae.png"),
         ]
         summary_plot_paths = []
         sm = 0
