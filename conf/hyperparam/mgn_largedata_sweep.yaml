@@ -40,6 +40,9 @@ sweeps:
       - label: mgn_H312_L12
         overrides:
           - model=mgn_H312_L12
+      - label: mgn_H400_L8
+        overrides:
+          - model=mgn_H400_L8
 
 
 hydra:

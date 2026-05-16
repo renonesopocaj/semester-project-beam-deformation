@@ -2,10 +2,11 @@
 #SBATCH --job-name=sweep_residual
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
+#SBATCH --qos=long
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=39 # max 40 per node
 #SBATCH --gres=gpu:1
-#SBATCH --time=3-00:00:00
+#SBATCH --time=6-00:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-type=END,FAIL
