@@ -29,7 +29,7 @@ sweeps:
     options:
       - label: biax_longer
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/medium
       - label: biax_allgeoms
         overrides:
           - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_allgeoms/z_isotr_centr_nonlin/medium

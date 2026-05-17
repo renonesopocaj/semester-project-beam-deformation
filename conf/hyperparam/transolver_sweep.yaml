@@ -19,6 +19,7 @@ sweeps:
   - name: transolver_arch
     fixed_overrides:
       - noise=noise_per_epoch_noprev
+      - computational.torch_compile=False
     options:
       - label: transolver_mid_S128
         overrides:

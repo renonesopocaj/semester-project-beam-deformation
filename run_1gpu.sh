@@ -27,7 +27,7 @@ conda activate semesterproject
 # mgn_message_mid w/ z_isotr_centr_log_abs_noxtm1_nonormnode_noedgevel_noedgeforce_nostretch_norot
 # mgn_deep w/ z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot
 mkdir -p saved_models
-srun python -m src.gnn.train computational=in_memory_slurm_1gpu \
+srun python -m src.gnn.train computational=in_memory_slurm_1gpu_littlebatch \
   computational.torch_compile=True \
   lr_scheduler=plateau_long \
   training=slurm \

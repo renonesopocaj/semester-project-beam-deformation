@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=sweep_forcegeom
+#SBATCH --job-name=sweep_mgn_largedata
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
+#SBATCH --qos=long
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=39 # max 40 per node
 #SBATCH --gres=gpu:1
-#SBATCH --time=3-00:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-type=END,FAIL
@@ -24,4 +25,4 @@ source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
 mkdir -p saved_models
 
-srun python -m src.gnn.hyperparam_opt -cn force_geom_sweeps
+srun python -m src.gnn.hyperparam_opt -cn mgn_largedata_sweep
