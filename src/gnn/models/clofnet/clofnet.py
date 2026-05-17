@@ -236,12 +236,8 @@ class ClofNetBase(nn.Module, ABC):
         num_nodes = int(x_pos.shape[0])
         a0 = torch.zeros(num_nodes, 3, device=x_pos.device, dtype=x_pos.dtype)
         v0 = v_phy
-        if hasattr(batch, "ptr") and batch.ptr is not None:
-            n_per = int(batch.ptr[1] - batch.ptr[0])
-            num_graphs = int(batch.num_graphs) if hasattr(batch, "num_graphs") else 1
-        else:
-            n_per = num_nodes
-            num_graphs = 1
+        num_graphs = int(batch.num_graphs) if hasattr(batch, "num_graphs") else 1
+        n_per = num_nodes // num_graphs
         # Select the field to use for the local frame and cascade initial state.
         if self.frame_source == "displacement":
             field_t = x_pos - rest_pos
