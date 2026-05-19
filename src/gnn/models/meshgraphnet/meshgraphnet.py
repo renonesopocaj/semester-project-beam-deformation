@@ -110,24 +110,26 @@ class GraphNetBlock(torch.nn.Module):
 
 class Decoder(torch.nn.Module):
     """
-    Final decoder to predict acceleration and von Mises stress. Uses 2 heads.
+    Final decoder to predict acceleration and stress. Uses 2 heads: the stress head outputs either the
+    single-channel von Mises scalar (stress_out_dim=1) or the 6-component symmetric stress tensor
+    (stress_out_dim=6) depending on the configured target mode.
     """
 
-    def __init__(self, in_and_latent_size, enable_layer_norm, num_layers_heads, dropout):
+    def __init__(self, in_and_latent_size, enable_layer_norm, num_layers_heads, dropout, stress_out_dim):
         super(Decoder, self).__init__()
         self.acc_decoder = build_mlp_d(in_size=in_and_latent_size, hidden_size=in_and_latent_size, out_size=3,
                                        num_layers=num_layers_heads,
                                        layer_norm=enable_layer_norm,
                                        use_sigmoid=False, use_softmax=False, dropout=dropout)
-        self.von_mises_decoder = build_mlp_d(in_size=in_and_latent_size, hidden_size=in_and_latent_size, out_size=1,
-                                             num_layers=num_layers_heads,
-                                             layer_norm=enable_layer_norm,
-                                             use_sigmoid=False, use_softmax=False, dropout=dropout)
+        self.stress_decoder = build_mlp_d(in_size=in_and_latent_size, hidden_size=in_and_latent_size,
+                                          out_size=int(stress_out_dim),
+                                          num_layers=num_layers_heads,
+                                          layer_norm=enable_layer_norm,
+                                          use_sigmoid=False, use_softmax=False, dropout=dropout)
 
     def forward(self, node_embedding):
         """
-        Given a node embedding, it returns the prediction for acceleration and for von mises stress.
-        Doesn't use edge embedding.
+        Given a node embedding, returns the prediction for acceleration concatenated with stress (vm or sig6).
 
         Args:
             node_embedding: torch.Tensor
@@ -135,8 +137,8 @@ class Decoder(torch.nn.Module):
         :return: pred
         """
         decoded_acc = self.acc_decoder(node_embedding)
-        decoded_von_mis = self.von_mises_decoder(node_embedding)
-        pred = torch.hstack((decoded_acc, decoded_von_mis))
+        decoded_stress = self.stress_decoder(node_embedding)
+        pred = torch.hstack((decoded_acc, decoded_stress))
         return pred
 
 
@@ -153,7 +155,7 @@ class MeshGraphNet(nn.Module):
     def __init__(self, node_channels, edge_channels, encoder_latent_size, encoder_decoder_latent_size,
                  processor_latent_size, num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder,
                  layer_norm_enable_decoder, layer_norm_enable_processor, num_layers_heads, num_layers_encoder,
-                 dropout_encoder, dropout_head, dropout_processor, activation_checkpointing):
+                 dropout_encoder, dropout_head, dropout_processor, activation_checkpointing, stress_out_dim):
         """
         Args:
             node_channels: int
@@ -194,9 +196,9 @@ class MeshGraphNet(nn.Module):
                                                            enable_layer_norm=layer_norm_enable_processor,
                                                            dropout=dropout_processor)
                                              for _ in range(num_msgs)])
-        # Decoder: takes in input [N, H] and outputs [N, 4] (acceleration and von Mises stress)
+        # Decoder: takes [N, H] and outputs [N, 3 + stress_out_dim] (acc + vm or acc + sig6)
         self.decoder = Decoder(in_and_latent_size=processor_latent_size, enable_layer_norm=layer_norm_enable_decoder,
-                               num_layers_heads=num_layers_heads, dropout=dropout_head)
+                               num_layers_heads=num_layers_heads, dropout=dropout_head, stress_out_dim=stress_out_dim)
         self.activation_checkpointing = activation_checkpointing
 
     def forward(self, ingraph):

@@ -40,7 +40,7 @@ class TransolverNet(nn.Module):
     model: TransolverIrregularModel
 
     def __init__(self, graph_template, node_channels, n_layers, n_hidden, dropout, n_head, time_input, act,
-                 mlp_ratio, slice_num, ref, unified_pos):
+                 mlp_ratio, slice_num, ref, unified_pos, stress_out_dim):
         """
         Args:
             graph_template: object
@@ -71,7 +71,8 @@ class TransolverNet(nn.Module):
         super().__init__()
         self.num_nodes = _num_nodes_from_template(graph_template)
         self.fun_dim = int(node_channels)
-        self.out_dim = 4
+        # 3 acceleration channels + stress_out_dim (1 for vm, 6 for full sig6 tensor).
+        self.out_dim = 3 + int(stress_out_dim)
         self.time_input = bool(time_input)
         self.model = TransolverIrregularModel(
             space_dim=3,

@@ -103,7 +103,9 @@ def main():
     # but won't be stepped during eval; their state is overwritten by the checkpoint)
     template_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.train_dir, device="cpu")
     graph_template = template_dataset[0]
-    model = create_model(train_cfg, preprocess_cfg, device, graph_template)
+    target_mode = getattr(preprocess_cfg, "target_mode", "von_mises")
+    stress_out_dim = 6 if target_mode == "full_stress" else 1
+    model = create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.initial_lr)
     scheduler = scheduler_factory(optimizer, train_cfg.scheduler_cfg)
 

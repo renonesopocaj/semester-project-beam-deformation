@@ -119,7 +119,7 @@ class GATv2Net(nn.Module):
     def __init__(self, node_channels, edge_channels, hidden_dim, num_layers, heads,
                  dropout_attn, negative_slope, add_self_loops, share_weights, residual,
                  layer_norm_encoder, layer_norm_processor, layer_norm_decoder,
-                 num_layers_encoder, num_layers_heads, dropout_encoder, dropout_head):
+                 num_layers_encoder, num_layers_heads, dropout_encoder, dropout_head, stress_out_dim):
         """
         Args:
             node_channels: int
@@ -184,8 +184,10 @@ class GATv2Net(nn.Module):
             num_layers=num_layers_heads, layer_norm=layer_norm_decoder,
             use_sigmoid=False, use_softmax=False, dropout=dropout_head,
         )
+        # mises_head keeps its historical name for backward compat; its width depends on stress_out_dim
+        # (1 = von Mises scalar, 6 = sig6 stress tensor).
         self.mises_head = build_mlp_d(
-            in_size=hidden_dim, hidden_size=hidden_dim, out_size=1,
+            in_size=hidden_dim, hidden_size=hidden_dim, out_size=int(stress_out_dim),
             num_layers=num_layers_heads, layer_norm=layer_norm_decoder,
             use_sigmoid=False, use_softmax=False, dropout=dropout_head,
         )
@@ -208,5 +210,5 @@ class GATv2Net(nn.Module):
         node_embedding = self.processor(node_embedding, edge_index, edge_embedding)  # [N, H]
         # Decode to predictions
         acc = self.acc_head(node_embedding)         # [N, 3]
-        mises = self.mises_head(node_embedding)     # [N, 1]
-        return torch.hstack((acc, mises))           # [N, 4]
+        stress = self.mises_head(node_embedding)    # [N, stress_out_dim]
+        return torch.hstack((acc, stress))          # [N, 3 + stress_out_dim]

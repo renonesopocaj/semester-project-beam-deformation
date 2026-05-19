@@ -17,6 +17,7 @@ from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.training.online_edge_augmentation import SPLIT_ROLLOUT_TEST
 from src.gnn.training.rollout import do_rollout
+from src.gnn.training.target_strategy import VonMisesStrategy
 
 
 class _ZeroPredModel(torch.nn.Module):
@@ -122,6 +123,8 @@ def test_do_rollout_two_steps_zero_model():
     loader = [g0, g1]
     time_discretizer = create_time_discretizer(preprocess_cfg.time_discretization_method)
     model = _ZeroPredModel()
+    target_strategy = VonMisesStrategy("von_mises", exp_mises=False, stress_weight=1.0,
+                                       full_stress_loss_mode="components", full_stress_vm_weight=0.0)
     true_roll, pred_roll = do_rollout(
         model=model,
         test_loader=loader,
@@ -140,6 +143,7 @@ def test_do_rollout_two_steps_zero_model():
         rollout_seed_base=7,
         rollout_online_tag=SPLIT_ROLLOUT_TEST,
         traj_idx=0,
+        target_strategy=target_strategy,
     )
     assert len(true_roll) == 2 and len(pred_roll) == 2
     for tr, pr in zip(true_roll, pred_roll):

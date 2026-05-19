@@ -139,7 +139,8 @@ class GatMGNNet(nn.Module):
     def __init__(self, node_channels, edge_channels, hidden_dim, num_layers, num_layers_graphnetblock,
                  heads, dropout_attn, negative_slope, add_self_loops, share_weights, residual,
                  layer_norm_encoder, layer_norm_processor, layer_norm_decoder,
-                 num_layers_encoder, num_layers_heads, dropout_encoder, dropout_head, dropout_processor):
+                 num_layers_encoder, num_layers_heads, dropout_encoder, dropout_head, dropout_processor,
+                 stress_out_dim):
         """
         Args:
             node_channels: int
@@ -208,6 +209,7 @@ class GatMGNNet(nn.Module):
             enable_layer_norm=layer_norm_decoder,
             num_layers_heads=num_layers_heads,
             dropout=dropout_head,
+            stress_out_dim=stress_out_dim,
         )
 
     def forward(self, ingraph):

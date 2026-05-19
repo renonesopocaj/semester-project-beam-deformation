@@ -25,8 +25,9 @@ from typing import Any
 import torch
 import json
 from src.gnn.mesh_numerical_helpers.time_discretizer import TimeDiscretizer, create_time_discretizer
-from src.gnn.preprocessing.build_features import (compute_von_mises_3d, make_scripted_feature_builders)
-from src.gnn.preprocessing.normalizer import Normalizer, create_normalizer
+from src.gnn.preprocessing.build_features import (compute_von_mises_3d, extract_sig6_from_sig9,
+                                                  make_scripted_feature_builders)
+from src.gnn.preprocessing.normalizer import (Normalizer, create_normalizer, make_isotropic_groups_from_split)
 from src.gnn.preprocessing.stats import load_stats
 from src.gnn.preprocessing.stats import Stats
 from torch_geometric.data import Data, Batch
@@ -38,6 +39,46 @@ from src.gnn.mesh_numerical_helpers.compute_angle import (extract_surface_triang
 from src.gnn.preprocessing.edge_augmentation import build_augmented_edge_index, edge_augmentation_traj_seed
 
 EPS = 1e-6
+
+
+def make_target_isotropic_groups(target_mode):
+    """
+    Per-mode target normalization layout. Acceleration is always pooled across (x, y, z); the stress
+    channels are either a single anisotropic vm column (von_mises mode) or all 6 sig components pooled
+    together (full_stress mode, per user request).
+
+    Args:
+        target_mode: str
+            "von_mises" or "full_stress".
+    return: list of (int, int)
+        Group spec consumable by Normalizer.compute_stats.
+    """
+    if target_mode == "full_stress":
+        return [(0, 3), (3, 6)]
+    if target_mode == "von_mises":
+        return [(0, 3), (3, 1)]
+    raise ValueError(f"Unknown target_mode '{target_mode}'.")
+
+
+def make_target_tensor(_a, _von_mises, _sig6, target_mode):
+    """
+    Build the supervised target row(s) for a single timestep depending on the chosen target mode.
+
+    Args:
+        _a: torch.Tensor (N, 3)
+            Per-node acceleration target.
+        _von_mises: torch.Tensor (N, 1)
+            Per-node von Mises target (already raw or log-transformed depending on `mises_log`).
+        _sig6: torch.Tensor (N, 6)
+            Per-node 6-component stress tensor target. Raw (no log) since stresses can be negative.
+        target_mode: str
+            "von_mises" or "full_stress".
+    return: torch.Tensor
+        Concatenated supervised target of shape (N, 4) for von_mises and (N, 9) for full_stress.
+    """
+    if target_mode == "full_stress":
+        return torch.concat([_a, _sig6], dim=1)
+    return torch.concat([_a, _von_mises], dim=1)
 
 def sort_filenames_by_traj_params(filenames, graphs_dir):
     """
@@ -77,6 +118,7 @@ class Preprocessor(ABC):
     selected_limit: int
     split_idx_node: int | None
     split_idx_edge: int | None
+    target_mode: str
     _build_node_features_scripted: Any
     _build_edge_features_scripted: Any
 
@@ -90,6 +132,7 @@ class Preprocessor(ABC):
         self.selected_limit = int(selected_limit)
         self.split_idx_node = None
         self.split_idx_edge = None
+        self.target_mode = getattr(cfg, "target_mode", "von_mises")
         self._build_node_features_scripted = None
         self._build_edge_features_scripted = None
 
@@ -204,6 +247,9 @@ class Preprocessor(ABC):
                 # log transform helps making the distribution normal-like (symmetrical)
                 _von_mises_log = torch.log(_von_mises_raw + EPS)
                 _von_mises = _von_mises_log if cfg.mises_log else _von_mises_raw
+                # Packed 6-component stress, always available as aux even in von_mises mode so the trainer
+                # can derive vm from sig6 or apply the optional vm regularizer when desired.
+                _sig6 = extract_sig6_from_sig9(graph.y_sig_t)
 
                 # accumulate all graphs to out_graphs for stats computation
                 self.categorical_node_features.append(boundary_condition)
@@ -214,7 +260,8 @@ class Preprocessor(ABC):
                 # to compute the stats
                 self._append_outgraphs(graph, _a_t, _x_t, _v_t, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                                        all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                                       surface_left_triangles, surface_right_triangles, _x_pos_tm1_prev)
+                                       surface_left_triangles, surface_right_triangles, _x_pos_tm1_prev,
+                                       _sig6, _von_mises_raw)
                 _x_pos_tm1_prev = _x_t.clone()
 
         self.split_idx_node = split_idx_node
@@ -247,7 +294,8 @@ class Preprocessor(ABC):
     @abstractmethod
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log,
-                          boundary_left_triangles, boundary_right_triangles, x_pos_tm1_prev):
+                          boundary_left_triangles, boundary_right_triangles, x_pos_tm1_prev,
+                          _sig6, _von_mises_raw):
         raise NotImplementedError("_normalize_append_outgraphs")
 
     @abstractmethod
@@ -298,13 +346,14 @@ class TrainPreprocessor(Preprocessor):
         :return:
         """
         print("\nComputing train stats...\n")
-        # Compute statistics
-        self.node_stats = self.normalizer.compute_stats(self.valued_node_features, split_idx_node)
-        # print(f"edge_features.shape = {self.edge_features[0].shape}")
-        self.edge_stats = self.normalizer.compute_stats(self.edge_features, split_idx_edge)
-        # isotropic acceleration iff normalizer is isotropic
-        # FIXME: hardcoded target handling
-        self.target_stats = self.normalizer.compute_stats(self.targets, 3)
+        node_dim = self.valued_node_features[0].shape[1]
+        edge_dim = self.edge_features[0].shape[1]
+        node_groups = make_isotropic_groups_from_split(split_idx_node, node_dim)
+        edge_groups = make_isotropic_groups_from_split(split_idx_edge, edge_dim)
+        target_groups = make_target_isotropic_groups(self.target_mode)
+        self.node_stats = self.normalizer.compute_stats(self.valued_node_features, node_groups)
+        self.edge_stats = self.normalizer.compute_stats(self.edge_features, edge_groups)
+        self.target_stats = self.normalizer.compute_stats(self.targets, target_groups)
         print("\nFinished computing train stats\n")
 
     def _load_stats(self, cfg):
@@ -330,10 +379,17 @@ class TrainPreprocessor(Preprocessor):
 
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
-                          boundary_right_triangles, x_pos_tm1_prev):
+                          boundary_right_triangles, x_pos_tm1_prev, _sig6, _von_mises_raw):
         # Note: later for each data I will create the standard pyg - compatible attributes x, y, edge_attr actually
-        # used for NNs
+        # used for NNs. Aux stress fields (y_sig6_t, y_von_mises, von_mises_log) are saved here too so the trainer
+        # can compute vm-derived metrics and the optional VM regularizer regardless of the supervised target.
+        # `y_von_mises` follows the legacy convention: it is the (possibly log-transformed when `mises_log=True`)
+        # von Mises tensor (so existing rollout code reading it with `exp_mises` keeps working). The always-log
+        # variant is stored under `von_mises_log`; the raw physical vm can be recovered from either.
         self.out_graphs.append(Data(y_acc_t=_a, # TARGET feature acceleration
+                                    y_sig6_t=_sig6,
+                                    y_von_mises=_von_mises,
+                                    von_mises_log=_von_mises_log,
                                     # Helpers for rollout or other tasks
                                     edge_index=graph.edge_index,  # global index
                                     x_element_connectivity=graph.x_element_connectivity,
@@ -348,7 +404,7 @@ class TrainPreprocessor(Preprocessor):
                                     # Helper for curvature physics informed loss
                                     boundary_left_tri_index=boundary_left_triangles,
                                     boundary_right_tri_index=boundary_right_triangles))
-        self.targets.append(torch.concat([_a, _von_mises], dim=1))
+        self.targets.append(make_target_tensor(_a, _von_mises, _sig6, self.target_mode))
 
     def _normalize_assign_features_train(self):
         # Normalize and assign features
@@ -418,14 +474,15 @@ class ValPreprocessor(Preprocessor):
     # Validation: normalize with stats already computed, and add to out_graphs as PyG data
     def _append_outgraphs(self, graph, _a, _x, _v, _von_mises, _edge_attr, _node_attr, t, x_next, v_next,
                           all_node_force, rest_pos_x, _categorical_node_attr, _von_mises_log, boundary_left_triangles,
-                          boundary_right_triangles, x_pos_tm1_prev):
-        _target = torch.concat([_a, _von_mises], dim=1)
+                          boundary_right_triangles, x_pos_tm1_prev, _sig6, _von_mises_raw):
+        _target = make_target_tensor(_a, _von_mises, _sig6, self.target_mode)
         node_attr_norm, edge_attr_norm, target_norm = self._normalize_before_appending(
             _edge_attr, _node_attr, _categorical_node_attr, _target)
         self.out_graphs.append(
             Data(# targets: current time acceleration and von mises stress
                 y=target_norm,
                 y_acc_t=_a,
+                y_sig6_t=_sig6,
                 y_von_mises=_von_mises,
                 von_mises_log = _von_mises_log,
                 # (global attribute on the graph) time step of current graph

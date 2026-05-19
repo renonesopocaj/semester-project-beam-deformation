@@ -54,10 +54,13 @@ def create_dir_name(cfg_obj):
     # enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
     # enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
     time_discr_str = "_centr" if cfg_obj.time_discretization_method == "second_order_central" else "_newmark"
+    # Append "_fs" marker only when the supervised target is the full stress tensor; this lets the
+    # two flavours of the processed dataset coexist on disk under the same dataset root.
+    target_mode_str = "_fs" if getattr(cfg_obj, "target_mode") == "full_stress" else ""
     # processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
     #                       f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
     #                       f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
-    processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}"
+    processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}{target_mode_str}"
     return processed_dir_name
 
 def selected_indices_for_split(selected_trajs, split):

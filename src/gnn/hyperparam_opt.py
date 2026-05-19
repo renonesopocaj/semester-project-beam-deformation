@@ -145,6 +145,7 @@ class SweepRunner:
     train_conf_dir: Path
     repo_root: Path
     optimization_metric_key: str
+    final_optimization_metric_key: str
     val_monitor_metric_override: str
     pareto_pairs: list
     train_compose_config_name: str
@@ -178,6 +179,10 @@ class SweepRunner:
         raw_opt_metric = str(parent_cfg.optimization_metric).strip()
         self.optimization_metric_key = raw_opt_metric
         self.val_monitor_metric_override = _parse_val_monitor_metric(raw_opt_metric)
+        if self.val_monitor_metric_override == "overall_abs_mae":
+            self.final_optimization_metric_key = "final_validation/overall_abs_mae"
+        else:
+            self.final_optimization_metric_key = "final_validation/overall_relative_mae"
         self.pareto_pairs = resolve_pareto_metric_pairs(
             OmegaConf.select(parent_cfg, "pareto_metric_source"),
             OmegaConf.select(parent_cfg, "pareto_x_metric"),
@@ -273,13 +278,20 @@ class SweepRunner:
             trial.set_user_attr("option_label_for_record", chosen_option.label)
             trial.set_user_attr("chosen_option_overrides", list(chosen_option.overrides))
             score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
+            # Prefer the final-evaluation metric over the in-training checkpoint best so that
+            # Optuna and the sweep performance plot both show final_validation/* values.
+            raw_final = metrics_plain.get(self.final_optimization_metric_key)
+            if raw_final is not None and math.isfinite(float(raw_final)):
+                opt_score = float(raw_final)
+            else:
+                opt_score = score_val_mae
             record = {"study_name": study_name_plain,
                       "sweep_name": sweep_ref.name,
                       "option_label": chosen_option.label,
                       "swept_value_label": format_swept_value_label(chosen_option.overrides),
                       "swept_overrides": list(chosen_option.overrides),
                       "full_overrides": merged,
-                      "best_val_mae": score_val_mae,
+                      "best_val_mae": opt_score,
                       "final_metrics": metrics_plain,
                       "wandb_run_id": wb_id}
             self.trial_records.append(record)
@@ -289,7 +301,7 @@ class SweepRunner:
                 trial.set_user_attr("pareto_x_%d" % pi, metrics_plain.get(px_key))
                 trial.set_user_attr("pareto_y_%d" % pi, metrics_plain.get(py_key))
                 pi = pi + 1
-            return score_val_mae
+            return opt_score
 
         return optuna_objective
 
@@ -331,7 +343,7 @@ class SweepRunner:
             sweep_entity.name,
             x_labels,
             y_vals,
-            self.optimization_metric_key,
+            self.final_optimization_metric_key,
             self.output_dir,
         )
         self.per_sweep_plot_records[sweep_entity.name] = str(sweep_plot_path)
@@ -355,8 +367,8 @@ class SweepRunner:
     def report_global_best_run(self):
         """
         return: dict | None
-            Record with minimum best_val_mae (checkpoint best for the configured optimization
-            metric) or None if no trials were run.
+            Record with minimum best_val_mae (final_validation/* score for the configured
+            optimization metric) or None if no trials were run.
         """
         if len(self.trial_records) == 0:
             print("No trial records; nothing to report.")
@@ -371,7 +383,7 @@ class SweepRunner:
                 if candidate["best_val_mae"] < best_rec["best_val_mae"]:
                     best_rec = candidate
             br = br + 1
-        print("\n" + "=" * 80 + "\nBest run by %s among all trials (smaller is better):" % self.optimization_metric_key)
+        print("\n" + "=" * 80 + "\nBest run by %s among all trials (smaller is better):" % self.final_optimization_metric_key)
         print(json.dumps(best_rec, indent=2, default=str) + "\n" + "=" * 80 + "\n")
         return best_rec
 

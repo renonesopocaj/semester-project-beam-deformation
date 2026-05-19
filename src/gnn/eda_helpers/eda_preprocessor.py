@@ -27,7 +27,7 @@ from tqdm import tqdm
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
 from src.gnn.preprocessing.preprocessor import sort_filenames_by_traj_params
 from src.gnn.preprocessing.build_features import (build_node_features, build_edge_features, compute_von_mises_3d)
-from src.gnn.preprocessing.normalizer import create_normalizer
+from src.gnn.preprocessing.normalizer import (create_normalizer, make_isotropic_groups_from_split)
 from src.gnn.preprocessing.stats import Stats
 from src.gnn.plots.plot_rollout import make_ground_truth_gif
 
@@ -369,12 +369,18 @@ class EdaPreprocessor:
                 Number of edge feature columns grouped as xyz triplets.
         """
         print("\nComputing EDA stats from cached trajectories...\n")
-        self.node_stats = self.normalizer.compute_stats(
-            CachedTensorList(cache_files, "node_inputs", 1), split_idx_node)
-        self.edge_stats = self.normalizer.compute_stats(
-            CachedTensorList(cache_files, "edge_features", None), split_idx_edge)
-        self.target_stats = self.normalizer.compute_stats(
-            CachedTensorList(cache_files, "targets", None), 3)
+        # The EDA path always uses the legacy von_mises target layout (acc(3) + vm(1)) regardless of the
+        # training-time target_mode, since EDA only re-reads the raw trajectory features and is unrelated to
+        # what the GNN supervises.
+        node_iter = CachedTensorList(cache_files, "node_inputs", 1)
+        edge_iter = CachedTensorList(cache_files, "edge_features", None)
+        target_iter = CachedTensorList(cache_files, "targets", None)
+        node_groups = make_isotropic_groups_from_split(split_idx_node, node_iter[0].shape[1])
+        edge_groups = make_isotropic_groups_from_split(split_idx_edge, edge_iter[0].shape[1])
+        target_groups = make_isotropic_groups_from_split(3, target_iter[0].shape[1])
+        self.node_stats = self.normalizer.compute_stats(node_iter, node_groups)
+        self.edge_stats = self.normalizer.compute_stats(edge_iter, edge_groups)
+        self.target_stats = self.normalizer.compute_stats(target_iter, target_groups)
         print("\nFinished computing EDA stats\n")
 
     def _collect_normalized_eda(self, cache_files):

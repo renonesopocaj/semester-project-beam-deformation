@@ -727,6 +727,77 @@ def _plot_prediction_target_scatter(field_summary, output_path, split_name, num_
     plt.close(fig)
 
 
+SIG6_COMPONENT_LABELS = ("sxx", "syy", "szz", "sxy", "sxz", "syz")
+
+
+def _plot_fullstress_prediction_vs_target(true_rollout, pred_rollout, output_path, split_name,
+                                          num_timesteps, traj_metadata):
+    """
+    Single 2x3 figure: one prediction-vs-target scatter per stress component on the 6-component packed
+    stress tensor saved at rollout time (only available in target_mode = full_stress). Each subplot mirrors
+    `_plot_prediction_target_scatter` (identity reference line, R^2 annotation, finite-pair masking).
+
+    Args:
+        true_rollout: list
+            Ground-truth rollout graphs; each must have `sig6` (N, 6) attached (see do_rollout).
+        pred_rollout: list
+            Predicted rollout graphs; each must have `sig6` (N, 6) attached.
+        output_path: Path
+            Destination PNG path.
+        split_name: str
+            Split label for the title.
+        num_timesteps: int
+            Number of rollout timesteps for the title.
+        traj_metadata: dict or None
+            Optional metadata footnote; skipped when None.
+    return: None
+        Saves the figure to disk; does nothing if `sig6` is not available on any rollout graph.
+    """
+    if len(true_rollout) == 0 or len(pred_rollout) == 0:
+        return
+    if not (hasattr(true_rollout[0], "sig6") and hasattr(pred_rollout[0], "sig6")):
+        return
+    target_per_step, prediction_per_step = [], []
+    for true_graph, pred_graph in zip(true_rollout, pred_rollout):
+        target_per_step.append(to_numpy(true_graph.sig6))
+        prediction_per_step.append(to_numpy(pred_graph.sig6))
+    target_all = np.concatenate(target_per_step, axis=0)  # (T*N, 6)
+    prediction_all = np.concatenate(prediction_per_step, axis=0)  # (T*N, 6)
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    for component_idx, label in enumerate(SIG6_COMPONENT_LABELS):
+        ax = axes.flat[component_idx]
+        target_values = target_all[:, component_idx]
+        prediction_values = prediction_all[:, component_idx]
+        pair_mask = np.isfinite(target_values) & np.isfinite(prediction_values)
+        target_finite = target_values[pair_mask]
+        prediction_finite = prediction_values[pair_mask]
+        if target_finite.size == 0:
+            ax.text(0.5, 0.5, "No finite data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{label} (no data)")
+            continue
+        min_value = float(min(target_finite.min(), prediction_finite.min()))
+        max_value = float(max(target_finite.max(), prediction_finite.max()))
+        r2 = r2_prediction_vs_target(target_finite, prediction_finite)
+        ax.scatter(target_finite, prediction_finite, s=10, alpha=0.15)
+        ax.plot([min_value, max_value], [min_value, max_value], linestyle="--", color="black", linewidth=1.5)
+        ax.set_xlabel("Target")
+        ax.set_ylabel("Prediction")
+        ax.set_title(label)
+        ax.text(0.03, 0.97, format_r2_text(r2), transform=ax.transAxes, fontsize=10, verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.85))
+        ax.grid(True, alpha=0.3)
+    fig.suptitle(f"Full Stress Prediction vs Target\n[{split_name}, 1 sample, {num_timesteps} timesteps]",
+                 fontsize=14)
+    if traj_metadata is not None:
+        fig.subplots_adjust(bottom=0.12)
+        fig.text(0.5, 0.02, _format_traj_metadata_text(traj_metadata), ha="center", va="bottom", fontsize=9,
+                 bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.8})
+    fig.tight_layout(rect=(0, 0.04 if traj_metadata is not None else 0.0, 1, 0.96))
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def _plot_edge_error_correlation(field_summary, output_path, split_name, num_timesteps):
     """
     Args:
@@ -969,7 +1040,7 @@ def compute_coordinate_bounds(coordinates_per_step):
     return _finite_coordinate_bounds_from_stack(all_coordinates)  # Min/max/padding for 3D axis setup in GIFs.
 
 def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
-                   plot_diagnostics_advanced, traj_metadata):
+                   plot_diagnostics_advanced, traj_metadata, target_mode):
     """
     Generates all in-depth diagnostic plots for a single trajectory rollout.
     Scatter and hexbin figures that compare or relate two quantities include an R^2 annotation
@@ -990,6 +1061,9 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
             boolean to plot more complex diagnostics
         traj_metadata: dict or None
             Per-trajectory metadata (fx, fy, fz, L, W, D, ood_features) for footnote textboxes; skipped when None.
+        target_mode: str
+            "von_mises" or "full_stress"; controls whether the 2x3 fullstress scatter mega-plot is generated
+            (only available in full_stress mode where rollout graphs carry the `sig6` attribute).
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
@@ -1012,6 +1086,16 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
                             filename_prefix=filename_prefix, split_name=traj_split_name,
                             traj_metadata=traj_metadata)  # Per-field scatter PNGs.
 
+    # Optional full-stress mega-scatter: only generated in full_stress mode and when do_rollout attached
+    # `sig6` to every stored rollout graph.
+    fullstress_scatter_path = output_dir / f"{filename_prefix}_fullstress_prediction_vs_target.png"
+    if target_mode == "full_stress":
+        _plot_fullstress_prediction_vs_target(true_rollout=true_rollout, pred_rollout=pred_rollout,
+                                              output_path=fullstress_scatter_path,
+                                              split_name=traj_split_name,
+                                              num_timesteps=len(true_rollout),
+                                              traj_metadata=traj_metadata)
+
     if plot_diagnostics_advanced:
         try:
             plot_mesh_diagnostics(true_rollout=true_rollout, pred_rollout=pred_rollout, output_dir=output_dir,
@@ -1031,6 +1115,8 @@ def in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, file
             corr_path = output_dir / f"{filename_prefix}_{field_name}_edge_error_correlation.png"
             if corr_path.exists():
                 paths["images"][f"{field_name}_edge_error_correlation"] = corr_path  # Hexbin correlation (if enabled upstream).
+    if target_mode == "full_stress" and fullstress_scatter_path.exists():
+        paths["images"]["fullstress_prediction_vs_target"] = fullstress_scatter_path
 
     if plot_diagnostics_advanced:
         diag_dir = output_dir / "diagnostics"  # Subfolder populated by plot_mesh_diagnostics.

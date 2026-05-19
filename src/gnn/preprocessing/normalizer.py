@@ -6,6 +6,12 @@ Contains Normalizer class and its subclasses. Implements 4 normalizers:
 - Z (Gaussian) both isotropic and not
 - None: doesn't change anything, only computes statistics via Z processing FIXME: probably can cancel the compute_statas
         since it has only to not do nothing
+
+`compute_stats(tensor_list, isotropic_groups)` consumes a list of `(start, length)` tuples that describe
+contiguous channel groups that must share a single statistic (mean/median, std/IQR). Length-1 groups behave
+as the anisotropic per-column branch. The helper `make_isotropic_groups_from_split(split_idx, total_dim)`
+reconstructs the legacy `split_idx` semantics (first split_idx channels grouped as xyz triplets, rest as
+individual columns), so existing callers stay identical in behavior.
 """
 
 from abc import ABC, abstractmethod
@@ -14,6 +20,61 @@ from src.gnn.preprocessing.stats import Stats
 import numpy as np
 
 EPS = 1e-8
+
+
+def make_isotropic_groups_from_split(split_idx, total_dim):
+    """
+    Reproduce the legacy "first split_idx channels in xyz triplets, rest individual" pooling layout as an
+    explicit list of (start, length) groups. Backward-compatible bridge for callers that historically only
+    expressed an integer split.
+
+    Args:
+        split_idx: int
+            Number of leading columns to pool as consecutive triplets. Must be a non-negative multiple of 3.
+        total_dim: int
+            Total number of columns in the tensor for which stats are computed.
+    return: list of (int, int)
+        Groups in form (start, length); each length-3 entry pools 3 columns together, each length-1 entry
+        leaves a column anisotropic.
+    """
+    if split_idx < 0 or total_dim < 0:
+        raise ValueError(f"split_idx and total_dim must be non-negative; got {split_idx} and {total_dim}.")
+    if split_idx % 3 != 0:
+        raise ValueError(f"split_idx must be divisible by 3; got {split_idx}.")
+    if split_idx > total_dim:
+        raise ValueError(f"split_idx={split_idx} exceeds total_dim={total_dim}.")
+    groups = []
+    for start in range(0, split_idx, 3):
+        groups.append((start, 3))
+    for start in range(split_idx, total_dim):
+        groups.append((start, 1))
+    return groups
+
+
+def _validate_isotropic_groups(groups, total_dim):
+    """
+    Sanity check the isotropic-group spec against an expected total dimensionality. Groups must form a
+    contiguous partition of [0, total_dim).
+
+    Args:
+        groups: list of (int, int)
+            Group spec as (start, length) tuples.
+        total_dim: int
+            Expected total number of channels covered by the groups.
+    return: None
+        Raises ValueError on malformed input.
+    """
+    expected_start = 0
+    for start, length in groups:
+        if start != expected_start:
+            raise ValueError(f"Non-contiguous isotropic_groups at start={start} (expected {expected_start}).")
+        if length < 1:
+            raise ValueError(f"Group length must be >= 1, got {length} at start={start}.")
+        expected_start = start + length
+    if expected_start != total_dim:
+        raise ValueError(
+            f"isotropic_groups cover {expected_start} channels but tensor has {total_dim} columns."
+        )
 
 
 def build_affine_normalizer_tensors(stats_mean, stats_std, normalizer_method):
@@ -143,96 +204,60 @@ class Normalizer(ABC):
         return tensor * (stats.std + EPS) + stats.mean
 
     @abstractmethod
-    def compute_stats(self, tensor_list, split_idx):
+    def compute_stats(self, tensor_list, isotropic_groups):
         """
         Args:
             tensor_list: list[torch.Tensor]
-                list of tensors with shape (N, F)
-            split_idx: int
-                first split_idx features are grouped in xyz triplets, so have 3 coordinates and treated isotropically
+                list of tensors with shape (N, F); every tensor in the list must have the same F.
+            isotropic_groups: list of (int, int)
+                Contiguous channel groups in (start, length) form. Length >= 2 groups pool their
+                columns into a single shared statistic; length-1 groups are computed per column.
 
         return: Stats
-            robust stats with isotropic pooling on triplets
+            stats with the requested pooling layout.
         """
         raise NotImplementedError("compute_stats not implemented in abstract class normalizer")
 
 class NoNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list, split_idx):
-        assert split_idx % 3 == 0
-
+    def compute_stats(self, tensor_list, isotropic_groups):
         tensor_iterator = iter(tensor_list)
         first_tensor = next(tensor_iterator)
-        sum_val = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
-        sum_sq = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
-        count = torch.zeros(first_tensor.shape[1], device=first_tensor.device, dtype=first_tensor.dtype)
-
-        sum_val += first_tensor.sum(dim=0)
-        sum_sq += (first_tensor ** 2).sum(dim=0)
-        count += first_tensor.shape[0]
-
-        for tensor in tensor_iterator:
-            # sum across first dimension, i.e. (N, #features) --> (#features) tensor of means (for each feature,
-            # the mean along all coordinates)
-            sum_val += tensor.sum(dim=0)
-            sum_sq += (tensor ** 2).sum(dim=0)
-            count += tensor.shape[0]
-
-        for i in range(0, split_idx, 3):
-            pooled_sum = sum_val[i] + sum_val[i + 1] + sum_val[i + 2]
-            pooled_sum_sq = sum_sq[i] + sum_sq[i + 1] + sum_sq[i + 2]
-            pooled_count = count[i] * 3
-
-            sum_val[i] = pooled_sum
-            sum_val[i + 1] = pooled_sum
-            sum_val[i + 2] = pooled_sum
-
-            sum_sq[i] = pooled_sum_sq
-            sum_sq[i + 1] = pooled_sum_sq
-            sum_sq[i + 2] = pooled_sum_sq
-
-            count[i] = pooled_count
-            count[i + 1] = pooled_count
-            count[i + 2] = pooled_count
-
         num_features = first_tensor.shape[1]
+        _validate_isotropic_groups(isotropic_groups, num_features)
+
         mean = torch.zeros(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
         std = torch.ones(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
-
         return Stats(mean=mean, std=std)
 
 class ZIsotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list, split_idx):
-        assert split_idx % 3 == 0
+    def compute_stats(self, tensor_list, isotropic_groups):
+        first_tensor = tensor_list[0]
+        num_features = first_tensor.shape[1]
+        _validate_isotropic_groups(isotropic_groups, num_features)
 
-        sum_val = torch.zeros(tensor_list[0].shape[1],device=tensor_list[0].device, dtype=tensor_list[0].dtype)
-        sum_sq = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
-        count = torch.zeros(tensor_list[0].shape[1], device=tensor_list[0].device,dtype=tensor_list[0].dtype)
+        sum_val = torch.zeros(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
+        sum_sq = torch.zeros(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
+        count = torch.zeros(num_features, device=first_tensor.device, dtype=first_tensor.dtype)
 
         for tensor in tensor_list:
-            # sum across first dimension, i.e. (N, #features) --> (#features) tensor of means (for each feature,
-            # the mean along all coordinates)
             sum_val += tensor.sum(dim=0)
             sum_sq += (tensor ** 2).sum(dim=0)
             count += tensor.shape[0]
 
-        for i in range(0, split_idx, 3):
-            pooled_sum = sum_val[i] + sum_val[i + 1] + sum_val[i + 2]
-            pooled_sum_sq = sum_sq[i] + sum_sq[i + 1] + sum_sq[i + 2]
-            pooled_count = count[i] * 3
-
-            sum_val[i] = pooled_sum
-            sum_val[i + 1] = pooled_sum
-            sum_val[i + 2] = pooled_sum
-
-            sum_sq[i] = pooled_sum_sq
-            sum_sq[i + 1] = pooled_sum_sq
-            sum_sq[i + 2] = pooled_sum_sq
-
-            count[i] = pooled_count
-            count[i + 1] = pooled_count
-            count[i + 2] = pooled_count
+        # Pool stats within each isotropic group with length >= 2; length-1 groups already hold the right
+        # per-column accumulators and are left untouched.
+        for start, length in isotropic_groups:
+            if length < 2:
+                continue
+            end = start + length
+            pooled_sum = sum_val[start:end].sum()
+            pooled_sum_sq = sum_sq[start:end].sum()
+            pooled_count = count[start] * length
+            sum_val[start:end] = pooled_sum
+            sum_sq[start:end] = pooled_sum_sq
+            count[start:end] = pooled_count
 
         mean = sum_val / count
         var = torch.clamp((sum_sq / count) - (mean ** 2), min=0.0)
@@ -242,7 +267,10 @@ class ZIsotropicNormalizer(Normalizer):
 
 class ZAnisotropicZNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list, split_idx):
+    def compute_stats(self, tensor_list, isotropic_groups):
+        first_tensor = tensor_list[0]
+        num_features = first_tensor.shape[1]
+        _validate_isotropic_groups(isotropic_groups, num_features)
         sum_val = 0
         sum_sq = 0
         count = 0
@@ -258,47 +286,42 @@ class ZAnisotropicZNormalizer(Normalizer):
 
 class RobustIsotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list, split_idx):
+    def compute_stats(self, tensor_list, isotropic_groups):
         first_tensor = tensor_list[0]
         num_features = first_tensor.shape[1]
-
-        assert split_idx % 3 == 0, "split_idx must be divisible by 3"
+        _validate_isotropic_groups(isotropic_groups, num_features)
 
         mean_np = np.zeros(num_features, dtype=np.float64)
         std_np = np.zeros(num_features, dtype=np.float64)
 
-        for i in range(0, split_idx, 3):
-            pooled_values = []
-            for tensor in tensor_list:
-                pooled_values.append(tensor[:, i:i + 3].detach().cpu().reshape(-1).numpy())
-            pooled_values = np.concatenate(pooled_values, axis=0)
+        for start, length in isotropic_groups:
+            end = start + length
+            if length >= 2:
+                pooled_values = []
+                for tensor in tensor_list:
+                    pooled_values.append(tensor[:, start:end].detach().cpu().reshape(-1).numpy())
+                pooled_values = np.concatenate(pooled_values, axis=0)
 
-            median = np.quantile(pooled_values, 0.5)
-            q1 = np.quantile(pooled_values, 0.25)
-            q3 = np.quantile(pooled_values, 0.75)
-            iqr = q3 - q1
+                median = np.quantile(pooled_values, 0.5)
+                q1 = np.quantile(pooled_values, 0.25)
+                q3 = np.quantile(pooled_values, 0.75)
+                iqr = q3 - q1
 
-            mean_np[i] = median
-            mean_np[i + 1] = median
-            mean_np[i + 2] = median
+                mean_np[start:end] = median
+                std_np[start:end] = iqr
+            else:
+                values = []
+                for tensor in tensor_list:
+                    values.append(tensor[:, start].detach().cpu().numpy())
+                values = np.concatenate(values, axis=0)
 
-            std_np[i] = iqr
-            std_np[i + 1] = iqr
-            std_np[i + 2] = iqr
+                median = np.quantile(values, 0.5)
+                q1 = np.quantile(values, 0.25)
+                q3 = np.quantile(values, 0.75)
+                iqr = q3 - q1
 
-        for i in range(split_idx, num_features):
-            values = []
-            for tensor in tensor_list:
-                values.append(tensor[:, i].detach().cpu().numpy())
-            values = np.concatenate(values, axis=0)
-
-            median = np.quantile(values, 0.5)
-            q1 = np.quantile(values, 0.25)
-            q3 = np.quantile(values, 0.75)
-            iqr = q3 - q1
-
-            mean_np[i] = median
-            std_np[i] = iqr
+                mean_np[start] = median
+                std_np[start] = iqr
 
         mean = torch.tensor(mean_np, device=first_tensor.device, dtype=first_tensor.dtype)
         std = torch.tensor(std_np, device=first_tensor.device, dtype=first_tensor.dtype)
@@ -307,8 +330,10 @@ class RobustIsotropicNormalizer(Normalizer):
 
 class RobustAnisotropicNormalizer(Normalizer):
 
-    def compute_stats(self, tensor_list, split_idx):
+    def compute_stats(self, tensor_list, isotropic_groups):
         first_tensor = tensor_list[0]
+        num_features = first_tensor.shape[1]
+        _validate_isotropic_groups(isotropic_groups, num_features)
         all_data_np = np.concatenate([tensor.detach().cpu().numpy() for tensor in tensor_list], axis=0)
 
         median_np = np.quantile(all_data_np, 0.5, axis=0)

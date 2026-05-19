@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from src.gnn.mesh_numerical_helpers.compute_angle import compute_surface_angles_torch
 from src.gnn.mesh_numerical_helpers.compute_volume import batched_total_absolute_volumes
 from src.gnn.mesh_numerical_helpers.misc_numerical_helpers import to_numpy_tetra_connectivity
+from src.gnn.preprocessing.build_features import compute_von_mises_from_sig6
 
 EPS = 1e-6
 TARGET_ACC_DIM = 3
@@ -254,6 +255,82 @@ def compute_total_loss_exp_mises(pred, target, target_stats, loss_fn, stress_wei
     acc_loss = loss_fn(pred[:, 0:3], target[:, 0:3])
     stress_loss = compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn)
     return acc_loss + stress_weight * stress_loss
+
+
+def full_stress_components_loss(pred, target, loss_fn, stress_weight):
+    """
+    Component-wise loss for the full-stress target layout `y = [acc(3), sig6(6)]`.
+
+    Args:
+        pred: torch.Tensor
+            Model output of shape (N, 9).
+        target: torch.Tensor
+            Normalized target of shape (N, 9).
+        loss_fn: callable
+            Elementwise regression loss (mse/mae/huber).
+        stress_weight: float
+            Multiplier applied to the average loss over the 6 sig channels.
+    return: torch.Tensor
+        Combined scalar loss `acc_loss + stress_weight * stress_loss`.
+    """
+    acc_loss = loss_fn(pred[:, 0:3], target[:, 0:3])
+    stress_loss = loss_fn(pred[:, 3:9], target[:, 3:9])
+    return acc_loss + stress_weight * stress_loss
+
+
+def compute_vm_regularizer_loss(pred, target_stats, target_vm_physical, loss_fn):
+    """
+    Differentiable von Mises regularizer: denormalize `pred[:, 3:9]` to physical sig6, compute the
+    closed-form vm, and compare against the supplied physical-space ground-truth vm.
+
+    Args:
+        pred: torch.Tensor
+            Model output of shape (N, 9).
+        target_stats: object
+            Target normalization stats; stress channels share a single mean/std in full_stress mode.
+        target_vm_physical: torch.Tensor
+            Ground-truth vm in physical units, shape (N,) or (N, 1) (will be reshaped to (N,)).
+        loss_fn: callable
+            Regression loss applied to the (predicted vm, target vm) pair.
+    return: torch.Tensor
+        Scalar loss tensor; the whole chain is differentiable in `pred[:, 3:9]`.
+    """
+    stress_slice = slice(3, 9)
+    sig6_norm = pred[:, stress_slice]
+    stress_mean = target_stats.mean[stress_slice]
+    stress_std = target_stats.std[stress_slice]
+    sig6_phys = sig6_norm * (stress_std + EPS) + stress_mean
+    pred_vm = compute_von_mises_from_sig6(sig6_phys)
+    return loss_fn(pred_vm, target_vm_physical.reshape(-1))
+
+
+def full_stress_components_plus_vm_loss(pred, target, target_stats, loss_fn, stress_weight,
+                                        target_vm_physical, vm_weight):
+    """
+    Component-wise full-stress loss plus an optional von Mises regularizer that backpropagates through
+    the closed-form vm formula. The two losses are combined linearly with `vm_weight`.
+
+    Args:
+        pred: torch.Tensor
+            Model output of shape (N, 9).
+        target: torch.Tensor
+            Normalized target of shape (N, 9).
+        target_stats: object
+            Target normalization stats.
+        loss_fn: callable
+            Regression loss.
+        stress_weight: float
+            Weight applied to the sig6 component loss.
+        target_vm_physical: torch.Tensor
+            Ground-truth vm in physical units.
+        vm_weight: float
+            Weight applied to the vm regularizer.
+    return: torch.Tensor
+        Combined scalar loss.
+    """
+    base = full_stress_components_loss(pred, target, loss_fn, stress_weight)
+    vm_reg = compute_vm_regularizer_loss(pred, target_stats, target_vm_physical, loss_fn)
+    return base + vm_weight * vm_reg
 
 
 def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer):

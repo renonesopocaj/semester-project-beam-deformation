@@ -18,7 +18,7 @@ from src.gnn.models.models_helpers import build_mlp_d
 class GUNet(torch.nn.Module):
 
     def __init__(self, in_channels, hidden_channels, layer_norm, depth, pool_ratios, sum_res,
-                 enable_embedder, encoder_layers, decoder_layers, dropout_encoder, dropout_head):
+                 enable_embedder, encoder_layers, decoder_layers, dropout_encoder, dropout_head, stress_out_dim):
         """
 
         Args:
@@ -50,9 +50,11 @@ class GUNet(torch.nn.Module):
         self.acc_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=3,
                                     num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
                                     use_softmax=False, dropout=dropout_head)
-        self.mises_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels, out_size=1,
-                                    num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
-                                    use_softmax=False, dropout=dropout_head)
+        # mises_head keeps its historical name; size adapts to target mode (1 = vm, 6 = sig6 stress tensor).
+        self.mises_head = build_mlp_d(in_size=hidden_channels, hidden_size=hidden_channels,
+                                      out_size=int(stress_out_dim),
+                                      num_layers=decoder_layers, layer_norm=layer_norm, use_sigmoid=True,
+                                      use_softmax=False, dropout=dropout_head)
 
     def forward(self, ingraph):
         """

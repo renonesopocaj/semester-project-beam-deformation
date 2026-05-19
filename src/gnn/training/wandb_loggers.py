@@ -79,7 +79,7 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
     wandb_logs["epoch"] = epoch_number
     experiment.log(wandb_logs, commit=True)
 
-def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment, residual_list):
+def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment, residual_list, target_mode):
     """
     Define all W&B metrics with epoch as the x-axis and appropriate summaries.
     Should be called once at the start of training, only on rank 0.
@@ -91,6 +91,9 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment, residual_
         residual_list: set or list of str
             Active residual names (e.g. {"curvature", "volume"}). Only metrics for
             enabled residuals are registered so the W&B dashboard stays clean.
+        target_mode: str
+            "von_mises" or "full_stress"; controls registration of `fullstress_*` metrics, which only
+            exist when training against the 6-component stress target.
     """
     # if not self._has_wandb_logger() or not self.trainer.is_global_zero:
     #     return
@@ -128,12 +131,25 @@ def define_wandb_metrics(has_wandb_logger, is_global_zero, experiment, residual_
     experiment.define_metric("val/acc_z_rel_mae", summary="min") # FIXME: currently not implemented, might renitroduce
     experiment.define_metric("val/stress_rel_mae", summary="min")
     experiment.define_metric("val/rollout_pos_mae", summary="min")
+    # Keep val/overall_abs_mae out of the W&B run summary panel; it belongs only to epoch time series.
+    experiment.define_metric("val/overall_abs_mae", summary="none")
 
     # Final evaluation metrics (trainer.test on val or test)
     for prefix in ["final_test", "final_validation"]:
         experiment.define_metric(f"{prefix}/loss", summary="min")
+        experiment.define_metric(f"{prefix}/overall_abs_mae",     summary="min")
         experiment.define_metric(f"{prefix}/overall_relative_mae", summary="min")
-        experiment.define_metric(f"{prefix}/acc_all_rel_mae", summary="min")
-        experiment.define_metric(f"{prefix}/stress_rel_mae", summary="min")
-        experiment.define_metric(f"{prefix}/rollout_pos_mae", summary="min")
-        experiment.define_metric(f"{prefix}/rollout_volume_mae", summary="min")
+        experiment.define_metric(f"{prefix}/acc_all_abs_mae",     summary="min")
+        experiment.define_metric(f"{prefix}/acc_all_rel_mae",     summary="min")
+        experiment.define_metric(f"{prefix}/stress_abs_mae",      summary="min")
+        experiment.define_metric(f"{prefix}/stress_rel_mae",      summary="min")
+        experiment.define_metric(f"{prefix}/rollout_pos_mae",     summary="min")
+        experiment.define_metric(f"{prefix}/rollout_volume_mae",  summary="min")
+    # Mode-specific full-stress metrics: registered only when the model is trained on the 6-component stress
+    # target, so the dashboard stays clean for legacy vm runs.
+    if str(target_mode) == "full_stress":
+        experiment.define_metric("val/fullstress_abs_mae", summary="min")
+        experiment.define_metric("val/fullstress_rel_mae", summary="min")
+        for prefix in ["final_test", "final_validation"]:
+            experiment.define_metric(f"{prefix}/fullstress_abs_mae", summary="min")
+            experiment.define_metric(f"{prefix}/fullstress_rel_mae", summary="min")

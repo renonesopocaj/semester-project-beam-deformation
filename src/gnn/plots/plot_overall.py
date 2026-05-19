@@ -20,35 +20,47 @@ _COLOR_STRIPE_B = "royalblue"
 
 # Ordered list of (wandb_key, brief_label, group) for the combined train/run_summary histogram.
 # Groups are final_validation (green), final_test (blue), train (gray).
-# The two "train" entries (monitor + final loss) are injected at call time with their actual
-# resolved key; the config below covers only the final_* bars.
+# The single "train" entry (final loss) is injected at call time; the config below covers only the
+# final_* bars. In-training val/ metrics are intentionally excluded from this static summary.
 _COMBINED_FINAL_METRICS_CONFIG = [
-    ("final_validation/rollout_pos_mae",   "roll pos",    "final_validation"),
-    ("final_validation/rollout_volume_mae","roll vol",    "final_validation"),
-    ("final_validation/stress_abs_mae",    "stress abs",  "final_validation"),
-    ("final_validation/stress_rel_mae",    "stress rel",  "final_validation"),
-    ("final_test/rollout_pos_mae",         "roll pos",    "final_test"),
-    ("final_test/rollout_volume_mae",      "roll vol",    "final_test"),
-    ("final_test/stress_abs_mae",          "stress abs",  "final_test"),
-    ("final_test/stress_rel_mae",          "stress rel",  "final_test"),
+    ("final_validation/rollout_pos_mae",    "roll pos",    "final_validation"),
+    ("final_validation/rollout_volume_mae", "roll vol",    "final_validation"),
+    ("final_validation/overall_abs_mae",    "overall abs", "final_validation"),
+    ("final_validation/overall_relative_mae","overall rel","final_validation"),
+    ("final_validation/stress_abs_mae",     "stress abs",  "final_validation"),
+    ("final_validation/stress_rel_mae",     "stress rel",  "final_validation"),
+    # fullstress_* only present when running with target_mode = full_stress; they are silently skipped
+    # by build_combined_run_summary when not in the input scalar dict.
+    ("final_validation/fullstress_abs_mae", "fullstress abs", "final_validation"),
+    ("final_validation/fullstress_rel_mae", "fullstress rel", "final_validation"),
+    ("final_test/rollout_pos_mae",          "roll pos",    "final_test"),
+    ("final_test/rollout_volume_mae",       "roll vol",    "final_test"),
+    ("final_test/overall_abs_mae",          "overall abs", "final_test"),
+    ("final_test/overall_relative_mae",     "overall rel", "final_test"),
+    ("final_test/stress_abs_mae",           "stress abs",  "final_test"),
+    ("final_test/stress_rel_mae",           "stress rel",  "final_test"),
+    ("final_test/fullstress_abs_mae",       "fullstress abs", "final_test"),
+    ("final_test/fullstress_rel_mae",       "fullstress rel", "final_test"),
 ]
 
 _COMBINED_GROUP_PALETTES = {
-    "final_validation": ["#1b4332", "#2d6a4f", "#40916c", "#74c69d"],  # dark-to-light green
-    "final_test":       ["#03045e", "#0077b6", "#00b4d8", "#48cae4"],  # dark-to-light blue
-    "train":            ["#6c757d", "#adb5bd"],  # two gray shades: monitor then final loss
+    # Extended to 8 shades each so the optional fullstress_* bars also have distinct colors when present.
+    "final_validation": ["#1b4332", "#2d6a4f", "#40916c", "#52b788", "#74c69d", "#95d5b2", "#b7e4c7", "#d8f3dc"],
+    "final_test":       ["#03045e", "#023e8a", "#0077b6", "#0096c7", "#00b4d8", "#48cae4", "#90e0ef", "#caf0f8"],
+    "train":            ["#adb5bd"],  # single gray shade for final loss
 }
 
 _COMBINED_GROUP_DISPLAY_NAMES = {
     "final_validation": "final_validation",
     "final_test":       "final_test",
-    "train":            "train (monitor / final loss)",
+    "train":            "train (final loss)",
 }
 
 
 def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                  per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
-                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices):
+                 all_rollout_volume_mae, output_dir, split, selected_trajectory_indices,
+                 per_traj_fullstress_abs_mae, per_traj_fullstress_rel_mae):
     """
     Generates summary bar-chart plots that plot metric vs number of trajectory, for following metrics:
     - all_rollout_pos_mae
@@ -81,6 +93,11 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
             Split name for plot titles (e.g. test, validation).
         selected_trajectory_indices: list[int]
             Trajectory indices highlighted in red (same as in-depth rollout plots).
+        per_traj_fullstress_abs_mae: list[float] or None
+            Optional per-trajectory full-stress absolute MAE (one entry per trajectory). Only provided when
+            preprocess.target_mode = full_stress; rendered as an extra bar chart when not None.
+        per_traj_fullstress_rel_mae: list[float] or None
+            Same as above for relative MAE.
     return: dict
         Nested dict with keys "images" and "videos", each mapping a plot name to its Path.
     """
@@ -172,6 +189,30 @@ def overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_
         selected_trajectory_indices=selected_trajectory_indices,
     )
     paths["images"]["rollout_volume_mae_per_traj"] = p7
+
+    # 8) Fullstress per-trajectory bar charts (only when running with target_mode = full_stress).
+    if per_traj_fullstress_abs_mae is not None:
+        p8 = output_dir / "fullstress_all_abs_mae_noroll_per_traj.png"
+        _plot_sorted_per_traj_histogram(
+            np.asarray(per_traj_fullstress_abs_mae, dtype=float),
+            ylabel="Full Stress Absolute MAE",
+            title=f"Full Stress Absolute MAE per Trajectory (no rollout) averaged over all sig6 channels [{split}]",
+            output_path=p8,
+            x_sort_caption="full stress absolute MAE (ascending)",
+            selected_trajectory_indices=selected_trajectory_indices,
+        )
+        paths["images"]["fullstress_all_abs_mae_noroll_per_traj"] = p8
+    if per_traj_fullstress_rel_mae is not None:
+        p9 = output_dir / "fullstress_rel_mae_noroll_per_traj.png"
+        _plot_sorted_per_traj_histogram(
+            np.asarray(per_traj_fullstress_rel_mae, dtype=float),
+            ylabel="Full Stress Relative MAE",
+            title=f"Full Stress Relative MAE per Trajectory (no rollout) averaged over all sig6 channels [{split}]",
+            output_path=p9,
+            x_sort_caption="full stress relative MAE (ascending)",
+            selected_trajectory_indices=selected_trajectory_indices,
+        )
+        paths["images"]["fullstress_rel_mae_noroll_per_traj"] = p9
 
     return paths  # Return map of artifact names to paths (images only populated here).
 
@@ -278,15 +319,17 @@ def plot_combined_train_run_summary(accumulated_final_scalars, last_monitor_key,
     """
     Single combined histogram logged to W&B under train/run_summary.
     Bars left-to-right:
-      1. final_validation/* (green shades) — rollout pos/vol, stress abs/rel
-      2. final_test/*       (blue shades)  — same four metrics
-      3. scheduler monitor bar (dark gray) — last training epoch value of val/ or train/loss
-      4. train/loss bar        (light gray)— final training epoch loss
+      1. final_validation/* (green shades) — rollout pos/vol, overall abs/rel, stress abs/rel
+      2. final_test/*       (blue shades)  — same six metrics
+      3. train/loss bar     (gray)         — final training epoch loss
+
+    In-training validation metrics (val/* prefix) are intentionally excluded; they belong only
+    to the epoch time-series charts. overall_abs_mae / overall_relative_mae are visible via the
+    final_validation/* and final_test/* bars above.
 
     Metrics absent from accumulated_final_scalars are silently skipped.
-    The monitor bar is omitted when last_monitor_value is nan; the train/loss bar is omitted
-    when last_train_loss is nan. When the monitor key equals "train/loss", the two train bars
-    are labelled differently to distinguish them ("monitor" vs "final loss").
+    The train/loss bar is omitted when last_train_loss is nan.
+    When the monitor key equals "train/loss", that bar is included as the train group entry.
 
     Args:
         accumulated_final_scalars: dict
@@ -294,7 +337,7 @@ def plot_combined_train_run_summary(accumulated_final_scalars, last_monitor_key,
         last_monitor_key: str
             Resolved W&B key used by the scheduler monitor (e.g. "val/overall_relative_mae").
         last_monitor_value: float
-            Last-epoch value of the scheduler monitor metric.
+            Last-epoch value of the scheduler monitor metric (used only when monitor is train/loss).
         last_train_loss: float
             Final training epoch train/loss value.
         output_path: Path
@@ -305,26 +348,23 @@ def plot_combined_train_run_summary(accumulated_final_scalars, last_monitor_key,
     entries = [(key, brief, group) for key, brief, group in _COMBINED_FINAL_METRICS_CONFIG
                if key in accumulated_final_scalars]
 
-    # Determine brief labels for the two train bars, avoiding duplicate labels when both resolve to train/loss
+    # Only include a train bar when the monitor IS train/loss (in-training val/ metrics are excluded).
     monitor_is_train_loss = (last_monitor_key == "train/loss")
-    monitor_brief = "monitor" if monitor_is_train_loss else last_monitor_key.split("/")[-1]
-    train_loss_brief = "final loss" if monitor_is_train_loss else "loss"
-
-    if not math.isnan(last_monitor_value):
-        entries.append((last_monitor_key, monitor_brief, "train"))
-    # Add train/loss bar only when it would not duplicate the monitor bar already added above
+    if monitor_is_train_loss and not math.isnan(last_monitor_value):
+        # Monitor and final-loss are the same key; label them distinctly.
+        entries.append((last_monitor_key, "monitor", "train"))
     if not math.isnan(last_train_loss) and not (monitor_is_train_loss and not math.isnan(last_monitor_value)):
-        entries.append(("train/loss", train_loss_brief, "train"))
+        entries.append(("train/loss", "loss", "train"))
 
     if not entries:
         return
 
-    # Resolve bar values — monitor and final-loss scalars come from dedicated args, not the dict
+    # Resolve bar values — train/loss scalar comes from a dedicated arg, not the dict
     def _value_for(key, brief, group):
-        if group == "train" and key == last_monitor_key and brief == monitor_brief:
-            return last_monitor_value
         if group == "train" and key == "train/loss":
             return last_train_loss
+        if group == "train" and monitor_is_train_loss and key == last_monitor_key and brief == "monitor":
+            return last_monitor_value
         return float(accumulated_final_scalars[key])
 
     positions = []

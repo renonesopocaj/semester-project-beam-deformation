@@ -12,7 +12,7 @@ from src.gnn.training.online_edge_augmentation import OnlineRandomEdgeAugmenter,
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first_num,
                rollout_steps, normalizer, preprocess_cfg, time_discretizer, exp_mises, random_online,
-               rollout_seed_base, rollout_online_tag, traj_idx):
+               rollout_seed_base, rollout_online_tag, traj_idx, target_strategy):
     """
     Perform autoregressive rollout using the model.
     1. Predict --> denormalize prediction --> extract von mises vs acceleration
@@ -45,7 +45,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
         normalizer: Normalizer
             Normalizer
         exp_mises: bool
-            If True, exponentiate the denormalized log-stress prediction to physical stress space.
+            If True, exponentiate the denormalized log-stress prediction to physical stress space (used
+            only in von_mises target mode; the full_stress strategy ignores this flag because vm is
+            computed analytically from sig6).
         random_online: float
             Ratio in [0, 1]; if positive, merges random edges before each forward and rebuilds edge_attr.
         rollout_seed_base: int
@@ -54,6 +56,9 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             Split-specific tag folded into augmentation seeds.
         traj_idx: int
             Trajectory index folded into augmentation seeds.
+        target_strategy: TargetStrategy
+            Strategy that decides how to map `pred_denorm` to vm (and sig6 in full_stress mode), so the
+            rollout code stays mode-agnostic.
 
     Returns:
         true_rollout: list[Data]
@@ -104,13 +109,17 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                 model_in = input_graph
             pred = model(model_in.to(device))
             pred_denorm = normalizer.denormalize(pred, target_stats)
-            # FIXME: hardcoded prediction target
+            # Acceleration is always the first 3 channels regardless of target_mode.
             a_t_pred = pred_denorm[:, 0:3]
-            von_mises_t_pred = torch.exp(pred_denorm[:, 3]) if exp_mises else pred_denorm[:, 3]
-            # Get ground truth (graph_ground_truth) targets
-            # When exp_mises is True the prediction is exponentiated to physical space,
-            # so the ground truth must be converted to the same space for consistent comparison.
+            # Strategy yields {"vm": Tensor(N,), "sig6": Tensor(N,6) or None}; vm is the only quantity needed
+            # for downstream rollout integration, sig6 is stored as an extra rollout field for plots.
+            rollout_fields = target_strategy.rollout_fields_from_pred_denorm(pred_denorm)
+            von_mises_t_pred = rollout_fields["vm"]
+            sig6_t_pred = rollout_fields["sig6"]
+            # Ground-truth aux fields are always saved by the preprocessor, so the rollout-time conversion
+            # uses the same convention as the (legacy) vm path: exp() when exp_mises is True.
             von_mises_true = torch.exp(graph_ground_truth.y_von_mises) if exp_mises else graph_ground_truth.y_von_mises
+            sig6_true = getattr(graph_ground_truth, "y_sig6_t")
             x_true = graph_ground_truth.x_next
             v_true = graph_ground_truth.v_next
             # Input features (previous time step t) to obtain next step t+1
@@ -130,25 +139,23 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
                                             node_feature_builder=node_feature_builder,
                                             edge_feature_builder=edge_feature_builder)
             stored_edge_index = model_in.edge_index if online_augmenter is not None else graph_ground_truth.edge_index
-            # Store rollouts
-            true_rollout.append(Data(x_pos_t=x_true,
-                                     x_vel_t=v_true,
-                                     acceleration=graph_ground_truth.y_acc_t,
-                                     edge_index=stored_edge_index,
-                                     x_element_connectivity=graph_ground_truth.x_element_connectivity,
-                                     rest_pos=rest_pos,
-                                     # note: saved but previous step stress is not used for next step prediction
-                                     von_mises=von_mises_true,
-                                     ))
-            pred_rollout.append(Data(x_pos_t=x_predict_tp1,
-                                     x_vel_t=v_predict_tp1,
-                                     acceleration=a_t_pred,
-                                     edge_index=stored_edge_index,
-                                     x_element_connectivity=graph_ground_truth.x_element_connectivity,
-                                     rest_pos=rest_pos,
-                                     # note: saved but previous step stress is not used for next step prediction
-                                     von_mises=von_mises_t_pred
-                                     ))
+            # Store rollouts (sig6 is only attached when the strategy produces it, i.e. full_stress mode).
+            true_kwargs = {"x_pos_t": x_true, "x_vel_t": v_true,
+                           "acceleration": graph_ground_truth.y_acc_t,
+                           "edge_index": stored_edge_index,
+                           "x_element_connectivity": graph_ground_truth.x_element_connectivity,
+                           "rest_pos": rest_pos, "von_mises": von_mises_true}
+            pred_kwargs = {"x_pos_t": x_predict_tp1, "x_vel_t": v_predict_tp1,
+                           "acceleration": a_t_pred,
+                           "edge_index": stored_edge_index,
+                           "x_element_connectivity": graph_ground_truth.x_element_connectivity,
+                           "rest_pos": rest_pos, "von_mises": von_mises_t_pred}
+            if sig6_t_pred is not None:
+                pred_kwargs["sig6"] = sig6_t_pred
+                if sig6_true is not None:
+                    true_kwargs["sig6"] = sig6_true
+            true_rollout.append(Data(**true_kwargs))
+            pred_rollout.append(Data(**pred_kwargs))
     return true_rollout, pred_rollout
 
 def _build_next_graph(ground_truth_graph, x_predict_tp1, v_predict_tp1, x_t, rest_pos, node_stats, edge_stats,

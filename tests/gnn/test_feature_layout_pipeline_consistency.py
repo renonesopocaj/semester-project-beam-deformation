@@ -158,7 +158,9 @@ def test_feature_layout_coherence_through_preprocess_train_trainer_rollout(monke
         assert int(node_channels) == int(1 + node_features.shape[1])
         assert int(edge_channels) == int(edge_features.shape[1])
 
-        model_obj = train_module.create_model(train_cfg, preprocess_cfg, device, graph_template)
+        target_mode = getattr(preprocess_cfg, "target_mode")
+        stress_out_dim = 6 if target_mode == "full_stress" else 1
+        model_obj = train_module.create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
         assert isinstance(model_obj, _DummyClofModel)
         kwargs = model_obj.kwargs
         assert int(kwargs["split_idx_node"]) == int(split_idx_node_probe)

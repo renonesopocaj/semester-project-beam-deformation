@@ -1,0 +1,7 @@
+# Full-stress training loss: plain weighted MSE on [acc(3), sig6(6)].
+# Requires the processed dataset to have been generated with preprocess.target_mode = "full_stress".
+loss_type: "mse"
+exp_mises: false
+stress_weight: 1.0
+full_stress_loss_mode: "components"
+full_stress_vm_weight: 0.0

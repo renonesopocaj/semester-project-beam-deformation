@@ -1,3 +1,5 @@
 loss_type: "mse"
 exp_mises: true
 stress_weight: 1.0
+full_stress_loss_mode: "components"
+full_stress_vm_weight: 0.0

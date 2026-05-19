@@ -99,7 +99,9 @@ def test_model_param_count():
     graph_template = _make_synthetic_graph_template(node_channels)
     device = torch.device("cpu")
 
-    model = create_model(train_cfg, preprocess_cfg, device, graph_template)
+    target_mode = getattr(preprocess_cfg, "target_mode")
+    stress_out_dim = 6 if target_mode == "full_stress" else 1
+    model = create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
     total_params = sum(p.numel() for p in model.parameters())
 
     print(f"\nModel config '{MODEL_CONFIG_NAME}': {total_params:,} parameters")

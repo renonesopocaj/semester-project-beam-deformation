@@ -92,6 +92,13 @@ class PreprocessYaml:
         self.normalizer_method = flattened_cfg["normalizer_method"]
         self.dataset_type = flattened_cfg["dataset_type"]
         self.time_discretization_method = flattened_cfg["time_discretization_method"]
+        # Target layout: "von_mises" (y=[acc, vm], 4 ch) or "full_stress" (y=[acc, sig6], 9 ch).
+        # Defaults to "von_mises" for backward compatibility with existing processed datasets.
+        self.target_mode = flattened_cfg.get("target_mode")
+        if self.target_mode not in ("von_mises", "full_stress"):
+            raise ValueError(
+                f"Unknown preprocess.target_mode '{self.target_mode}'. Expected 'von_mises' or 'full_stress'."
+            )
         if "edge_channels" in flattened_cfg:
             self.edge_channels = flattened_cfg["edge_channels"]
         if "node_channels" in flattened_cfg:
@@ -230,6 +237,11 @@ class TrainYaml:
         # Exponentiate
         self.exp_mises = flattened_cfg["exp_mises"]
         self.stress_weight = flattened_cfg["stress_weight"]
+        # Full-stress loss flags (no-op when preprocess.target_mode == "von_mises").
+        # "components" -> plain weighted MSE/MAE/Huber on [acc(3), sig6(6)] target.
+        # "components_plus_vm" -> same plus a differentiable VM regularizer of weight `full_stress_vm_weight`.
+        self.full_stress_loss_mode = flattened_cfg.get("full_stress_loss_mode")
+        self.full_stress_vm_weight = float(flattened_cfg.get("full_stress_vm_weight"))
         # Misc
         self.protect_from_oom = flattened_cfg["protect_from_oom"]
         self.activation_checkpointing = flattened_cfg["activation_checkpointing"]

@@ -287,3 +287,52 @@ def compute_von_mises_3d(stress_9):
             + 6.0 * (sxy ** 2 + syz ** 2 + sxz ** 2)
     )
     return torch.sqrt(vm) # (N,)
+
+
+# Column indices used to compress the row-major 3x3 symmetric stress tensor (9 components)
+# into the 6 independent components used everywhere else in the GNN pipeline.
+# Order: [sxx, syy, szz, sxy, sxz, syz].
+SIG6_FROM_SIG9_INDICES = (0, 4, 8, 1, 2, 5)
+
+
+def extract_sig6_from_sig9(stress_9):
+    """
+    Pack the row-major 3x3 symmetric stress tensor into its 6 independent components.
+
+    Args:
+        stress_9: torch.Tensor (N, 9)
+            Full stress tensor as saved by FEM generation (row-major flattened 3x3, with the
+            duplicated off-diagonals in indices 3, 6, 7 ignored).
+    return: torch.Tensor (N, 6)
+        Independent stress components in order [sxx, syy, szz, sxy, sxz, syz].
+    """
+    return stress_9[:, list(SIG6_FROM_SIG9_INDICES)]
+
+
+def compute_von_mises_from_sig6(sig6):
+    """
+    Differentiable von Mises stress from the 6-component packed stress tensor.
+
+    Used both at train time (VM regularizer that backpropagates through the 6-component prediction)
+    and at rollout time (vm-on-prediction in full_stress mode). The closed form is identical to
+    `compute_von_mises_3d` up to the change of indexing.
+
+    Args:
+        sig6: torch.Tensor (N, 6)
+            Packed stress components in order [sxx, syy, szz, sxy, sxz, syz].
+    return: torch.Tensor (N,)
+        von Mises stress for every node.
+    """
+    sxx = sig6[:, 0]
+    syy = sig6[:, 1]
+    szz = sig6[:, 2]
+    sxy = sig6[:, 3]
+    sxz = sig6[:, 4]
+    syz = sig6[:, 5]
+    vm = 0.5 * (
+            (sxx - syy) ** 2
+            + (syy - szz) ** 2
+            + (szz - sxx) ** 2
+            + 6.0 * (sxy ** 2 + syz ** 2 + sxz ** 2)
+    )
+    return torch.sqrt(vm)

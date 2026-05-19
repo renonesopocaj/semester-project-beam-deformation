@@ -9,6 +9,11 @@ device: cpu
 dt: 0.08
 seed: 42
 time_discretization_method: "second_order_central" # "newmark" | "second_order_central"
+# Supervised target layout:
+#   "von_mises"   -> y = [acc(3), vm(1)] of shape (N, 4)  (current default)
+#   "full_stress" -> y = [acc(3), sig6(6)] of shape (N, 9), with sig6 = [sxx, syy, szz, sxy, sxz, syz]
+# Aux per-Data attributes (y_sig6_t, y_von_mises, von_mises_log) are always saved.
+target_mode: "von_mises"
 
 # Edge topology augmentation (offline). Ratios in [0, 1].
 # k_hop: non-negative int adds edges for pairs within that hop distance on the mesh, or "fully connected" for a complete graph (incompatible with random_offline > 0 and add_wall_edges).

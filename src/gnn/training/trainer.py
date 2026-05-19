@@ -17,12 +17,8 @@ from torch.utils.data import Subset
 from typing import Any
 from src.gnn.mesh_numerical_helpers.time_discretizer import create_time_discretizer
 from src.gnn.misc_helpers.misc import (
-    absolute_mae_sum_and_count,
-    compute_mean_absolute_mae,
-    compute_mean_relative_mae,
     human_readable_storage,
     module_param_and_buffer_storage_bytes,
-    relative_mae_sum_and_count,
 )
 from src.gnn.preprocessing.normalizer import create_normalizer
 from src.gnn.preprocessing.stats import StatsModule
@@ -43,9 +39,10 @@ from src.gnn.training.online_edge_augmentation import (
 from src.gnn.training.wandb_loggers import wandb_final_eval_metric_prefix, log_all_wandb_media, define_wandb_metrics
 from torch_geometric.loader import DataLoader
 from src.gnn.mesh_numerical_helpers.compute_volume import rollout_volume_mae
-from src.gnn.training.losses import loss_factory, angle_residual, compute_total_loss_exp_mises, volume_residual
+from src.gnn.training.losses import loss_factory, angle_residual, volume_residual
 from src.gnn.training.rollout import do_rollout
 from src.gnn.training.scheduler import SchedulerWrapper
+from src.gnn.training.target_strategy import create_target_strategy
 from src.gnn.plots.plot_rollout import in_depth_plots
 from src.gnn.plots.plot_overall import overall_plot, plot_combined_train_run_summary
 from src.gnn.plots.plot_train import plot_final_parameter_distributions
@@ -71,6 +68,9 @@ class LitModule(L.LightningModule):
     # Exp mises
     exp_mises: bool
     stress_weight: float
+    # Target strategy (von_mises vs full_stress)
+    target_strategy: Any
+    target_mode: str
     # Else
     log_test_media: bool
     node_stats: Any # Stats?
@@ -129,6 +129,9 @@ class LitModule(L.LightningModule):
         self.loss_fn = loss_factory(loss_type)
         self.exp_mises = train_cfg.exp_mises
         self.stress_weight = train_cfg.stress_weight
+        # The target strategy encapsulates everything that differs between vm and full_stress training.
+        self.target_mode = getattr(preprocess_cfg, "target_mode")
+        self.target_strategy = create_target_strategy(self.target_mode, train_cfg)
         self.residual_list = set(train_cfg.residual_list)
         supported_residuals = {"curvature", "volume"}
         unknown_residuals = sorted(self.residual_list.difference(supported_residuals))
@@ -224,7 +227,7 @@ class LitModule(L.LightningModule):
 
         # Define all metrics with epoch as x-axis
         define_wandb_metrics(self._has_wandb_logger(), self.trainer.is_global_zero, self.logger.experiment,
-                             self.residual_list)
+                             self.residual_list, self.target_mode)
         # Keep strict epoch-based step semantics: do not emit per-batch watch logs.
         if self.enable_wandb_watch:
             print("W&B watch disabled: enforcing one W&B step per epoch.")
@@ -594,17 +597,14 @@ class LitModule(L.LightningModule):
 
         Args:
             pred: torch.Tensor
-                Model prediction with shape `(num_nodes, 4)`.
+                Model prediction with shape `(num_nodes, target_dim)`.
             target: torch.Tensor
-                Ground-truth tensor with shape `(num_nodes, 4)`.
+                Ground-truth tensor with shape `(num_nodes, target_dim)`.
         return: dict
             Dictionary with the minimal training metrics.
         """
         metrics = {}
-        if self.exp_mises:
-            total_loss = compute_total_loss_exp_mises(pred, target, self.target_stats, self.loss_fn, self.stress_weight)
-        else:
-            total_loss = self.loss_fn(pred, target)
+        total_loss = self.target_strategy.compute_total_loss(pred, target, self.target_stats, self.loss_fn, batch)
         if "curvature" in self.residual_list:
             curvature_residual = angle_residual(pred, batch, self.target_stats, self.dt, self.theta_max,
                                                 self.time_discretizer)
@@ -618,62 +618,53 @@ class LitModule(L.LightningModule):
         metrics["train/loss"] = total_loss
         return metrics
 
-    def _collect_val_batch_metrics_noroll(self, pred, target, prefix):
+    def _collect_val_batch_metrics_noroll(self, pred, target, batch, prefix):
         """
-        Collects the richer evaluation metrics used for validation.
+        Collects the richer evaluation metrics used for validation. Delegates to the target strategy for
+        all stress-related keys so the same code path works in both vm and full_stress modes.
 
         Args:
             pred: torch.Tensor
-                Model prediction with shape `(num_nodes, 4)`.
             target: torch.Tensor
-                Ground-truth tensor with shape `(num_nodes, 4)`.
+            batch: torch_geometric.data.Batch
+                Batch carrying aux fields (used by FullStressStrategy for vm-derived metrics).
             prefix: str
-                Metric namespace prefix, for example `val`, `test`, or `validation`.
         return: dict
-            Dictionary with evaluation metrics.
+            Dictionary with evaluation metrics (subset compared to test_step for performance).
         """
-        pred_acc = pred[:, 0:3].contiguous()
-        target_acc = target[:, 0:3].contiguous()
-        pred_stress = pred[:, 3].contiguous()
-        target_stress = target[:, 3].contiguous()
+        full = self.target_strategy.step_metrics(pred, target, prefix, self.target_stats, batch)
+        # Validation step intentionally drops the relative-MAE for acc/stress to save compute; keep the
+        # legacy subset and the new fullstress_* keys when present (full_stress mode).
+        wanted_suffixes = {"overall_relative_mae", "overall_abs_mae", "acc_all_abs_mae", "stress_abs_mae",
+                           "fullstress_abs_mae"}
+        metrics = {}
+        for key, value in full.items():
+            suffix = key.split("/", 1)[1] if "/" in key else key
+            if suffix in wanted_suffixes:
+                metrics[key] = value
         if self.profile_loss_stress_vs_acceleration:
-            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-                       f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
-                       f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
-                       f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress),
-                       f"{prefix}/acc_all_loss": self.loss_fn(pred_acc, target_acc),
-                       f"{prefix}/stress_loss": self.loss_fn(pred_stress, target_stress)}
-        else:
-            metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-                       f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
-                       f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
-                       f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress)}
+            pred_acc = pred[:, 0:3].contiguous()
+            target_acc = target[:, 0:3].contiguous()
+            metrics[f"{prefix}/acc_all_loss"] = self.loss_fn(pred_acc, target_acc)
+            stress_slice = self.target_strategy.stress_slice
+            metrics[f"{prefix}/stress_loss"] = self.loss_fn(pred[:, stress_slice], target[:, stress_slice])
         return metrics
 
     def _noroll_eval_metric_weights(self, pred, metric_names):
         """
         Lightning uses logged value times weight summed over steps, divided by sum of weights,
         so each weight must be the tensor numel the corresponding batch scalar is a mean over.
+        Delegated to the strategy to keep stress weights mode-aware.
 
         Args:
             pred: torch.Tensor
-                Model output `(num_nodes, 4)` for the batch.
+                Model output `(num_nodes, target_dim)` for the batch.
             metric_names: list[str]
                 Keys present in the metrics dict being logged.
         return: dict
             metric_name -> positive int weight (element count).
         """
-        weights = {}
-        for name in metric_names:
-            if name.endswith("overall_relative_mae") or name.endswith("overall_abs_mae"):
-                weights[name] = int(pred.numel())
-            elif name.endswith("acc_all_rel_mae") or name.endswith("acc_all_abs_mae") or name.endswith("acc_all_loss"):
-                weights[name] = int(pred[:, 0:3].numel())
-            elif name.endswith("stress_rel_mae") or name.endswith("stress_abs_mae") or name.endswith("stress_loss"):
-                weights[name] = int(pred[:, 3].numel())
-            else:
-                raise ValueError("Unknown metric for node-weighted logging: %s" % name)
-        return weights
+        return self.target_strategy.noroll_metric_weights(pred, metric_names)
 
     def _train_loss_log_weight(self, batch, pred):
         """
@@ -812,7 +803,7 @@ class LitModule(L.LightningModule):
         batch = self._with_online_random_edges_eval_step(batch, batch_idx, SPLIT_VAL_DURING_FIT)
         pred = self(batch)
         target = batch.y
-        metrics = self._collect_val_batch_metrics_noroll(pred, target, "val")
+        metrics = self._collect_val_batch_metrics_noroll(pred, target, batch, "val")
         mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
         prog_bar_keys = ["val/overall_relative_mae", "val/overall_abs_mae"]
         if self.val_monitor_metric == "overall_abs_mae":
@@ -936,7 +927,7 @@ class LitModule(L.LightningModule):
         # Helper to get prefix
         wb_prefix = wandb_final_eval_metric_prefix(self.eval_split_name)
         # collects not rollout metrics overall_relative_mae, acc_all_rel_mae, stress_rel_mae
-        metrics = self._collect_test_batch_metrics_noroll(pred, target, wb_prefix)
+        metrics = self._collect_test_batch_metrics_noroll(pred, target, batch, wb_prefix)
         mw = self._noroll_eval_metric_weights(pred, list(metrics.keys()))
         prog_bar_keys_test = [f"{wb_prefix}/overall_relative_mae", f"{wb_prefix}/overall_abs_mae"]
         if self.val_monitor_metric == "overall_abs_mae":
@@ -962,6 +953,10 @@ class LitModule(L.LightningModule):
         per_traj_acc_abs_mae = per_traj_metrics["acc_abs_mae"]
         per_traj_stress_abs_mae = per_traj_metrics["stress_abs_mae"]
         per_traj_overall_abs_mae = per_traj_metrics["overall_abs_mae"]
+        # full_stress mode contributes two extra lists; pass them through to overall_plot so the new
+        # per-traj bar charts get rendered without touching the vm-mode code path.
+        per_traj_fullstress_abs_mae = per_traj_metrics.get("fullstress_abs_mae")
+        per_traj_fullstress_rel_mae = per_traj_metrics.get("fullstress_rel_mae")
         # 2. Run rollout for every trajectory, collect results, and then log
         all_true_rollouts, all_pred_rollouts, all_rollout_pos_mae, all_rollout_volume_mae = {}, {}, [], []
         num_trajectories = self.test_dataset.num_trajectories
@@ -1022,7 +1017,8 @@ class LitModule(L.LightningModule):
         overall_plot_paths = overall_plot(all_rollout_pos_mae, per_traj_acc_rel_mae, per_traj_stress_rel_mae,
                                           per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae,
                                           all_rollout_volume_mae, overall_output_dir,
-                                          self.eval_split_name, selected)
+                                          self.eval_split_name, selected,
+                                          per_traj_fullstress_abs_mae, per_traj_fullstress_rel_mae)
         # 5. Generate in-depth plots for selected trajectories only
         per_traj_paths = {}
         for traj_idx in selected:
@@ -1055,32 +1051,24 @@ class LitModule(L.LightningModule):
                     commit=True,
                 )
 
-    def _collect_test_batch_metrics_noroll(self, pred, target, prefix):
+    def _collect_test_batch_metrics_noroll(self, pred, target, batch, prefix):
         """
-        Collects the evaluation metrics not rollout (input, target) during test.
+        Collects the evaluation metrics not rollout (input, target) during test, delegating to the target
+        strategy for mode-aware stress / fullstress metrics.
 
         Args:
             pred: torch.Tensor
-                Model prediction with shape `(num_nodes, 4)`.
+                Model prediction with shape `(num_nodes, target_dim)`.
             target: torch.Tensor
-                Ground-truth tensor with shape `(num_nodes, 4)`.
+                Ground-truth tensor with shape `(num_nodes, target_dim)`.
+            batch: torch_geometric.data.Batch
+                Batch carrying aux fields used by the strategy (e.g. y_von_mises).
             prefix: str
                 Metric namespace prefix, for example `val`, `test`, or `validation`.
         return: dict
             Dictionary with evaluation metrics.
         """
-        # FIXME: hardcoded pred
-        pred_acc = pred[:, 0:3].contiguous()
-        target_acc = target[:, 0:3].contiguous()
-        pred_stress = pred[:, 3].contiguous()
-        target_stress = target[:, 3].contiguous()
-        metrics = {f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
-                   f"{prefix}/overall_abs_mae": compute_mean_absolute_mae(pred, target),
-                   f"{prefix}/acc_all_rel_mae": compute_mean_relative_mae(pred_acc, target_acc),
-                   f"{prefix}/acc_all_abs_mae": compute_mean_absolute_mae(pred_acc, target_acc),
-                   f"{prefix}/stress_rel_mae": compute_mean_relative_mae(pred_stress, target_stress),
-                   f"{prefix}/stress_abs_mae": compute_mean_absolute_mae(pred_stress, target_stress)}
-        return metrics
+        return self.target_strategy.step_metrics(pred, target, prefix, self.target_stats, batch)
 
     def _run_rollout(self, traj_loader, rollout_steps, rollout_online_tag, traj_idx):
         """
@@ -1111,7 +1099,8 @@ class LitModule(L.LightningModule):
                                                 random_online=self.random_online,
                                                 rollout_seed_base=self.train_seed,
                                                 rollout_online_tag=rollout_online_tag,
-                                                traj_idx=traj_idx)
+                                                traj_idx=traj_idx,
+                                                target_strategy=self.target_strategy)
         rollout_pos_mae, n_pos = self._rollout_position_mae(true_rollout, pred_rollout)
         return true_rollout, pred_rollout, rollout_pos_mae, n_pos
 
@@ -1142,64 +1131,32 @@ class LitModule(L.LightningModule):
     def _compute_per_trajectory_noroll_metrics(self, dataset):
         """
         Runs one-step (non-autoregressive) inference on every trajectory and returns per-trajectory
-        relative and absolute MAE for acceleration, stress, and overall predictions.
+        metrics aggregated through the target strategy. Always returns the legacy keys
+        (acc_rel_mae, stress_rel_mae, acc_abs_mae, stress_abs_mae, overall_abs_mae); in full_stress
+        mode also returns fullstress_rel_mae and fullstress_abs_mae.
 
         Args:
             dataset: InMemoryTimeStepDataset
                 Dataset with trajectory_boundaries.
         return: dict
-            Keys: acc_rel_mae, stress_rel_mae, acc_abs_mae, stress_abs_mae, overall_abs_mae.
-            Each value is a list[float] with one entry per trajectory.
+            metric_name -> list[float] with one entry per trajectory.
         """
-        per_traj_acc_rel_mae, per_traj_stress_rel_mae = [], []
-        per_traj_acc_abs_mae, per_traj_stress_abs_mae, per_traj_overall_abs_mae = [], [], []
+        out = {}
         self.eval()
         with torch.no_grad():
             for traj_idx in range(dataset.num_trajectories):
                 rollout_steps = self._rollout_steps_for_trajectory(traj_idx)
                 max_timesteps = rollout_steps if rollout_steps != 999999 else None
                 traj_loader = self._get_trajectory_loader(dataset, traj_idx, max_timesteps=max_timesteps)
-                acc_rel_sum, acc_rel_cnt = 0.0, 0.0
-                stress_rel_sum, stress_rel_cnt = 0.0, 0.0
-                acc_abs_sum, acc_abs_cnt = 0.0, 0.0
-                stress_abs_sum, stress_abs_cnt = 0.0, 0.0
-                overall_abs_sum, overall_abs_cnt = 0.0, 0.0
+                state = self.target_strategy.per_traj_noroll_init()
                 for inner_batch_idx, batch in enumerate(traj_loader):
                     batch = batch.to(self.device)
                     batch = self._with_online_random_edges_noroll(batch, traj_idx, inner_batch_idx)
                     pred = self(batch)
                     target = batch.y
-                    pred_acc = pred[:, 0:3].contiguous()
-                    target_acc = target[:, 0:3].contiguous()
-                    pred_stress = pred[:, 3].contiguous()
-                    target_stress = target[:, 3].contiguous()
-                    s_a, c_a = relative_mae_sum_and_count(pred_acc, target_acc)
-                    s_s, c_s = relative_mae_sum_and_count(pred_stress, target_stress)
-                    sa_a, ca_a = absolute_mae_sum_and_count(pred_acc, target_acc)
-                    sa_s, ca_s = absolute_mae_sum_and_count(pred_stress, target_stress)
-                    sa_o, ca_o = absolute_mae_sum_and_count(pred, target)
-                    acc_rel_sum += float(s_a.detach().item())
-                    acc_rel_cnt += float(c_a.detach().item())
-                    stress_rel_sum += float(s_s.detach().item())
-                    stress_rel_cnt += float(c_s.detach().item())
-                    acc_abs_sum += float(sa_a.detach().item())
-                    acc_abs_cnt += float(ca_a.detach().item())
-                    stress_abs_sum += float(sa_s.detach().item())
-                    stress_abs_cnt += float(ca_s.detach().item())
-                    overall_abs_sum += float(sa_o.detach().item())
-                    overall_abs_cnt += float(ca_o.detach().item())
-                per_traj_acc_rel_mae.append(acc_rel_sum / acc_rel_cnt if acc_rel_cnt > 0 else 0.0)
-                per_traj_stress_rel_mae.append(stress_rel_sum / stress_rel_cnt if stress_rel_cnt > 0 else 0.0)
-                per_traj_acc_abs_mae.append(acc_abs_sum / acc_abs_cnt if acc_abs_cnt > 0 else 0.0)
-                per_traj_stress_abs_mae.append(stress_abs_sum / stress_abs_cnt if stress_abs_cnt > 0 else 0.0)
-                per_traj_overall_abs_mae.append(overall_abs_sum / overall_abs_cnt if overall_abs_cnt > 0 else 0.0)
-        return {
-            "acc_rel_mae": per_traj_acc_rel_mae,
-            "stress_rel_mae": per_traj_stress_rel_mae,
-            "acc_abs_mae": per_traj_acc_abs_mae,
-            "stress_abs_mae": per_traj_stress_abs_mae,
-            "overall_abs_mae": per_traj_overall_abs_mae,
-        }
+                    self.target_strategy.per_traj_noroll_accumulate(state, pred, target, batch, self.target_stats)
+                self.target_strategy.per_traj_noroll_finalize(state, out)
+        return out
 
     def _log_plot_roll_single_traj(self, true_rollout, pred_rollout, traj_idx):
         """
@@ -1221,5 +1178,5 @@ class LitModule(L.LightningModule):
         output_dir = self.model_evaluation_dir / self.eval_split_name / f"traj{traj_idx}"
         traj_meta = self.test_traj_metadata.get(traj_idx)
         paths = in_depth_plots(true_rollout, pred_rollout, output_dir, traj_split_name, filename_prefix,
-                               self.plot_diagnostics_advanced, traj_meta)
+                               self.plot_diagnostics_advanced, traj_meta, self.target_mode)
         return paths

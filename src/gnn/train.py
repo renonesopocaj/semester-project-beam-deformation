@@ -205,7 +205,12 @@ def maybe_compile_model(model, train_cfg, protect_from_oom):
         compiled_model = torch.compile(model, mode=compile_mode, fullgraph=True)
     return compiled_model
 
-def create_model(train_cfg, preprocess_cfg, device, graph_template):
+def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim):
+    """
+    Build the requested model with the correct stress head width. `stress_out_dim` is 1 for the legacy
+    von_mises target (single vm scalar) and 6 for the full_stress target (sig6 tensor). ClofNet is left
+    intentionally unchanged for this iteration.
+    """
     if train_cfg.model_name == "MGN":
         # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
         # num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
@@ -220,7 +225,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                             num_layers_heads=train_cfg.num_layers_heads,
                             num_layers_encoder=train_cfg.num_layers_encoder, dropout_encoder=train_cfg.dropout_encoder,
                             dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
-                            activation_checkpointing=train_cfg.activation_checkpointing)
+                            activation_checkpointing=train_cfg.activation_checkpointing,
+                            stress_out_dim=stress_out_dim)
 
     elif train_cfg.model_name == "clofnet":
         _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
@@ -268,6 +274,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             "n_layers_node_mlp": int(train_cfg.n_layers_node_mlp),
             "n_layers_message_mlp": int(train_cfg.n_layers_message_mlp),
             "eps_mode": str(train_cfg.eps_mode),
+            "normalize_delta_a": bool(train_cfg.normalize_delta_a),
         }
         variant = str(train_cfg.clofnet_variant).lower()
         if variant == "recurrent":
@@ -285,11 +292,11 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
                      pool_ratios=train_cfg.pool_ratios, sum_res=train_cfg.sum_res,
                      enable_embedder=train_cfg.enable_embedder, encoder_layers=train_cfg.encoder_layers,
                      decoder_layers=train_cfg.decoder_layers, dropout_encoder=train_cfg.dropout_encoder,
-                     dropout_head=train_cfg.dropout_head)
+                     dropout_head=train_cfg.dropout_head, stress_out_dim=stress_out_dim)
     elif train_cfg.model_name == "magnet":
-        return MAGNet(preprocess_cfg.node_channels, 4, train_cfg.hidden_channels, train_cfg.num_poolings,
-                      train_cfg.layers_per_level, train_cfg.window_size, train_cfg.pool_seed, train_cfg.pool_aggr,
-                      train_cfg.activation, graph_template)
+        return MAGNet(preprocess_cfg.node_channels, 3 + int(stress_out_dim), train_cfg.hidden_channels,
+                      train_cfg.num_poolings, train_cfg.layers_per_level, train_cfg.window_size,
+                      train_cfg.pool_seed, train_cfg.pool_aggr, train_cfg.activation, graph_template)
     elif train_cfg.model_name == "transolver":
         return TransolverNet(
             graph_template,
@@ -304,6 +311,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             train_cfg.transolver_slice_num,
             train_cfg.transolver_ref,
             train_cfg.transolver_unified_pos,
+            stress_out_dim,
         )
     elif train_cfg.model_name == "gatv2":
         return GATv2Net(
@@ -315,7 +323,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             layer_norm_encoder=train_cfg.layer_norm_encoder, layer_norm_processor=train_cfg.layer_norm_processor,
             layer_norm_decoder=train_cfg.layer_norm_decoder, num_layers_encoder=train_cfg.num_layers_encoder,
             num_layers_heads=train_cfg.num_layers_heads, dropout_encoder=train_cfg.dropout_encoder,
-            dropout_head=train_cfg.dropout_head,
+            dropout_head=train_cfg.dropout_head, stress_out_dim=stress_out_dim,
         )
     elif train_cfg.model_name == "gatmgn":
         return GatMGNNet(
@@ -329,6 +337,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             layer_norm_decoder=train_cfg.layer_norm_decoder, num_layers_encoder=train_cfg.num_layers_encoder,
             num_layers_heads=train_cfg.num_layers_heads, dropout_encoder=train_cfg.dropout_encoder,
             dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
+            stress_out_dim=stress_out_dim,
         )
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
@@ -420,7 +429,10 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
 
     # ========================= Model and Lightning wrapper =================
     #torch.manual_seed(cfg.seed)
-    model_eager = create_model(train_cfg, preprocess_cfg, device, peek_batch)
+    # Decide stress head width from the preprocess-side target_mode (1 = vm scalar, 6 = full sig6 tensor).
+    target_mode = getattr(preprocess_cfg, "target_mode", "von_mises")
+    stress_out_dim = 6 if target_mode == "full_stress" else 1
+    model_eager = create_model(train_cfg, preprocess_cfg, device, peek_batch, stress_out_dim)
     del peek_batch
     eager_model_bytes = module_param_and_buffer_storage_bytes(model_eager)
     print("\n\nModel info:")
@@ -508,6 +520,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 limit_train_batches=5, limit_val_batches=5, limit_test_batches=5,
                                 accelerator=accelerator, devices=train_cfg.devices,
                                 precision=trainer_precision,
+                                gradient_clip_val=1.0,
                                 profiler=profiler)
     elif train_cfg.training_type == "slurm" and train_cfg.devices != 1:
         if not torch.cuda.is_available():
@@ -521,6 +534,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 strategy="ddp",
                                 # strategy=DDPStrategy(find_unused_parameters=False, start_method="fork"),
                                 precision=trainer_precision,
+                                gradient_clip_val=1.0,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "slurm" and train_cfg.devices == 1:
         if not torch.cuda.is_available():
@@ -532,6 +546,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 accelerator=accelerator,
                                 devices=train_cfg.devices, num_nodes=1,
                                 precision=trainer_precision,
+                                gradient_clip_val=1.0,
                                 profiler=profiler) # device stuff
     elif train_cfg.training_type == "default":
         fit_trainer = L.Trainer(max_epochs=train_cfg.total_epochs, logger=logger,
@@ -541,6 +556,7 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
                                 accelerator=accelerator,
                                 devices=train_cfg.devices,
                                 precision=trainer_precision,
+                                gradient_clip_val=1.0,
                                 profiler=profiler)
     else:
         raise NotImplementedError(f"training_type={train_cfg.training_type}")
