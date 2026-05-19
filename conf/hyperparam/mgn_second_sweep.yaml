@@ -26,7 +26,7 @@ sweeps:
   - name: mgn
     fixed_overrides:
       - noise=noise_per_epoch_noprev
-      - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/large"
+      - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/medium"
     options:
       - label: mgn_H256_L15
         overrides:
@@ -40,6 +40,15 @@ sweeps:
       - label: mgn_H400_L8
         overrides:
           - model=mgn_H400_L8
+      - label: mgn_H192_L15
+        overrides:
+          - model=mgn_H192_L15
+      - label: mgn_H128_L20
+        overrides:
+          - model=mgn_H128_L20
+      - label: mgn_H128_L15
+        overrides:
+          - model=mgn_H128_L15
 
 
 hydra:

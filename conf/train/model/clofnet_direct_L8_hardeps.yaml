@@ -7,7 +7,7 @@ recurrent: true
 enable_norm_diff: true
 tanh: false
 attention_enable: true
-clamp_enable: false
+clamp_enable: true
 out_coord_mlp_dim: 3
 embedding_edge_dim: 256
 clofnet_activation: "silu"

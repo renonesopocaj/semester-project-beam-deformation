@@ -23,15 +23,15 @@ sweeps:
       - label: clofnet_rec_L8_gaussian_hardeps
         overrides:
           - model=clofnet_rec_L8_gaussian_hardeps
-      - label: clofnet_rec_L8_gaussian_softeps
-        overrides:
-          - model=clofnet_rec_L8_gaussian_softeps
       - label: clofnet_rec_L8_hardeps
         overrides:
           - model=clofnet_rec_L8_hardeps
       - label: clofnet_rec_L8_softeps
         overrides:
           - model=clofnet_rec_L8_softeps
+      - label: clofnet_rec_L8_gaussian_softeps
+        overrides:
+          - model=clofnet_rec_L8_gaussian_softeps
 
 
 hydra:
