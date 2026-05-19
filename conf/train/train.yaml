@@ -11,16 +11,18 @@ defaults:
   - devices: one_gpu
   - _self_
 
-seed: 42
+initial_lr: 1e-3
+optimizer: adam
+target_mode: "von_mises" # von_mises, full_stress
 # Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
 # not already adjacent (undirected) on the current graph; merged with existing edge_index.
 random_online: 0.0
-# Used when hyperparam overrides reference ${base_dir} with this compose root.
-base_dir: dataset
+# Various directory, i/o, ecc
+seed: 42
+base_dir: dataset # Used when hyperparam overrides reference ${base_dir} with this compose root.
 use_wandb: true
 wandb_init_timeout: 300
-initial_lr: 1e-3
-optimizer: adam
+# Computational
 protect_from_oom: True # disables cuda reduce overhead which causes oom errors
 
 hydra:
