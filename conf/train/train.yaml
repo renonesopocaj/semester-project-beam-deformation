@@ -18,6 +18,7 @@ random_online: 0.0
 # Used when hyperparam overrides reference ${base_dir} with this compose root.
 base_dir: dataset
 use_wandb: true
+wandb_init_timeout: 300
 initial_lr: 1e-3
 optimizer: adam
 protect_from_oom: True # disables cuda reduce overhead which causes oom errors

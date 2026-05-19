@@ -23,6 +23,7 @@ echo "STDERR file: $(pwd)/slurm-${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
+export WANDB_INIT_TIMEOUT=300
 mkdir -p saved_models
 
 srun python -m src.gnn.hyperparam_opt -cn mgn_largedata_sweep

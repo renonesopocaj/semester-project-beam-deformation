@@ -25,6 +25,7 @@ env | grep -E '^(SBATCH|SLURM)_MEM_PER_(CPU|GPU|NODE)=' || true
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate semesterproject
+export WANDB_INIT_TIMEOUT=300
 mkdir -p saved_models
 
 srun python -m src.gnn.hyperparam_opt -cn transolver_sweep

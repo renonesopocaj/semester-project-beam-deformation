@@ -377,7 +377,8 @@ def wandb_summary_log_outputs(study_name_str, plot_paths, file_paths, wandb_proj
     wandb_mode = "offline" if wandb_offline_flag else "online"
     artifact_name = "%s_hyperparam_outputs" % _safe_wandb_name(study_name_str, "hyperparam_study")
     with wb_sdk.init(project=wandb_project, name=run_name_here, group=study_name_str, reinit=True,
-                     mode=wandb_mode) as run:
+                     mode=wandb_mode,
+                     settings=wb_sdk.Settings(init_timeout=300)) as run:
         image_payload = {}
         pp = 0
         while pp < len(plot_paths):

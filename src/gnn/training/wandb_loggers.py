@@ -64,7 +64,7 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
             wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Image(str(path))
     for name, path in overall_plot_paths.get("videos", {}).items():
         if Path(path).exists():
-            wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Video(str(path), fps=4, format="gif")
+            wandb_logs[f"{overall_root}/overall/{name}"] = wandb.Video(str(path), format="gif")
     # 2. Log per-trajectory in-depth plots (one W&B folder per trajectory index)
     for traj_idx, traj_paths in per_traj_in_depth_paths.items():
         traj_prefix = f"{traj_root}/{traj_idx}"
@@ -73,7 +73,7 @@ def log_all_wandb_media(overall_plot_paths, per_traj_in_depth_paths, eval_split_
                 wandb_logs[f"{traj_prefix}/{name}"] = wandb.Image(str(path))
         for name, path in traj_paths.get("videos", {}).items():
             if Path(path).exists():
-                wandb_logs[f"{traj_prefix}/{name}"] = wandb.Video(str(path), fps=4, format="gif")
+                wandb_logs[f"{traj_prefix}/{name}"] = wandb.Video(str(path), format="gif")
     if len(wandb_logs) == 0:
         return
     wandb_logs["epoch"] = epoch_number

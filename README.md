@@ -14,6 +14,7 @@ semester-project/
 ├── .git/
 ├── conf/
 │   ├── fem_generation/
+│   ├── hyperparam/        ← one yaml per study (e.g. force_geom_sweeps.yaml)
 │   ├── preprocess/
 │   └── train/
 ├── old_venv/
@@ -56,6 +57,7 @@ semester-project/
 │       ├── training/
 │       │   ├── __init__.py
 │       │   ├── checkpointing.py
+│       │   ├── hyperparam_opt_helpers.py
 │       │   ├── rollout.py
 │       │   ├── scheduler.py
 │       │   └── trainer.py
@@ -65,9 +67,24 @@ semester-project/
 │       │   ├── plot_rollout.py
 │       │   └── train_plots.py
 │       ├── eda.py
+│       ├── hyperparam_opt.py
 │       ├── preprocess.py
 │       ├── train.py
 │       └── validate.py
+├── run_feat_sweep.sh
+├── run_force_geom_sweep.sh
+├── run_gunet_sweep.sh
+├── run_loss_mgn_sweep.sh
+├── run_mgn_largedata_sweep.sh
+├── run_mgn_sweep.sh
+├── run_monitor_metric_sweep.sh
+├── run_noise_sweep.sh
+├── run_residual_sweep.sh
+├── run_transolver_sweep.sh
+├── run_1gpu.sh
+├── run_2gpu.sh
+├── run_fem_gen.sh
+├── run_preprocessing.sh
 ├── .gitignore
 ├── env_nodep_pip.yml
 ├── environment.yml
@@ -178,6 +195,7 @@ semester-project/
 ### `src/gnn/`
 
 - `eda.py`: exploratory data analysis entrypoint for processed graph features and normalization comparisons.
+- `hyperparam_opt.py`: Optuna-based hyperparameter sweep driver; reads a `conf/hyperparam/<study>.yaml`, runs sequential grid sweeps, carries the winning overrides between stages, and saves per-trial records and summary plots.
 - `preprocess.py`: main preprocessing script that converts raw graph trajectories into normalized train/val/test graph samples.
 - `train.py`: main training entrypoint using Hydra and Lightning; builds datasets, model, optimizer, trainer, and final evaluation.
 - `validate.py`: standalone saved-model evaluation / validation script.
@@ -229,6 +247,7 @@ semester-project/
 
 - `__init__.py`: package marker.
 - `checkpointing.py`: helper utilities related to model checkpoint management.
+- `hyperparam_opt_helpers.py`: helper functions for the sweep driver — Pareto and summary plots, trial JSON serialization, and the post-sweep W&B summary run.
 - `rollout.py`: autoregressive rollout logic for evaluating the trained model over time.
 - `scheduler.py`: scheduler wrappers and factory logic.
 - `trainer.py`: Lightning module implementation; defines training, validation, testing, rollout evaluation, and media logging.
@@ -250,9 +269,9 @@ semester-project/
 
 ## Hyperparameter optimization outputs
 
-### hyperparam opt sweep order and overrides
+### Sweep order and carried overrides
 
-Sequential sweeps in `conf/hyperparam/sweeps.yaml` are run in list order by `src/gnn/hyperparam_opt.py`. After each sweep stage, only the winning **option** overrides (the `overrides` under the best grid point) are prepended for later stages; each stage’s `fixed_overrides` apply only within that stage and are not carried forward.
+Each study lives in its own YAML under `conf/hyperparam/` (e.g. `force_geom_sweeps.yaml`, `mgn_sweep.yaml`). That file is selected with `-cn <study>` on the command line. `src/gnn/hyperparam_opt.py` reads the `sweeps:` list in that file and runs each stage in order. After each stage, only the winning **option** overrides (the `overrides` under the best grid point) are prepended for later stages; each stage's `fixed_overrides` apply only within that stage and are not carried forward.
 
 For a two-stage YAML like the following pattern (noise fixed per stage, `residuals` swept as options):
 

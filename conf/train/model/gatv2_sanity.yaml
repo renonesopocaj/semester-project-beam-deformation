@@ -1,0 +1,16 @@
+model_name: "gatv2"
+hidden_dim: 64
+num_layers: 2
+heads: 2
+dropout_attn: 0.0
+negative_slope: 0.2
+add_self_loops: true
+share_weights: false
+residual: false
+layer_norm_encoder: true
+layer_norm_processor: true
+layer_norm_decoder: false
+num_layers_encoder: 2
+num_layers_heads: 2
+dropout_encoder: 0.0
+dropout_head: 0.0

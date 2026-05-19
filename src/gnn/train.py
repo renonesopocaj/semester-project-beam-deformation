@@ -25,6 +25,8 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf
 from torch_geometric.loader import DataLoader
 from src.gnn.models.gunet.gunet import GUNet
+from src.gnn.models.gatv2.gatv2 import GATv2Net
+from src.gnn.models.gatmgn.gatmgn import GatMGNNet
 from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.models.transolver.transolvernet import TransolverNet
@@ -303,6 +305,31 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template):
             train_cfg.transolver_ref,
             train_cfg.transolver_unified_pos,
         )
+    elif train_cfg.model_name == "gatv2":
+        return GATv2Net(
+            node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
+            hidden_dim=train_cfg.hidden_dim, num_layers=train_cfg.num_layers,
+            heads=train_cfg.heads, dropout_attn=train_cfg.dropout_attn,
+            negative_slope=train_cfg.negative_slope, add_self_loops=train_cfg.add_self_loops,
+            share_weights=train_cfg.share_weights, residual=train_cfg.residual,
+            layer_norm_encoder=train_cfg.layer_norm_encoder, layer_norm_processor=train_cfg.layer_norm_processor,
+            layer_norm_decoder=train_cfg.layer_norm_decoder, num_layers_encoder=train_cfg.num_layers_encoder,
+            num_layers_heads=train_cfg.num_layers_heads, dropout_encoder=train_cfg.dropout_encoder,
+            dropout_head=train_cfg.dropout_head,
+        )
+    elif train_cfg.model_name == "gatmgn":
+        return GatMGNNet(
+            node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
+            hidden_dim=train_cfg.hidden_dim, num_layers=train_cfg.num_layers,
+            num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
+            heads=train_cfg.heads, dropout_attn=train_cfg.dropout_attn,
+            negative_slope=train_cfg.negative_slope, add_self_loops=train_cfg.add_self_loops,
+            share_weights=train_cfg.share_weights, residual=train_cfg.residual,
+            layer_norm_encoder=train_cfg.layer_norm_encoder, layer_norm_processor=train_cfg.layer_norm_processor,
+            layer_norm_decoder=train_cfg.layer_norm_decoder, num_layers_encoder=train_cfg.num_layers_encoder,
+            num_layers_heads=train_cfg.num_layers_heads, dropout_encoder=train_cfg.dropout_encoder,
+            dropout_head=train_cfg.dropout_head, dropout_processor=train_cfg.dropout_processor,
+        )
     else:
         raise NotImplementedError(f"Model type {train_cfg.model_name} not implemented")
 
@@ -431,16 +458,19 @@ def train(train_cfg, preprocess_cfg, device, train_dict, preprocess_dict):
         # MisconfigurationException.
         wb_run_display_name = training_id if train_cfg.wandb_run_name is None else train_cfg.wandb_run_name
         wb_offline_flag = train_cfg.wandb_offline
+        # Raise init timeout so later Optuna trials on busy SLURM nodes do not fail with CommError.
+        _wb_settings = wandb.Settings(init_timeout=train_cfg.wandb_init_timeout)
         if train_cfg.wandb_group is not None:
             logger = DeferredFinishWandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
                                             group=train_cfg.wandb_group, save_dir=str(lightning_module.model_dir),
                                             log_model=False, offline=wb_offline_flag,
-                                            reinit="finish_previous", config=cfg_for_wandb(train_dict))
+                                            reinit="finish_previous", config=cfg_for_wandb(train_dict),
+                                            settings=_wb_settings)
         else:
             logger = DeferredFinishWandbLogger(project=train_cfg.wandb_project, name=wb_run_display_name,
                                                save_dir=str(lightning_module.model_dir), log_model=False,
                                                offline=wb_offline_flag, reinit="finish_previous",
-                                               config=cfg_for_wandb(train_dict))
+                                               config=cfg_for_wandb(train_dict), settings=_wb_settings)
     else:
         logger = False
 
@@ -612,7 +642,9 @@ def _resolve_final_eval_ckpt_path(fit_trainer, train_cfg):
     if not best_path.is_file():
         _warn_use_best_fallback("best checkpoint path is not an existing file: %s" % best_path)
         return None
-    return "best"
+    # Return the explicit path rather than the string "best" to avoid Lightning warnings when
+    # multiple ModelCheckpoint callbacks are registered (the string "best" forces it to guess).
+    return str(best_path)
 
 
 def run_train_pipeline(cfg):
@@ -671,66 +703,75 @@ def run_train_pipeline(cfg):
         raise RuntimeError("CUDA is not available.")
     print(f"Using device: {device}")
 
-    # =================== Train + validation ===================
-    lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader = \
-        train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
+    try:
+        # =================== Train + validation ===================
+        lightning_module, fit_trainer, node_stats, edge_stats, target_stats, dt, validation_dataset, validation_dataloader = \
+            train(train_cfg, preprocess_cfg, device, cfg, preprocess_dict)
 
-    final_metrics_plain = {}
+        final_metrics_plain = {}
 
-    ckpt_path_eval = _resolve_final_eval_ckpt_path(fit_trainer, train_cfg)
+        ckpt_path_eval = _resolve_final_eval_ckpt_path(fit_trainer, train_cfg)
 
-    # =================== Final validation ===================
-    if validation_dataset is not None:
-        print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
-        val_traj_metadata = _load_traj_metadata(train_cfg.val_dir, train_cfg.extra_info_dir)
-        lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
-                                          traj_metadata=val_traj_metadata)
-        validation_test_results = fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader,
-                                                   ckpt_path=ckpt_path_eval)
-        update_final_metrics_plain(final_metrics_plain, validation_test_results)
-        # Read callback_metrics immediately after this phase so epoch-hook metrics logged with
-        # rank_zero_only=True (e.g. final_validation/rollout_pos_mae from on_test_epoch_end)
-        # are captured before the subsequent test-split Trainer.test() call resets the
-        # internal Lightning result collection and overwrites callback_metrics.
+        # =================== Final validation ===================
+        if validation_dataset is not None:
+            print("=" * 60 + "\nValidation dataset plots and evaluation...\n" + "=" * 60 + "\n")
+            val_traj_metadata = _load_traj_metadata(train_cfg.val_dir, train_cfg.extra_info_dir)
+            lightning_module.set_test_context(test_dataset=validation_dataset, split_name="validation",
+                                              traj_metadata=val_traj_metadata)
+            validation_test_results = fit_trainer.test(model=lightning_module, dataloaders=validation_dataloader,
+                                                       ckpt_path=ckpt_path_eval)
+            update_final_metrics_plain(final_metrics_plain, validation_test_results)
+            # Read callback_metrics immediately after this phase so epoch-hook metrics logged with
+            # rank_zero_only=True (e.g. final_validation/rollout_pos_mae from on_test_epoch_end)
+            # are captured before the subsequent test-split Trainer.test() call resets the
+            # internal Lightning result collection and overwrites callback_metrics.
+            update_final_metrics_plain(final_metrics_plain, fit_trainer.callback_metrics)
+
+        # =================== Testing ===================
+        print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
+        # device = "cpu" hardcoded for performance reason
+        test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device="cpu")
+        # pin memory = True for faster transfer instead.
+        # We don't care about batch size since we're really just doing it in the end AND we're doing mostly rolllout
+        test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
+                                     num_workers=train_cfg.num_workers,
+                                     persistent_workers=train_cfg.num_workers > 0,
+                                     pin_memory=train_cfg.pin_memory)
+        test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
+        lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
+                                           traj_metadata=test_traj_metadata)
+        test_results = fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=ckpt_path_eval)
+        update_final_metrics_plain(final_metrics_plain, test_results)
+
+        best_val_relative_mae = float("nan")
+        if train_cfg.enable_val:
+            _ckpt_monitor = ("val/overall_abs_mae"
+                             if train_cfg.val_monitor_metric == "overall_abs_mae"
+                             else "val/overall_relative_mae")
+            for chk in fit_trainer.checkpoint_callbacks:
+                monitored = getattr(chk, "monitor", "")
+                if monitored == _ckpt_monitor:
+                    best_score_tensor = chk.best_model_score
+                    if best_score_tensor is not None:
+                        best_val_relative_mae = float(best_score_tensor.detach().item())
+                    break
+
         update_final_metrics_plain(final_metrics_plain, fit_trainer.callback_metrics)
 
-    # =================== Testing ===================
-    print("=" * 60 + "\nTest dataset plots and evaluation...\n" + "=" * 60 + "\n")
-    # device = "cpu" hardcoded for performance reason
-    test_dataset = InMemoryTimeStepDataset(sample_dir=train_cfg.test_dir, device="cpu")
-    # pin memory = True for faster transfer instead.
-    # We don't care about batch size since we're really just doing it in the end AND we're doing mostly rolllout
-    test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False,
-                                 num_workers=train_cfg.num_workers,
-                                 persistent_workers=train_cfg.num_workers > 0,
-                                 pin_memory=train_cfg.pin_memory)
-    test_traj_metadata = _load_traj_metadata(train_cfg.test_dir, train_cfg.extra_info_dir)
-    lightning_module.set_test_context(test_dataset=test_dataset, split_name="test",
-                                       traj_metadata=test_traj_metadata)
-    test_results = fit_trainer.test(model=lightning_module, dataloaders=test_dataloader, ckpt_path=ckpt_path_eval)
-    update_final_metrics_plain(final_metrics_plain, test_results)
+        wandb_run_id = None
+        if train_cfg.use_wandb:
+            wandb_run_id = str(lightning_module.logger.experiment.id)
 
-    best_val_relative_mae = float("nan")
-    if train_cfg.enable_val:
-        _ckpt_monitor = ("val/overall_abs_mae"
-                         if train_cfg.val_monitor_metric == "overall_abs_mae"
-                         else "val/overall_relative_mae")
-        for chk in fit_trainer.checkpoint_callbacks:
-            monitored = getattr(chk, "monitor", "")
-            if monitored == _ckpt_monitor:
-                best_score_tensor = chk.best_model_score
-                if best_score_tensor is not None:
-                    best_val_relative_mae = float(best_score_tensor.detach().item())
-                break
-
-    update_final_metrics_plain(final_metrics_plain, fit_trainer.callback_metrics)
-
-    wandb_run_id = None
-    if train_cfg.use_wandb:
-        wandb_run_id = str(lightning_module.logger.experiment.id)
-        wandb.finish()
-
-    return best_val_relative_mae, final_metrics_plain, wandb_run_id
+        return best_val_relative_mae, final_metrics_plain, wandb_run_id
+    finally:
+        # Always close the W&B run, even when an exception aborts training. Without this,
+        # the wandb state from a failed trial leaks into the next Optuna trial, causing
+        # init timeouts and CommErrors on subsequent sequential runs.
+        if train_cfg.use_wandb:
+            try:
+                wandb.finish()
+            except Exception:
+                pass
 
 
 @hydra.main(version_base=None, config_path="../../conf/train", config_name="train")

@@ -16,6 +16,7 @@ seed: 42
 # not already adjacent (undirected) on the current graph; merged with existing edge_index.
 random_online: 0.0
 use_wandb: true
+wandb_init_timeout: 300
 initial_lr: 1e-3
 optimizer: adam
 protect_from_oom: True # disables cuda reduce overhead which causes oom errors

@@ -156,6 +156,7 @@ class TrainYaml:
     wandb_group: str | None
     wandb_project: str
     wandb_offline: bool
+    wandb_init_timeout: int
     random_online: float
 
     def __init__(self, cfg):
@@ -172,6 +173,7 @@ class TrainYaml:
         self.wandb_project = flattened_cfg.get("wandb_project", "beam_deformation")
         offline_raw = flattened_cfg.get("wandb_offline")
         self.wandb_offline = True if offline_raw is None else bool(offline_raw)
+        self.wandb_init_timeout = int(flattened_cfg.get("wandb_init_timeout"))
         self.seed = flattened_cfg["seed"]
         self.use_wandb = flattened_cfg["use_wandb"]
         self.batch_size = flattened_cfg["batch_size"]
@@ -303,6 +305,40 @@ class TrainYaml:
             self.transolver_slice_num = flattened_cfg["transolver_slice_num"]
             self.transolver_ref = flattened_cfg["transolver_ref"]
             self.transolver_unified_pos = flattened_cfg["transolver_unified_pos"]
+        elif self.model_name == "gatv2":
+            self.hidden_dim = flattened_cfg["hidden_dim"]
+            self.num_layers = flattened_cfg["num_layers"]
+            self.heads = flattened_cfg["heads"]
+            self.dropout_attn = flattened_cfg["dropout_attn"]
+            self.negative_slope = flattened_cfg["negative_slope"]
+            self.add_self_loops = flattened_cfg["add_self_loops"]
+            self.share_weights = flattened_cfg["share_weights"]
+            self.residual = flattened_cfg["residual"]
+            self.layer_norm_encoder = flattened_cfg["layer_norm_encoder"]
+            self.layer_norm_processor = flattened_cfg["layer_norm_processor"]
+            self.layer_norm_decoder = flattened_cfg["layer_norm_decoder"]
+            self.num_layers_encoder = flattened_cfg["num_layers_encoder"]
+            self.num_layers_heads = flattened_cfg["num_layers_heads"]
+            self.dropout_encoder = flattened_cfg["dropout_encoder"]
+            self.dropout_head = flattened_cfg["dropout_head"]
+        elif self.model_name == "gatmgn":
+            self.hidden_dim = flattened_cfg["hidden_dim"]
+            self.num_layers = flattened_cfg["num_layers"]
+            self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
+            self.heads = flattened_cfg["heads"]
+            self.dropout_attn = flattened_cfg["dropout_attn"]
+            self.negative_slope = flattened_cfg["negative_slope"]
+            self.add_self_loops = flattened_cfg["add_self_loops"]
+            self.share_weights = flattened_cfg["share_weights"]
+            self.residual = flattened_cfg["residual"]
+            self.layer_norm_encoder = flattened_cfg["layer_norm_encoder"]
+            self.layer_norm_processor = flattened_cfg["layer_norm_processor"]
+            self.layer_norm_decoder = flattened_cfg["layer_norm_decoder"]
+            self.num_layers_encoder = flattened_cfg["num_layers_encoder"]
+            self.num_layers_heads = flattened_cfg["num_layers_heads"]
+            self.dropout_encoder = flattened_cfg["dropout_encoder"]
+            self.dropout_head = flattened_cfg["dropout_head"]
+            self.dropout_processor = flattened_cfg["dropout_processor"]
 
 def _to_dict_flatten(data):
     """
