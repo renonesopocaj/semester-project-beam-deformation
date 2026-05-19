@@ -31,9 +31,6 @@ sweeps:
       - label: mgn_H256_L15
         overrides:
           - model=mgn_H256_L15
-      - label: mgn_H400_L13_1layermlp
-        overrides:
-          - model=mgn_H400_L13_1layermlp
       - label: mgn_H400_L11_1layermlp
         overrides:
           - model=mgn_H400_L11_1layermlp

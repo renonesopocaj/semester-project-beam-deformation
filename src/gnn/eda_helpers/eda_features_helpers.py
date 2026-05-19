@@ -27,28 +27,36 @@ def build_node_feature_names(cfg):
         return: list[str]
             Node valued feature names in the exact order returned by build_node_features().
     """
+    enable_velocity_node = cfg.enable_velocity_node
+    enable_displacement_node = cfg.enable_displacement_node
+    enable_force_node = cfg.enable_force_node
+    enable_rest_pos_node = cfg.enable_rest_pos_node
     names = []
-    names.extend(_xyz_names("velocity"))
-    names.extend(_xyz_names("displacement_pos"))
-    names.extend(_xyz_names("force"))
+    if enable_velocity_node:
+        names.extend(_xyz_names("velocity"))
+    if enable_displacement_node:
+        names.extend(_xyz_names("displacement_pos"))
+    if enable_force_node:
+        names.extend(_xyz_names("force"))
     if cfg.enable_past_history:
         if cfg.enable_absolute_pos:
             names.extend(_xyz_names("position_past"))
-        names.extend(_xyz_names("displacement_pos_past"))
+        if enable_displacement_node:
+            names.extend(_xyz_names("displacement_pos_past"))
     if cfg.enable_absolute_pos:
         names.extend(_xyz_names("position"))
-        names.extend(_xyz_names("rest_pos"))
+        if enable_rest_pos_node:
+            names.extend(_xyz_names("rest_pos"))
     if cfg.enable_node_norms:
-        names.append("displacement_norm")
-        names.append("force_norm")
-        names.append("velocity_norm")
-        if cfg.enable_absolute_pos:
-            names.append("position_norm")
-            names.append("rest_pos_norm")
-        if cfg.enable_past_history:
+        if enable_displacement_node:
+            names.append("displacement_norm")
+        if enable_force_node:
+            names.append("force_norm")
+        if enable_velocity_node:
+            names.append("velocity_norm")
+        # position_norm / rest_pos_norm intentionally omitted (same as build_features)
+        if cfg.enable_past_history and enable_displacement_node:
             names.append("displacement_pos_past_norm")
-            if cfg.enable_absolute_pos:
-                names.append("position_past_norm")
     return names
 
 
@@ -68,15 +76,14 @@ def build_edge_feature_names(cfg):
         names.extend(_xyz_names("edge_velocity_pos"))
     if cfg.enable_force_edge:
         names.extend(_xyz_names("edge_force_pos"))
-    if cfg.enable_absolute_pos:
-        if cfg.enable_abs_pos_edge:
-            names.extend(_xyz_names("edge_relative_pos"))
-        if cfg.enable_abs_rest_pos_edge:
-            names.extend(_xyz_names("edge_rest_relative_pos"))
+    if cfg.enable_abs_pos_edge:
+        names.extend(_xyz_names("edge_relative_pos"))
+    if cfg.enable_abs_rest_pos_edge:
+        names.extend(_xyz_names("edge_rest_relative_pos"))
     if cfg.enable_past_history:
         if cfg.enable_displ_edge:
             names.extend(_xyz_names("edge_displacement_pos_past"))
-        if cfg.enable_absolute_pos and cfg.enable_abs_pos_edge:
+        if cfg.enable_abs_pos_edge:
             names.extend(_xyz_names("edge_relative_pos_past"))
         if cfg.enable_abs_pos_edge_norm:
             names.append("edge_relative_pos_past_norm")

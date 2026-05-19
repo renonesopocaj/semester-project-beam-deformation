@@ -29,7 +29,11 @@ class _ZeroPredModel(torch.nn.Module):
 
 
 def _minimal_preprocess_cfg():
-    """Single valid layout: base node triplets + one edge vector block (displacement)."""
+    """
+    Single valid layout: edge-only displacement block, no valued node features.
+    All four per-node granular toggles are explicitly False so build_features produces
+    node_channels == 1 (boundary-condition flag only).
+    """
     cfg = SimpleNamespace()
     cfg.normalizer_method = "z"
     cfg.isotropic_normalizer = True
@@ -48,6 +52,10 @@ def _minimal_preprocess_cfg():
         "enable_rest_pos_edge_norm",
         "enable_force_edge_norm",
         "enable_edge_velocity_norm",
+        "enable_velocity_node",
+        "enable_displacement_node",
+        "enable_force_node",
+        "enable_rest_pos_node",
     ):
         setattr(cfg, name, False)
     cfg.enable_displ_edge = True
@@ -81,6 +89,7 @@ def _make_graph(device, dt, node_stats, edge_stats, normalizer, node_b, edge_b, 
         node_force=nf,
         y_acc_t=torch.randn(n, 3, device=device, dtype=torch.float32),
         y_von_mises=torch.randn(n, 1, device=device, dtype=torch.float32) * 0.1,
+        y_sig6_t=torch.zeros(n, 6, device=device, dtype=torch.float32),
         x_next=x_next,
         v_next=v_next,
         node_force_next=nf,

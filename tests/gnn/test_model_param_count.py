@@ -23,6 +23,7 @@ from omegaconf import OmegaConf
 from torch_geometric.data import Data
 
 from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml
+from src.gnn.preprocessing.build_features import probe_feature_layout
 from src.gnn.train import create_model
 
 
@@ -65,7 +66,7 @@ def _make_synthetic_graph_template(node_channels):
     return: Data
         PyG Data with edge_index and x of shape [_SYNTHETIC_NUM_NODES, node_channels].
     """
-    n = _SYNTHETIC_NUM_NODES
+    n = _SYNTHETIC_NUM_NODES  # number of synthetic nodes; does not affect channel inference
     row = torch.arange(n, dtype=torch.long)
     col = (row + 1) % n
     edge_index = torch.stack([torch.cat([row, col]), torch.cat([col, row])], dim=0)
@@ -77,8 +78,10 @@ def test_model_param_count():
     Informal specification: given the MODEL_CONFIG_NAME constant set at the top of this file,
     the test composes the full Hydra train config with that model override, loads the
     preprocess config from the path resolved by the train config (skipping the test when the
-    dataset is not present), instantiates the model on CPU without any training or dataset
-    loading, and asserts that the parameter count is positive while printing it clearly.
+    dataset is not present), re-probes node/edge channel counts via probe_feature_layout so
+    that stale or missing values in the saved config are never used, derives target_mode and
+    stress_out_dim from the preprocess YAML, instantiates the model on CPU without any
+    training or dataset loading, and asserts that the parameter count is positive.
     """
     GlobalHydra.instance().clear()
     with initialize_config_dir(version_base=None, config_dir=str(TRAIN_CONFIG_DIR)):
@@ -97,11 +100,14 @@ def test_model_param_count():
         preprocess_dict = yaml.safe_load(fh)
     preprocess_cfg = PreprocessYaml(preprocess_dict)
 
-    node_channels = getattr(preprocess_cfg, "node_channels", _SYNTHETIC_NUM_NODES)
-    graph_template = _make_synthetic_graph_template(node_channels)
     device = torch.device("cpu")
+    node_channels, edge_channels, _, _ = probe_feature_layout(preprocess_cfg, device)
+    preprocess_cfg.node_channels = int(node_channels)
+    preprocess_cfg.edge_channels = int(edge_channels)
 
-    target_mode = TARGET_MODE
+    graph_template = _make_synthetic_graph_template(int(node_channels))
+
+    target_mode = preprocess_cfg.target_mode
     stress_out_dim = 6 if target_mode == "full_stress" else 1
     model = create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
     total_params = sum(p.numel() for p in model.parameters())

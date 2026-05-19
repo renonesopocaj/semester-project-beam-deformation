@@ -41,6 +41,13 @@ class _FakeWandbArtifact:
         self.files.append((path, name))
 
 
+class _FakeWandbSettings:
+    """Stub for wandb.Settings so production code that calls wandb.Settings(...) doesn't fail."""
+
+    def __init__(self, init_timeout=None):
+        self.init_timeout = init_timeout
+
+
 class _FakeWandbModule:
     init_calls: list[dict]
     image_calls: list[tuple[str, str]]
@@ -52,8 +59,9 @@ class _FakeWandbModule:
         self.image_calls = []
         self.artifact_calls = []
         self.run = _FakeWandbRun()
+        self.Settings = _FakeWandbSettings
 
-    def init(self, project, name, group, reinit, mode):
+    def init(self, project, name, group, reinit, mode, settings=None):
         self.init_calls.append({"project": project, "name": name, "group": group, "reinit": reinit, "mode": mode})
         return self.run
 
@@ -115,7 +123,7 @@ def test_save_pareto_plot_handles_missing_keys_with_diagnostic(tmp_path):
         {"final_metrics": {"final_test/acc_all_rel_mae": 12.0, "final_test/stress_rel_mae": 1.8}},
     ]
     out_dir = Path(tmp_path)
-    out_path = save_pareto_plot(records, "final_validation/acc_all_rel_mae", "final_validation/stress_rel_mae", out_dir)
+    out_path = save_pareto_plot(records, "final_validation/acc_all_rel_mae", "final_validation/stress_rel_mae", out_dir, "pareto.png", "validation")
     assert out_path == out_dir / "pareto.png"
     assert out_path.exists()
     assert out_path.stat().st_size > 0

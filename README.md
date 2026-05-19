@@ -93,6 +93,11 @@ semester-project/
 └── README.md
 ```
 
+## How to run
+
+The name of the conda env is `fenicsproject` so:
+`conda activate fenicsproject`
+
 ## What each part does
 
 ### Top level

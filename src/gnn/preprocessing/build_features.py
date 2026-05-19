@@ -10,39 +10,54 @@ import torch
 
 @torch.jit.script
 def _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_history: bool,
-                              enable_absolute_pos: bool, enable_node_norms: bool):
+                              enable_absolute_pos: bool, enable_node_norms: bool,
+                              enable_velocity_node: bool, enable_displacement_node: bool,
+                              enable_force_node: bool, enable_rest_pos_node: bool):
     """
     TorchScript-compatible node feature builder with explicit feature flags.
     """
     feat_list = []
-    feat_list.append(v)
+    split_idx_node = 0
     u = x - rest_pos
-    feat_list.append(u)
-    feat_list.append(node_force)
-    split_idx_node = 9
     u_tm1 = x_tm1_prev - rest_pos
+    if enable_velocity_node:
+        feat_list.append(v)
+        split_idx_node += 3
+    if enable_displacement_node:
+        feat_list.append(u)
+        split_idx_node += 3
+    if enable_force_node:
+        feat_list.append(node_force)
+        split_idx_node += 3
     if enable_past_history:
         if enable_absolute_pos:
             feat_list.append(x_tm1_prev)
             split_idx_node += 3
-        feat_list.append(u_tm1)
-        split_idx_node += 3
+        if enable_displacement_node:
+            feat_list.append(u_tm1)
+            split_idx_node += 3
     if enable_absolute_pos:
         feat_list.append(x)
         split_idx_node += 3
-        feat_list.append(rest_pos)
-        split_idx_node += 3
+        if enable_rest_pos_node:
+            feat_list.append(rest_pos)
+            split_idx_node += 3
     if enable_node_norms:
-        feat_list.append(torch.norm(u, dim=1, keepdim=True))
-        feat_list.append(torch.norm(node_force, dim=1, keepdim=True))
-        feat_list.append(torch.norm(v, dim=1, keepdim=True))
+        if enable_displacement_node:
+            feat_list.append(torch.norm(u, dim=1, keepdim=True))
+        if enable_force_node:
+            feat_list.append(torch.norm(node_force, dim=1, keepdim=True))
+        if enable_velocity_node:
+            feat_list.append(torch.norm(v, dim=1, keepdim=True))
         # if enable_absolute_pos:
             # feat_list.append(torch.norm(x, dim=1, keepdim=True))
             # feat_list.append(torch.norm(rest_pos, dim=1, keepdim=True))
-        if enable_past_history:
+        if enable_past_history and enable_displacement_node:
             feat_list.append(torch.norm(u_tm1, dim=1, keepdim=True))
             # if enable_absolute_pos:
                 # feat_list.append(torch.norm(x_tm1_prev, dim=1, keepdim=True))
+    if len(feat_list) == 0:
+        return x.new_zeros((x.shape[0], 0)), split_idx_node
     node_feat_tensor = torch.cat(feat_list, dim=1)
     return node_feat_tensor, split_idx_node
 
@@ -83,19 +98,18 @@ def _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge
     if enable_force_edge:
         feat_list.append(force_ij)
         split_idx_edge += 3
-    if enable_absolute_pos:
-        if enable_abs_pos_edge:
-            feat_list.append(xij_t)
-            split_idx_edge += 3
-        if enable_abs_rest_pos_edge:
-            feat_list.append(rest_pos_ij)
-            split_idx_edge += 3
+    if enable_abs_pos_edge:
+        feat_list.append(xij_t)
+        split_idx_edge += 3
+    if enable_abs_rest_pos_edge:
+        feat_list.append(rest_pos_ij)
+        split_idx_edge += 3
     if enable_past_history:
         u_tm1_past_ij = u_tm1_past[dst] - u_tm1_past[src]
         if enable_displ_edge:
             feat_list.append(u_tm1_past_ij)
             split_idx_edge += 3
-        if enable_absolute_pos and enable_abs_pos_edge:
+        if enable_abs_pos_edge:
             feat_list.append(x_tm1_past_ij)
             split_idx_edge += 3
         if enable_abs_pos_edge_norm:
@@ -142,6 +156,10 @@ def make_scripted_feature_builders(preprocess_cfg):
     enable_past_pos_displ = preprocess_cfg.enable_past_history
     enable_absolute_pos = preprocess_cfg.enable_absolute_pos
     enable_node_norms = preprocess_cfg.enable_node_norms
+    enable_velocity_node = preprocess_cfg.enable_velocity_node
+    enable_displacement_node = preprocess_cfg.enable_displacement_node
+    enable_force_node = preprocess_cfg.enable_force_node
+    enable_rest_pos_node = preprocess_cfg.enable_rest_pos_node
     enable_edge_velocity = preprocess_cfg.enable_edge_velocity
     enable_force_edge = preprocess_cfg.enable_force_edge
     enable_stretch_edge = preprocess_cfg.enable_stretch_edge
@@ -156,7 +174,9 @@ def make_scripted_feature_builders(preprocess_cfg):
 
     def node_builder(x, v, x_tm1_prev, rest_pos, node_force):
         return _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ,
-                                         enable_absolute_pos, enable_node_norms)
+                                         enable_absolute_pos, enable_node_norms,
+                                         enable_velocity_node, enable_displacement_node,
+                                         enable_force_node, enable_rest_pos_node)
 
     def edge_builder(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index):
         return _build_edge_features_core(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index,
@@ -184,8 +204,13 @@ def build_node_features(x, v, x_tm1_prev, rest_pos, node_force, preprocess_cfg):
     """
     enable_past_pos_displ, enable_absolute_pos, enable_node_norms = (preprocess_cfg.enable_past_history,
         preprocess_cfg.enable_absolute_pos, preprocess_cfg.enable_node_norms)
+    enable_velocity_node = preprocess_cfg.enable_velocity_node
+    enable_displacement_node = preprocess_cfg.enable_displacement_node
+    enable_force_node = preprocess_cfg.enable_force_node
+    enable_rest_pos_node = preprocess_cfg.enable_rest_pos_node
     return _build_node_features_core(x, v, x_tm1_prev, rest_pos, node_force, enable_past_pos_displ, enable_absolute_pos,
-                                     enable_node_norms)
+                                     enable_node_norms, enable_velocity_node, enable_displacement_node,
+                                     enable_force_node, enable_rest_pos_node)
 
 
 def build_edge_features(x_t, v_t, x_tm1_prev, rest_pos, node_force_t, edge_index, preprocess_cfg):

@@ -125,6 +125,11 @@ class PreprocessYaml:
         self.enable_rest_pos_edge_norm = flattened_cfg["enable_rest_pos_edge_norm"]
         self.enable_force_edge_norm = flattened_cfg["enable_force_edge_norm"]
         self.enable_edge_velocity_norm = flattened_cfg["enable_edge_velocity_norm"]
+        # Per-node feature granular toggles
+        self.enable_velocity_node = flattened_cfg["enable_velocity_node"]
+        self.enable_displacement_node = flattened_cfg["enable_displacement_node"]
+        self.enable_force_node = flattened_cfg["enable_force_node"]
+        self.enable_rest_pos_node = flattened_cfg["enable_rest_pos_node"]
 
         edge_aug = _extract_nested(cfg, "edge_augmentation")
         if edge_aug is None:

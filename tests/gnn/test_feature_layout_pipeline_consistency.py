@@ -29,6 +29,10 @@ FEATURE_FLAG_NAMES = [
     "enable_past_history",
     "enable_absolute_pos",
     "enable_node_norms",
+    "enable_velocity_node",
+    "enable_displacement_node",
+    "enable_force_node",
+    "enable_rest_pos_node",
     "enable_displ_edge",
     "enable_edge_velocity",
     "enable_force_edge",
@@ -59,6 +63,7 @@ def _make_preprocess_cfg(flag_values):
     cfg.normalizer_method = "z"
     cfg.isotropic_normalizer = True
     cfg.time_discretization_method = "second_order_central"
+    cfg.target_mode = "von_mises"
     for name, value in zip(FEATURE_FLAG_NAMES, flag_values):
         setattr(cfg, name, bool(value))
     return cfg
@@ -80,6 +85,18 @@ def _make_train_cfg_for_clofnet():
     train_cfg.clamp_enable = False
     train_cfg.out_coord_mlp_dim = 8
     train_cfg.clofnet_variant = "direct"
+    train_cfg.use_neighbor_diff_norms = False
+    train_cfg.frame_source = "rest"
+    train_cfg.include_u_tm1 = False
+    train_cfg.rescalarize_per_layer = False
+    train_cfg.include_v_branch = True
+    train_cfg.include_force = True
+    train_cfg.m_ij_init = "ones"
+    train_cfg.n_layers_gate_mlp = 1
+    train_cfg.n_layers_node_mlp = 1
+    train_cfg.n_layers_message_mlp = 1
+    train_cfg.eps_mode = "none"
+    train_cfg.normalize_delta_a = False
     return train_cfg
 
 
@@ -98,13 +115,14 @@ def _build_minibatch_tensors(num_nodes, device):
 def _is_invalid_empty_edge_feature_combo(cfg):
     """
     Returns True when edge feature builder would produce an empty list and fail torch.cat.
+    Note: enable_abs_pos_edge / enable_abs_rest_pos_edge are no longer gated by enable_absolute_pos.
     """
     has_any = False
     has_any = has_any or bool(cfg.enable_displ_edge)
     has_any = has_any or bool(cfg.enable_edge_velocity)
     has_any = has_any or bool(cfg.enable_force_edge)
-    has_any = has_any or (bool(cfg.enable_absolute_pos) and bool(cfg.enable_abs_pos_edge))
-    has_any = has_any or (bool(cfg.enable_absolute_pos) and bool(cfg.enable_abs_rest_pos_edge))
+    has_any = has_any or bool(cfg.enable_abs_pos_edge)
+    has_any = has_any or bool(cfg.enable_abs_rest_pos_edge)
     has_any = has_any or bool(cfg.enable_abs_pos_edge_norm)
     has_any = has_any or bool(cfg.enable_rest_pos_edge_norm)
     has_any = has_any or bool(cfg.enable_force_edge_norm)
@@ -113,7 +131,7 @@ def _is_invalid_empty_edge_feature_combo(cfg):
     has_any = has_any or bool(cfg.enable_rotation_angle)
     if bool(cfg.enable_past_history):
         has_any = has_any or bool(cfg.enable_displ_edge)
-        has_any = has_any or (bool(cfg.enable_absolute_pos) and bool(cfg.enable_abs_pos_edge))
+        has_any = has_any or bool(cfg.enable_abs_pos_edge)
     return not has_any
 
 
@@ -229,3 +247,49 @@ def test_feature_layout_coherence_through_preprocess_train_trainer_rollout(monke
 
     assert total_seen == 2 ** len(FEATURE_FLAG_NAMES)
     assert total_valid > 0
+
+
+def test_onlyedge_and_nonodepos_configs_produce_node_free_graphs():
+    """
+    Checks that when all four per-node valued-feature flags are False, build_features produces:
+    - node_channels == 1 (boundary-condition flag only, no valued columns)
+    - split_idx_node == 0
+    - edge_channels > 0 and consistent with build_edge_feature_names
+    This covers the intent of onlyedge.yaml and nonodepos_yesedge.yaml.
+    """
+    from src.gnn.eda_helpers.eda_features_helpers import build_edge_feature_names
+
+    device = torch.device("cpu")
+    cfg = SimpleNamespace(
+        enable_absolute_pos=False,
+        enable_past_history=True,
+        enable_velocity_node=False,
+        enable_displacement_node=False,
+        enable_force_node=False,
+        enable_rest_pos_node=False,
+        enable_node_norms=False,
+        enable_edge_velocity=True,
+        enable_force_edge=True,
+        enable_displ_edge=True,
+        enable_abs_pos_edge=True,
+        enable_abs_rest_pos_edge=True,
+        enable_abs_pos_edge_norm=True,
+        enable_rest_pos_edge_norm=True,
+        enable_force_edge_norm=True,
+        enable_edge_velocity_norm=True,
+        enable_stretch_edge=False,
+        enable_rotation_angle=False,
+        normalizer_method="z",
+        isotropic_normalizer=True,
+    )
+
+    node_channels, edge_channels, split_idx_node, split_idx_edge = probe_feature_layout(cfg, device)
+
+    assert node_channels == 1, f"Expected node_channels=1 (bc only), got {node_channels}"
+    assert split_idx_node == 0, f"Expected split_idx_node=0, got {split_idx_node}"
+    assert edge_channels > 0, f"Expected positive edge_channels, got {edge_channels}"
+
+    edge_names = build_edge_feature_names(cfg)
+    assert len(edge_names) == edge_channels, (
+        f"EDA edge name count ({len(edge_names)}) != edge_channels ({edge_channels})"
+    )
