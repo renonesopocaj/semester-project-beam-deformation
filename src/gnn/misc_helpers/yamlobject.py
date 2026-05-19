@@ -94,11 +94,10 @@ class PreprocessYaml:
         self.time_discretization_method = flattened_cfg["time_discretization_method"]
         # Target layout: "von_mises" (y=[acc, vm], 4 ch) or "full_stress" (y=[acc, sig6], 9 ch).
         # Defaults to "von_mises" for backward compatibility with existing processed datasets.
-        self.target_mode = flattened_cfg.get("target_mode")
+        self.target_mode = flattened_cfg["target_mode"]
         if self.target_mode not in ("von_mises", "full_stress"):
             raise ValueError(
-                f"Unknown preprocess.target_mode '{self.target_mode}'. Expected 'von_mises' or 'full_stress'."
-            )
+                f"Unknown preprocess.target_mode '{self.target_mode}'. Expected 'von_mises' or 'full_stress'.")
         if "edge_channels" in flattened_cfg:
             self.edge_channels = flattened_cfg["edge_channels"]
         if "node_channels" in flattened_cfg:

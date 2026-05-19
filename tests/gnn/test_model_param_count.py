@@ -44,8 +44,10 @@ TRAIN_CONFIG_NAME = "train"
 # MODEL_CONFIG_NAME = "clofnet_rec_L8_hardeps"
 # MODEL_CONFIG_NAME = "clofnet_rec_L8_softeps"
 # MODEL_CONFIG_NAME = "clofnet_rec_L8_softeps_framesourceu"
-MODEL_CONFIG_NAME = "clofnet_rec_L8_gaussian_softeps"
-MODEL_CONFIG_NAME = "mgn_H400_L11_1layermlp"
+# MODEL_CONFIG_NAME = "clofnet_rec_L8_gaussian_softeps"
+# MODEL_CONFIG_NAME = "mgn_H400_L11_1layermlp"
+MODEL_CONFIG_NAME = "mgn_H128_L20"
+TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------
 
@@ -99,7 +101,7 @@ def test_model_param_count():
     graph_template = _make_synthetic_graph_template(node_channels)
     device = torch.device("cpu")
 
-    target_mode = getattr(preprocess_cfg, "target_mode")
+    target_mode = TARGET_MODE
     stress_out_dim = 6 if target_mode == "full_stress" else 1
     model = create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
     total_params = sum(p.numel() for p in model.parameters())
