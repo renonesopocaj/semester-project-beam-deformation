@@ -27,18 +27,42 @@ sweeps:
     fixed_overrides:
       - noise=noise_per_epoch_noprev
     options:
-      - label: curvature
+      - label: curvature_1e2
         overrides:
           - residuals=curvature
-      - label: volume
+          - residuals.curvature_loss_weight=100
+      - label: curvature_1e1
+        overrides:
+          - residuals=curvature
+          - residuals.curvature_loss_weight=10
+      - label: curvature_5e1
+        overrides:
+          - residuals=curvature
+          - residuals.curvature_loss_weight=50
+      - label: volume_1e5
         overrides:
           - residuals=volume
+          - residuals.volume_loss_weight=100000
+      - label: volume_1e4
+        overrides:
+          - residuals=volume
+          - residuals.volume_loss_weight=10000
+      - label: volume_1e3
+        overrides:
+          - residuals=volume
+          - residuals.volume_loss_weight=1000
+      - label: volume_1e6
+        overrides:
+          - residuals=volume
+          - residuals.volume_loss_weight=1000000
       - label: none
         overrides:
           - residuals=default
       - label: all
         overrides:
           - residuals=all
+          - residuals.curvature_loss_weight=100
+          - residuals.volume_loss_weight=100000
   - name: residuals_noiseperepoch
     fixed_overrides:
       - noise=noise_per_epoch_noprev
