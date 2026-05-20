@@ -23,7 +23,7 @@ wandb_offline: true
 base_dir: /scratch/izar/senoner/dataset # NOTE: if it's on slurm it's "/scratch/izar/senoner/dataset" else "dataset"
 
 sweeps:
-  - name: residuals_nonoise
+  - name: residuals
     fixed_overrides:
       - noise=noise_per_epoch_noprev
     options:
@@ -63,22 +63,6 @@ sweeps:
           - residuals=all
           - residuals.curvature_loss_weight=100
           - residuals.volume_loss_weight=100000
-  - name: residuals_noiseperepoch
-    fixed_overrides:
-      - noise=noise_per_epoch_noprev
-    options:
-      - label: curvature
-        overrides:
-          - residuals=curvature
-      - label: volume
-        overrides:
-          - residuals=volume
-      - label: none
-        overrides:
-          - residuals=default
-      - label: all
-        overrides:
-          - residuals=all
 
 hydra:
   run:
