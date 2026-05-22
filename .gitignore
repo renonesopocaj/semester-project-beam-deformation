@@ -25,6 +25,9 @@ hyperparam_outputs
 *.pyd
 .hydra
 .log
+deforming_plate
+comparison_artifacts
+.cursor
 
 # Folders of artifacts
 dataset
