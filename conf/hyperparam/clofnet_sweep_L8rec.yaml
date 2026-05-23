@@ -13,12 +13,13 @@ pareto_y_metric:
   - final_test/stress_abs_mae
 wandb_project: beam_deformation
 wandb_offline: true
-base_dir: /scratch/izar/senoner/dataset
+base_dir: dataset
 
 sweeps:
   - name: clofnet
     fixed_overrides:
       - noise=noise_per_epoch_noprev
+      - training.total_epochs=150
     options:
       - label: clofnet_rec_L8_gaussian_hardeps
         overrides:
@@ -32,6 +33,9 @@ sweeps:
       - label: clofnet_rec_L8_gaussian_softeps
         overrides:
           - model=clofnet_rec_L8_gaussian_softeps
+      - label: clofnet_rec_L8_softeps_norm
+        overrides:
+          - model=clofnet_rec_L8_softeps_norm
 
 
 hydra:

@@ -24,7 +24,7 @@ hyperparam_outputs
 *.pyo
 *.pyd
 .hydra
-.log
+*.log
 deforming_plate
 comparison_artifacts
 .cursor
