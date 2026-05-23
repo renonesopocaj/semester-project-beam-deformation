@@ -10,37 +10,86 @@ Common notation
 """
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_mean, unsorted_segment_sum
+from src.gnn.models.clofnet.clof_helpers import make_mlp, make_vec_mlp
 
 
-def make_mlp(n_layers, in_dim, hidden_dim, out_dim, act_fn_factory, final_activation):
+class RecurrentMessageInitializer(nn.Module):
     """
-    Build a sequential MLP with n_layers linear layers.
+    Computes m_ij^0, the initial recurrent message before the first MP layer.
 
-    Args:
-        n_layers: int
-            Total number of Linear layers.
-        in_dim: int
-            Input dimension of the first layer.
-        hidden_dim: int
-            Width of all intermediate layers.
-        out_dim: int
-            Output dimension of the last layer.
-        act_fn_factory: callable
-            Zero-argument factory returning an activation module.
-        final_activation: bool
-            Whether to append an activation after the last linear layer.
-    return: nn.Sequential
+    Supported modes (m_ij_init):
+        zero              : m_ij^0 = 0                                        (no learned params)
+        gaussian          : m_ij^0 ~ N(0, I)                                  (no learned params)
+        edge_encoder      : m_ij^0 = psi_init(context_ij)                    (MeshGraphNets-style)
+        context           : m_ij^0 = g(context_ij)                            (deterministic RNN init)
+        context_stochastic: m_ij^0 = mu(ctx) + softplus(sigma(ctx)) * eps,
+                            eps ~ N(0,I) during training; mu only at eval.    (stochastic RNN init)
+
+    Edge context used by learned modes:
+        context_ij = cat(h_i^0, h_j^0, r_ij, e_tilde_ij^0)  [E, 2*H + 1 + fuse_hid_dim]
+    where e_tilde_ij^0 = fuse_embed computed from zero acceleration (same as first MP layer input).
     """
-    layers = []
-    for i in range(n_layers):
-        d_in = in_dim if i == 0 else hidden_dim
-        d_out = out_dim if i == n_layers - 1 else hidden_dim
-        layers.append(nn.Linear(d_in, d_out))
-        if i < n_layers - 1 or final_activation:
-            layers.append(act_fn_factory())
-    return nn.Sequential(*layers)
+
+    m_ij_init: str
+
+    def __init__(self, hidden_dim, fuse_hid_dim, m_ij_init, n_layers_message_mlp, act_fn_factory, mlp_layer_norm):
+        """
+        Args:
+            hidden_dim: int
+            fuse_hid_dim: int
+                Output dim of the fuse embedding MLP (= in_dim_edge_mlp in ClofNetBase).
+            m_ij_init: str
+                One of zero | gaussian | edge_encoder | context | context_stochastic.
+            n_layers_message_mlp: int
+            act_fn_factory: callable
+            mlp_layer_norm: bool
+        """
+        super().__init__()
+        self.m_ij_init = m_ij_init
+        in_ctx = 2 * hidden_dim + 1 + fuse_hid_dim
+        if m_ij_init == "edge_encoder":
+            self.psi_init_mlp = make_mlp(n_layers_message_mlp, in_ctx, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+        elif m_ij_init == "context":
+            self.context_init_mlp = make_mlp(n_layers_message_mlp, in_ctx, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+        elif m_ij_init == "context_stochastic":
+            self.context_mu_mlp = make_mlp(n_layers_message_mlp, in_ctx, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+            self.context_sigma_mlp = make_mlp(n_layers_message_mlp, in_ctx, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+
+    def forward(self, h, edge_index, radial, fuse_embed):
+        """
+        Args:
+            h: torch.Tensor [N, H]
+                Initial node embeddings h^0.
+            edge_index: tuple
+                (row, col) directed edges.
+            radial: torch.Tensor [E, 1]
+                Squared edge distances.
+            fuse_embed: torch.Tensor [E, fuse_hid_dim]
+                Fused invariant edge embedding e_tilde_ij^0 (computed from zero acceleration).
+        return: torch.Tensor [E, H]
+            Initial messages m_ij^0.
+        """
+        row, col = edge_index
+        num_edges = row.shape[0]
+        if self.m_ij_init == "zero":
+            return torch.zeros(num_edges, h.shape[1], device=h.device, dtype=h.dtype)
+        if self.m_ij_init == "gaussian":
+            return torch.randn(num_edges, h.shape[1], device=h.device, dtype=h.dtype)
+        ctx = torch.cat([h[row], h[col], radial, fuse_embed], dim=1)
+        if self.m_ij_init == "edge_encoder":
+            return self.psi_init_mlp(ctx)
+        if self.m_ij_init == "context":
+            return self.context_init_mlp(ctx)
+        # context_stochastic: stochastic during training, deterministic (mu) at eval
+        mu = self.context_mu_mlp(ctx)
+        if self.training:
+            sigma = F.softplus(self.context_sigma_mlp(ctx))
+            return mu + sigma * torch.randn_like(mu)
+        return mu
+
 
 class RecurrentMPBlock(nn.Module):
     """
@@ -60,24 +109,21 @@ class RecurrentMPBlock(nn.Module):
     clamp: bool
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
-                 coords_weight, attention, tanh, clamp, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp):
+                 coords_weight, attention, tanh, clamp, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp,
+                 mlp_layer_norm):
         super().__init__()
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
-        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False)
-        linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
-        torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
+        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False, mlp_layer_norm)
+        self.vectorization_mlp = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
         if self.tanh:
-            vec_layers.append(nn.Tanh())
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
-        self.vectorization_mlp = nn.Sequential(*vec_layers)
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
 
     def forward(self, h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, m_prev, a):
@@ -162,7 +208,7 @@ class MultiHeadMPBlock(nn.Module):
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
-                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp):
+                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
@@ -173,17 +219,10 @@ class MultiHeadMPBlock(nn.Module):
         self.include_v_branch = include_v_branch
         self.include_force = include_force
         # Node MLP
-        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False)
+        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False, mlp_layer_norm)
         # Vectorization MLPs
-        def make_vec_mlp():
-            linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
-            torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
-            if self.tanh:
-                layers.append(nn.Tanh())
-            return nn.Sequential(*layers)
-        self.vectorization_mlp_a = make_vec_mlp()
-        self.vectorization_mlp_x = make_vec_mlp()
+        self.vectorization_mlp_a = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+        self.vectorization_mlp_x = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
         if self.tanh:
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         # Soft attention MLPs
@@ -191,32 +230,32 @@ class MultiHeadMPBlock(nn.Module):
             self.att_mlp_a = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
             self.att_mlp_x = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
         # Message MLPs
-        self.message_mij_mlp_a = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
-        self.message_mij_mlp_x = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+        self.message_mij_mlp_a = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+        self.message_mij_mlp_x = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
         # Gate mlp to add x in acceleration equivariant update
-        self.phi_vel_x = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+        self.phi_vel_x = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
         # v branch (only built when flag is on)
         if self.include_v_branch:
-            self.vectorization_mlp_v = make_vec_mlp()
+            self.vectorization_mlp_v = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
             if self.attention:
                 self.att_mlp_v = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-            self.message_mij_mlp_v = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
-            self.phi_vel_v = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.message_mij_mlp_v = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+            self.phi_vel_v = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         # u(t-1) channel (only built when flag is on)
         if self.include_u_tm1:
-            self.message_mij_mlp_u_tm1 = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+            self.message_mij_mlp_u_tm1 = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
             if self.attention:
                 self.att_mlp_u_tm1 = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-            self.vectorization_mlp_u_tm1 = make_vec_mlp()
-            self.phi_vel_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.vectorization_mlp_u_tm1 = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            self.phi_vel_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         # force channel (only built when flag is on)
         if self.include_force:
-            self.vectorization_mlp_f = make_vec_mlp()
+            self.vectorization_mlp_f = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
             if self.attention:
                 self.att_mlp_f = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-            self.message_mij_mlp_f = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
-            self.phi_vel_f = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.message_mij_mlp_f = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
+            self.phi_vel_f = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
 
     def _message_branch(self, mlp, h_row, h_col, radial, fuse_embed, att_mlp):
         m = mlp(torch.cat([h_row, h_col, radial, fuse_embed], dim=1))
@@ -348,7 +387,7 @@ class SingleVectorizeMPBlock(nn.Module):
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
-                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp):
+                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
@@ -358,43 +397,35 @@ class SingleVectorizeMPBlock(nn.Module):
         self.include_u_tm1 = include_u_tm1
         self.include_v_branch = include_v_branch
         self.include_force = include_force
-        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False)
+        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False, mlp_layer_norm)
         # Vectorization mlps
-        def make_vec_mlp():
-            linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
-            torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-            layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
-            if self.tanh:
-                layers.append(nn.Tanh())
-            return nn.Sequential(*layers)
-
-        self.vectorization_mlp_a = make_vec_mlp()
-        self.vectorization_mlp_x = make_vec_mlp()
+        self.vectorization_mlp_a = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+        self.vectorization_mlp_x = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
         # Attention mlp
         if self.tanh:
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
         # Message mlp
-        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
         # Gate mlp to add x in acceleration equivariant update
-        self.phi_vel_x = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+        self.phi_vel_x = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
         # v branch (only built when flag is on)
         if self.include_v_branch:
-            self.vectorization_mlp_v = make_vec_mlp()
-            self.phi_vel_v = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.vectorization_mlp_v = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            self.phi_vel_v = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         # u(t-1) channel (only built when flag is on)
         if self.include_u_tm1:
-            self.message_mij_mlp_u_tm1 = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+            self.message_mij_mlp_u_tm1 = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
             if self.attention:
                 self.att_mlp_u_tm1 = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-            self.vectorization_mlp_u_tm1 = make_vec_mlp()
-            self.phi_vel_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.vectorization_mlp_u_tm1 = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            self.phi_vel_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         # force channel (only built when flag is on; shares the main m_ij — no dedicated message MLP)
         if self.include_force:
-            self.vectorization_mlp_f = make_vec_mlp()
-            self.phi_vel_f = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.vectorization_mlp_f = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            self.phi_vel_f = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
 
     def forward(self, h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, a, v, x,
                 u_tm1, f):
@@ -481,7 +512,7 @@ class DirectAccelerationMPBlock(nn.Module):
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, n_layers_node_mlp,
-                 n_layers_gate_mlp, n_layers_message_mlp):
+                 n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
@@ -489,27 +520,22 @@ class DirectAccelerationMPBlock(nn.Module):
         self.tanh = tanh
         self.clamp = clamp
         self.include_u_tm1 = include_u_tm1
-        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False)
-        linlayer_final = nn.Linear(hidden_dim, 3, bias=False)
-        torch.nn.init.xavier_uniform_(linlayer_final.weight, gain=0.001)
-        # Vectorization MLP
-        vec_layers = [nn.Linear(hidden_dim, hidden_dim), act_fn_factory(), linlayer_final]
+        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim, act_fn_factory, False, mlp_layer_norm)
+        self.vectorization_mlp = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
         if self.tanh:
-            vec_layers.append(nn.Tanh())
             self.coords_range = nn.Parameter(torch.ones(1)) * 3
-        self.vectorization_mlp = nn.Sequential(*vec_layers)
         # Attention MLP
         if self.attention:
             self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
         # Message MLP
-        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True)
+        self.message_mij_mlp = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim, act_fn_factory, True, mlp_layer_norm)
         # Gate MLPs to add x, v to acceleration in equivariant update
-        self.phi_vel = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
-        self.phi_pos = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+        self.phi_vel = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
+        self.phi_pos = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
         self.layer_norm_h = nn.LayerNorm(hidden_dim)
         # Gate MLP for frozen u(t-1) (only built when flag is on)
         if self.include_u_tm1:
-            self.phi_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False)
+            self.phi_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out, act_fn_factory, False, mlp_layer_norm)
 
     def forward(self, h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, a, v, x,
                 u_tm1):

@@ -8,7 +8,7 @@ defaults:
   - noise: no_noise
   - loss: default
   - validation: default
-  - data: slurm 
+  - data: default 
   - lr_scheduler: plateau_long
   - residuals: default
   - devices: one_gpu

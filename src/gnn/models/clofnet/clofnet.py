@@ -20,9 +20,10 @@ from abc import ABC, abstractmethod
 from torch import nn
 
 from src.gnn.models.clofnet.scalarizer_localframe import (coord2localframe, frame_basis_from_edges, build_s_ij)
-from src.gnn.models.clofnet.clof_helpers import (split_edge_features, split_node_features)
+from src.gnn.models.clofnet.clof_helpers import (split_edge_features, split_node_features, make_mlp)
 from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_sum
-from src.gnn.models.clofnet.clof_mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock, RecurrentMPBlock,
+from src.gnn.models.clofnet.clof_mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock,
+                                                   RecurrentMessageInitializer, RecurrentMPBlock,
                                                    SingleVectorizeMPBlock)
 
 
@@ -50,12 +51,14 @@ class ClofNetBase(nn.Module, ABC):
     n_layers_node_mlp: int
     n_layers_message_mlp: int
     normalize_delta_a: bool
+    mlp_layer_norm: bool
 
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
                  frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
-                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a):
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
         super().__init__()
         self.act_fn_factory = act_fn_factory
         self.hidden_dim = hidden_dim
@@ -83,6 +86,7 @@ class ClofNetBase(nn.Module, ABC):
         self.n_layers_node_mlp = n_layers_node_mlp
         self.n_layers_message_mlp = n_layers_message_mlp
         self.normalize_delta_a = normalize_delta_a
+        self.mlp_layer_norm = mlp_layer_norm
         self.in_dim_edge_mlp = fuse_hid_dim
         num_node_triplets = split_idx_node // 3
         num_edge_triplets = split_idx_edge // 3
@@ -91,11 +95,9 @@ class ClofNetBase(nn.Module, ABC):
         self.s_ij_dim = pseudo_dim + (num_node_triplets + 1 + num_force_triplets) * 6 + num_edge_triplets * 3
         self.fuse_in_dim = in_dim_edge_scalars + self.s_ij_dim
         self.embedding_node_mlp = nn.Linear(in_dim_node_embed, self.hidden_dim)
-        self.fuse_mlp_embed = nn.Sequential(nn.Linear(self.fuse_in_dim, fuse_hid_dim), act_fn_factory(),
-                                            nn.Linear(fuse_hid_dim, fuse_hid_dim), act_fn_factory())
+        self.fuse_mlp_embed = make_mlp(2, self.fuse_in_dim, fuse_hid_dim, fuse_hid_dim, act_fn_factory, True, mlp_layer_norm)
         stress_in_dim = 2 * self.hidden_dim + (3 if use_neighbor_diff_norms else 0)
-        self.stress_mlp = nn.Sequential(nn.Linear(stress_in_dim, self.hidden_dim), act_fn_factory(),
-                                        nn.Linear(self.hidden_dim, 1))
+        self.stress_mlp = make_mlp(2, stress_in_dim, self.hidden_dim, 1, act_fn_factory, False, mlp_layer_norm)
         self.mp_blocks = self._build_mp_blocks()
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
         params = sum([np.prod(p.size()) for p in model_parameters])
@@ -288,6 +290,9 @@ class ClofNetBase(nn.Module, ABC):
         return torch.cat([a_l, stress], dim=-1)
 
 
+_VALID_M_IJ_INIT = frozenset({"zero", "gaussian", "edge_encoder", "context", "context_stochastic"})
+
+
 class ClofNetRecurrent(ClofNetBase):
     """
     Recurrent messages version, i.e. the following.
@@ -301,6 +306,8 @@ class ClofNetRecurrent(ClofNetBase):
     When include_force is True, node_force is projected into s_ij as an additional static term.
     """
 
+    message_initializer: RecurrentMessageInitializer
+
     def _build_mp_blocks(self):
         in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp + self.hidden_dim
         blocks = []
@@ -312,30 +319,40 @@ class ClofNetRecurrent(ClofNetBase):
                                            tanh=self.tanh, clamp=self.clamp_enable,
                                            n_layers_node_mlp=self.n_layers_node_mlp,
                                            n_layers_gate_mlp=self.n_layers_gate_mlp,
-                                           n_layers_message_mlp=self.n_layers_message_mlp))
+                                           n_layers_message_mlp=self.n_layers_message_mlp,
+                                           mlp_layer_norm=self.mlp_layer_norm))
         return nn.ModuleList(blocks)
 
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
                  frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
-                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a):
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
                          include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
-                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a)
+                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
+        if self.m_ij_init not in _VALID_M_IJ_INIT:
+            raise ValueError("m_ij_init must be one of %s, got '%s'" % (sorted(_VALID_M_IJ_INIT), self.m_ij_init))
+        self.message_initializer = RecurrentMessageInitializer(
+            hidden_dim=self.hidden_dim,
+            fuse_hid_dim=self.in_dim_edge_mlp,
+            m_ij_init=self.m_ij_init,
+            n_layers_message_mlp=self.n_layers_message_mlp,
+            act_fn_factory=self.act_fn_factory,
+            mlp_layer_norm=self.mlp_layer_norm,
+        )
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered, u_tm1_0, f0):
         h = h0
         a = a0
-        num_edges = int(edge_index_tuple[0].shape[0])
-        if self.m_ij_init == "gaussian":
-            m_ij = torch.randn(num_edges, self.hidden_dim, device=h.device, dtype=h.dtype)
-        else:
-            m_ij = torch.zeros(num_edges, self.hidden_dim, device=h.device, dtype=h.dtype)
+        fuse_embed_0 = self._fuse_embed(self._safe_a_for_fuse(a0), node_vec_chunks, edge_vec_chunks,
+                                        edge_scalars, frame_e33, edge_index_tuple, f0)
+        m_ij = self.message_initializer(h0, edge_index_tuple, radial, fuse_embed_0)
         m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
         for mp_block_l in self.mp_blocks:
             fuse_embed = self._fuse_embed(self._safe_a_for_fuse(a), node_vec_chunks, edge_vec_chunks,
@@ -380,20 +397,22 @@ class ClofNetSeparateMessages(ClofNetBase):
                                            include_force=self.include_force,
                                            n_layers_node_mlp=self.n_layers_node_mlp,
                                            n_layers_gate_mlp=self.n_layers_gate_mlp,
-                                           n_layers_message_mlp=self.n_layers_message_mlp))
+                                           n_layers_message_mlp=self.n_layers_message_mlp,
+                                           mlp_layer_norm=self.mlp_layer_norm))
         return nn.ModuleList(blocks)
 
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
                  frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
-                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a):
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
                          include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
-                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a)
+                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered, u_tm1_0, f0):
@@ -450,20 +469,22 @@ class ClofNetExtraLayer(ClofNetBase):
                                                  include_force=self.include_force,
                                                  n_layers_node_mlp=self.n_layers_node_mlp,
                                                  n_layers_gate_mlp=self.n_layers_gate_mlp,
-                                                 n_layers_message_mlp=self.n_layers_message_mlp))
+                                                 n_layers_message_mlp=self.n_layers_message_mlp,
+                                                 mlp_layer_norm=self.mlp_layer_norm))
         return nn.ModuleList(blocks)
 
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
                  frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
-                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a):
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
                          include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
-                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a)
+                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered, u_tm1_0, f0):
@@ -513,20 +534,22 @@ class ClofNetDirectAcceleration(ClofNetBase):
                                                     include_u_tm1=self.include_u_tm1,
                                                     n_layers_node_mlp=self.n_layers_node_mlp,
                                                     n_layers_gate_mlp=self.n_layers_gate_mlp,
-                                                    n_layers_message_mlp=self.n_layers_message_mlp))
+                                                    n_layers_message_mlp=self.n_layers_message_mlp,
+                                                    mlp_layer_norm=self.mlp_layer_norm))
         return nn.ModuleList(blocks)
 
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
                  frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
-                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a):
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
                          include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
-                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a)
+                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
                      edge_index_tuple, x_pos_centered, u_tm1_0, f0):

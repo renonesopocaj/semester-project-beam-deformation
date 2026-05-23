@@ -275,6 +275,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
             "n_layers_message_mlp": int(train_cfg.n_layers_message_mlp),
             "eps_mode": str(train_cfg.eps_mode),
             "normalize_delta_a": bool(train_cfg.normalize_delta_a),
+            "mlp_layer_norm": bool(train_cfg.mlp_layer_norm),
         }
         variant = str(train_cfg.clofnet_variant).lower()
         if variant == "recurrent":
