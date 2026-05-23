@@ -1,0 +1,45 @@
+# Hyperparameter study driver: ClofNet baseline (single option); extend `options` to sweep extras.
+# Training composes `conf/train/{train_compose_config}.yaml`.
+
+train_compose_config: train_sweep_defaults
+study_name: hp_opt_clofnet_L11_various_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+optimization_metric: overall_abs_mae
+pareto_x_metric:
+  - final_test/acc_all_rel_mae
+  - final_test/acc_all_abs_mae
+pareto_y_metric:
+  - final_test/stress_rel_mae
+  - final_test/stress_abs_mae
+wandb_project: beam_deformation
+wandb_offline: true
+base_dir: dataset
+
+sweeps:
+  - name: clofnet
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - training.total_epochs=150
+    options:
+      - label: clofnet_rec_L11_context_softeps_LN
+        overrides:
+          - model=clofnet_rec_L11_context_softeps_LN
+      - label: clofnet_rec_L11_contextstochastic_softeps_LN
+        overrides:
+          - model=clofnet_rec_L11_contextstochastic_softeps_LN
+      - label: clofnet_rec_L11_edgeencoder_softeps_LN
+        overrides:
+          - model=clofnet_rec_L11_edgeencoder_softeps_LN
+      - label: clofnet_rec_L11_gaussian_softeps
+        overrides:
+          - model=clofnet_rec_L11_gaussian_softeps
+      - label: clofnet_rec_L11_gaussian_softeps_LN
+        overrides:
+          - model=clofnet_rec_L11_gaussian_softeps_LN
+
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
