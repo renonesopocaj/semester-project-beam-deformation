@@ -18,9 +18,9 @@ include_u_tm1: false
 rescalarize_per_layer: false # rebuild F_ij^l, r_ij^l, s_ij^l every layer (Single/MultiHead only)
 include_v_branch: true # disable v branch in Single/MultiHead when false
 include_force: false # add force as separate equivariant channel (Single/MultiHead only)
-m_ij_init: "zero" # recurrent only: "zero" | "gaussian"
+m_ij_init: "zero"  # recurrent only: zero | gaussian | edge_encoder | context | context_stochastic
 n_layers_gate_mlp: 2 # number of linear layers in gate MLPs (phi_vel, phi_pos, ...)
 n_layers_node_mlp: 2 # number of linear layers in node update MLP
 n_layers_message_mlp: 3 # number of linear layers in message MLPs (phi_m)
 eps_mode: "hard" # coord2localframe EPS: "soft" (1e-5) | "hard" (1.0)
-normalize_delta_a: true # isotropic per-node scaling of a before _fuse_embed to prevent inf/inf NaN
+normalize_delta_a: true # isotropic per-node scaling of a before _fuse_embed to prevent inf/inf NaNmlp_layer_norm: false  # LayerNorm after each hidden Linear in MLPs
