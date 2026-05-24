@@ -21,15 +21,15 @@ sweeps:
       - noise=noise_per_epoch_noprev
       - training.total_epochs=150
     options:
-      - label: clofnet_rec_L11_context_softeps_LN # normal best
+      - label: clofnet_rec_L15_best
         overrides:
-          - model=clofnet_rec_L11_context_softeps_LN
-      - label: clofnet_rec_L11_contextstochastic_softeps_LN # framesourceU
+          - model=clofnet_rec_L15_best
+      - label: clofnet_rec_L15_best_displ # framesourceU
         overrides:
-          - model=clofnet_rec_L11_contextstochastic_softeps_LN
-      - label: clofnet_rec_L11_edgeencoder_softeps_LN # neighbnormdiff
+          - model=clofnet_rec_L15_best_displ
+      - label: clofnet_rec_L15_best_neighbnormdiff # neighbnormdiff
         overrides:
-          - model=clofnet_rec_L11_edgeencoder_softeps_LN
+          - model=clofnet_rec_L15_best_neighbnormdiff
 
 
 hydra:
