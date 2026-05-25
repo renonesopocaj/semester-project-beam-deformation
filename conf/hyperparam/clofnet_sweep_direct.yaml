@@ -20,12 +20,27 @@ sweeps:
     fixed_overrides:
       - noise=noise_per_epoch_noprev
     options:
-      - label: clofnet_direct_L8_hardeps
+      - label: clofnet_direct_H192_L11_softeps_uframsource_LN
         overrides:
-          - model=clofnet_direct_L8_hardeps
-      - label: clofnet_direct_L8_softeps
+          - model=clofnet_direct_H192_L11_softeps_uframsource_LN
+      - label: clofnet_direct_H192_L11_softeps_uframesource_LN_recurrent
         overrides:
-          - model=clofnet_direct_L8_softeps
+          - model=clofnet_direct_H192_L11_softeps_uframesource_LN_recurrent
+      - label: clofnet_direct_L11_hardeps_uframesource_LN
+        overrides:
+          - model=clofnet_direct_L11_hardeps_uframesource_LN
+      - label: clofnet_direct_L11_softeps_uframesource_LN
+        overrides:
+          - model=clofnet_direct_L11_softeps_uframesource_LN
+      - label: clofnet_direct_L11_softeps_uframesource_LN_tanh
+        overrides:
+          - model=clofnet_direct_L11_softeps_uframesource_LN_tanh
+      - label: clofnet_direct_L11_uframesource_LN_includetm1
+        overrides:
+          - model=clofnet_direct_L11_uframesource_LN_includetm1
+      - label: clofnet_L11_GOAT
+        overrides:
+          - model=clofnet_L11_GOAT
 
 hydra:
   run:
