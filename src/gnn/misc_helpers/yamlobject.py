@@ -311,6 +311,7 @@ class TrainYaml:
             self.n_layers_message_mlp = flattened_cfg["n_layers_message_mlp"]
             self.eps_mode = flattened_cfg["eps_mode"]
             self.normalize_delta_a = flattened_cfg["normalize_delta_a"]
+            self.mlp_layer_norm = flattened_cfg["mlp_layer_norm"]
         elif self.model_name == "transolver":
             self.transolver_n_layers = flattened_cfg["transolver_n_layers"]
             self.transolver_n_hidden = flattened_cfg["transolver_n_hidden"]

@@ -18,6 +18,7 @@ base_dir: dataset
 sweeps:
   - name: clofnet
     fixed_overrides:
+      - computational=slurm_1gpu_batch64
       - noise=noise_per_epoch_noprev
       - training.total_epochs=150
     options:
