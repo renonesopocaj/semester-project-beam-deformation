@@ -29,7 +29,7 @@ from src.gnn.train import create_model
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRAIN_CONFIG_DIR = REPO_ROOT / "conf" / "train"
-TRAIN_CONFIG_NAME = "train"
+TRAIN_CONFIG_NAME = "train_sanity_sweep"
 
 # ---- Change this constant to select any config in conf/train/model/ ----
 # MODEL_CONFIG_NAME = "transolver_5L_HD256_AH8_S32_R1"
@@ -47,7 +47,11 @@ TRAIN_CONFIG_NAME = "train"
 # MODEL_CONFIG_NAME = "clofnet_rec_L8_softeps_framesourceu"
 # MODEL_CONFIG_NAME = "clofnet_rec_L8_gaussian_softeps"
 # MODEL_CONFIG_NAME = "mgn_H400_L11_1layermlp"
-MODEL_CONFIG_NAME = "mgn_H128_L20"
+# MODEL_CONFIG_NAME = "mgn_H128_L20"
+# MODEL_CONFIG_NAME = "clofnet_sep_includeforce_includetm1"
+# MODEL_CONFIG_NAME = "clofnet_sep_includetm1"
+# MODEL_CONFIG_NAME = "clofnet_sep_includeforce"
+MODEL_CONFIG_NAME = "clofnet_sep"
 TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------
