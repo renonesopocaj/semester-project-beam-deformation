@@ -2,7 +2,7 @@
 # Same shape as `train.yaml`: set every `defaults` entry and top-level field here; sweep overrides still apply on top.
 
 defaults:
-  - computational: in_memory_slurm_1gpu_littlebatch
+  - computational: slurm_1gpu_batch32
   - model: mgn_deep_midmsg # MGN with 12 messages, latent_dim 312, and dropout 0.05 in encoder+heads
   - training: slurm # contains .total_epochs
   - noise: no_noise
