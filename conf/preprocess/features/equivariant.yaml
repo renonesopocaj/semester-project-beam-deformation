@@ -12,11 +12,11 @@ enable_force_node: false
 enable_velocity_node: false
 enable_node_norms: false 
 # Edge
-enable_edge_velocity: true
-enable_force_edge: true
-enable_displ_edge: true
-enable_abs_pos_edge: true
-enable_abs_rest_pos_edge: true
+enable_edge_velocity: false
+enable_force_edge: false
+enable_displ_edge: false
+enable_abs_pos_edge: false
+enable_abs_rest_pos_edge: false
 # Edge norms
 enable_abs_pos_edge_norm: true # note: displacement norm is not necessary (it's the same)
 enable_rest_pos_edge_norm: true

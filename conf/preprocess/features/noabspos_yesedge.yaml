@@ -6,7 +6,6 @@ mises_log: true
 enable_absolute_pos: false # needs also additional enabler for edges
 enable_past_history: true
 # Node
-# Node
 enable_velocity_node: true
 enable_displacement_node: true
 enable_force_node: true
