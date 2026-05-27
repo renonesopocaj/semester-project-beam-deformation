@@ -417,6 +417,23 @@ Each study YAML under `conf/hyperparam/` defines a `sweeps:` list. `hyperparam_o
 
 The compose root for each trial is set by `train_compose_config` (default: `train_sweep_defaults`). The study tracks `optimization_metric` (`overall_abs_mae` or `overall_relative_mae`) and optionally produces Pareto plots for pairs defined in `pareto_x_metric` / `pareto_y_metric`, drawn from `final_test/*` W&B keys.
 
+### Head sweeps and target_mode
+
+Sweeps that compare the `von_mises` and `full_stress` output heads (e.g. `conf/hyperparam/head_transolver_sweep.yaml`) require two separately preprocessed datasets:
+
+| Option type | Dataset | Data config override |
+|-------------|---------|----------------------|
+| `target_mode="von_mises"` | `…/z_isotr_centr_nonlin/medium` | _(default, no override)_ |
+| `target_mode="full_stress"` | `…/z_isotr_centr_nonlin_fs/medium` | `data=full_stress` (local) or `data=slurm_full_stress` (SLURM) |
+
+The `_fs` dataset is created by running preprocessing with `target_mode: full_stress` (the directory suffix is appended automatically by `preprocess.py`):
+
+```shell
+python -m src.gnn.preprocess features=nonlin target_mode=full_stress
+```
+
+Every `full_stress` option in a head sweep YAML must include the `data=full_stress` (or `data=slurm_full_stress`) override so that the on-disk `config.yaml` actually reports `target_mode: full_stress`. Without it, training silently loads the von Mises dataset and all trials produce identical metrics. `run_train_pipeline` now raises a `ValueError` at startup if a mismatch is detected.
+
 ### Output artifacts
 
 One invocation of `python -m src.gnn.hyperparam_opt` produces:

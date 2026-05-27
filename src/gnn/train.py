@@ -33,7 +33,8 @@ from src.gnn.models.transolver.transolvernet import TransolverNet
 from src.gnn.models.clofnet.clofnet import (ClofNetDirectAcceleration, ClofNetExtraLayer, ClofNetRecurrent,
                                             ClofNetSeparateMessages)
 from src.gnn.preprocessing.build_features import probe_feature_layout
-from src.gnn.misc_helpers.yamlobject import PreprocessYaml, TrainYaml, cfg_for_wandb, train_cfg_yaml_for_wandb
+from src.gnn.misc_helpers.yamlobject import (PreprocessYaml, TrainYaml, assert_target_mode_consistent,
+                                             cfg_for_wandb, train_cfg_yaml_for_wandb)
 from src.gnn.misc_helpers.misc import (human_readable_storage, module_param_and_buffer_storage_bytes,
                                        pyg_data_tensor_storage_bytes)
 from src.gnn.dataloaders.inmemorytimestepdataset import InMemoryTimeStepDataset, InMemoryNoisedDataset
@@ -687,8 +688,10 @@ def run_train_pipeline(cfg):
     train_cfg = TrainYaml(cfg)
     seed_everything(train_cfg.seed, workers=True)  # Recommended by Lightning docs
 
-    with open(Path(train_cfg.dataset_dir) / "config.yaml", "r") as file:
+    with open(train_cfg.preprocess_config_path, "r") as file:
         preprocess_dict = yaml.safe_load(file)
+
+    assert_target_mode_consistent(cfg, preprocess_dict, train_cfg.preprocess_config_path)
 
     # Print preprocess cfg
     print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(preprocess_dict, resolve=True) + "\n" + "=" * 80 + "\n\n")
