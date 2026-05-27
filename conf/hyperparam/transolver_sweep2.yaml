@@ -1,0 +1,60 @@
+# Hyperparameter study driver: Transolver model size sweep.
+# Training composes `conf/train/{train_compose_config}.yaml`.
+
+train_compose_config: train_sweep_defaults
+study_name: hp_opt_transolver2_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+optimization_metric: overall_abs_mae
+pareto_x_metric:
+  - final_test/acc_all_rel_mae
+  - final_test/acc_all_abs_mae
+pareto_y_metric:
+  - final_test/stress_rel_mae
+  - final_test/stress_abs_mae
+wandb_project: beam_deformation
+wandb_offline: true
+base_dir: /scratch/izar/senoner/dataset
+
+# FIXME: do the following 1) smaller HD (192 or 128) but R!=1 (=2,4 resp) 2) more heads H = 7
+sweeps:
+  - name: transolver_arch
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - computational.torch_compile=False
+    options:
+      - label: transolver_mid_S128
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=128
+      - label: transolver_mid_S64
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=64
+      - label: transolver_mid_S32
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+      - label: transolver_mid_S16
+        overrides:
+          - model=transolver_5L_HD256_AH30_S32_R1
+          - model.transolver_slice_num=16
+      - label: transolver_big_S128
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=128
+      - label: transolver_big_S64
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=64
+      - label: transolver_big_S32
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+      - label: transolver_big_S16
+        overrides:
+          - model=transolver_7L_HD312_AH15_S32_R4
+          - model.transolver_slice_num=16
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

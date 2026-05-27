@@ -1,0 +1,55 @@
+# Hyperparameter study driver: ClofNet baseline (single option); extend `options` to sweep extras.
+# Training composes `conf/train/{train_compose_config}.yaml`.
+
+train_compose_config: train_sweep_defaults
+study_name: hp_opt_transolver_heads_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+optimization_metric: overall_abs_mae
+pareto_x_metric:
+  - final_test/acc_all_rel_mae
+  - final_test/acc_all_abs_mae
+pareto_y_metric:
+  - final_test/stress_rel_mae
+  - final_test/stress_abs_mae
+wandb_project: beam_deformation
+wandb_offline: true
+base_dir: dataset
+
+sweeps:
+  - name: transolver_head_sweep
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - model.transolver_slice_num=128
+      - model=transolver_5L_HD256_AH30_S32_R1
+    options:
+      - label: transolver_vonmises
+        overrides:
+          - target_mode="von_mises"
+      - label: transolver_fullstress_w1.0
+        overrides:
+          - target_mode="full_stress"
+          - full_stress_loss_mode="components"
+          - stress_weight=1.0
+      - label: transolver_fullstress_w0.5
+        overrides:
+          - target_mode="full_stress"
+          - full_stress_loss_mode="components"
+          - stress_weight=0.5
+      - label: transolver_fullstress_vonmisesloss_w1.0
+        overrides:
+          - target_mode="full_stress"
+          - full_stress_loss_mode="components_plus_vm"
+          - stress_weight=1.0
+          - full_stress_vm_weight=1.0
+      - label: transolver_fullstress_vonmisesloss_w1.0
+        overrides:
+          - target_mode="full_stress"
+          - full_stress_loss_mode="components_plus_vm"
+          - stress_weight=0.5
+          - full_stress_vm_weight=0.5
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

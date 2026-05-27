@@ -200,6 +200,31 @@ def angle_residual(pred, batch, target_stats, dt, theta_max, time_discretizer):
                                                    batch.boundary_right_tri_index)
     return torch.mean(torch.relu(triangle_angles - theta_max))
 
+def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer):
+    """
+    Denormalizes predicted acceleration and reconstructs predicted next positions
+    using the same time integration scheme that was used for preprocessing.
+    Helper for angle_residual, volume_residual.
+
+    Args:
+        pred: torch.Tensor
+            Model prediction with shape `(num_nodes, 4)`.
+        batch: Data
+            Batched PyG graph containing current position and velocity.
+        target_stats: Stats or StatsModule
+            Target normalization statistics.
+        dt: float
+            Simulation time step.
+        time_discretizer: TimeDiscretizer
+            Time integration strategy matching the preprocessing scheme.
+    return: torch.Tensor
+        Predicted next positions with shape `(num_nodes, 3)`.
+    """
+    pred_acc = pred[:, :TARGET_ACC_DIM]
+    pred_acc_denorm = pred_acc * (target_stats.std[:TARGET_ACC_DIM] + EPS) + target_stats.mean[:TARGET_ACC_DIM]
+    x_tp1, _ = time_discretizer.integrate_acceleration(pred_acc_denorm, batch.x_vel_t, dt, batch.x_pos_t)
+    return x_tp1
+
 
 def compute_stress_loss_in_physical_space(pred, target, target_stats, loss_fn):
     """
@@ -331,29 +356,3 @@ def full_stress_components_plus_vm_loss(pred, target, target_stats, loss_fn, str
     base = full_stress_components_loss(pred, target, loss_fn, stress_weight)
     vm_reg = compute_vm_regularizer_loss(pred, target_stats, target_vm_physical, loss_fn)
     return base + vm_weight * vm_reg
-
-
-def _reconstruct_predicted_next_positions(pred, batch, target_stats, dt, time_discretizer):
-    """
-    Denormalizes predicted acceleration and reconstructs predicted next positions
-    using the same time integration scheme that was used for preprocessing.
-    Helper for angle_residual.
-
-    Args:
-        pred: torch.Tensor
-            Model prediction with shape `(num_nodes, 4)`.
-        batch: Data
-            Batched PyG graph containing current position and velocity.
-        target_stats: Stats or StatsModule
-            Target normalization statistics.
-        dt: float
-            Simulation time step.
-        time_discretizer: TimeDiscretizer
-            Time integration strategy matching the preprocessing scheme.
-    return: torch.Tensor
-        Predicted next positions with shape `(num_nodes, 3)`.
-    """
-    pred_acc = pred[:, :TARGET_ACC_DIM]
-    pred_acc_denorm = pred_acc * (target_stats.std[:TARGET_ACC_DIM] + EPS) + target_stats.mean[:TARGET_ACC_DIM]
-    x_tp1, _ = time_discretizer.integrate_acceleration(pred_acc_denorm, batch.x_vel_t, dt, batch.x_pos_t)
-    return x_tp1
