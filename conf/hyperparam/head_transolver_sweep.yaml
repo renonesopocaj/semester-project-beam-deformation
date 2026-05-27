@@ -30,23 +30,23 @@ sweeps:
           - target_mode="full_stress"
           - full_stress_loss_mode="components"
           - stress_weight=1.0
-      - label: transolver_fullstress_w0.5
+      - label: transolver_fullstress_w0.2
         overrides:
           - target_mode="full_stress"
           - full_stress_loss_mode="components"
-          - stress_weight=0.5
-      - label: transolver_fullstress_vonmisesloss_w1.0
-        overrides:
-          - target_mode="full_stress"
-          - full_stress_loss_mode="components_plus_vm"
-          - stress_weight=1.0
-          - full_stress_vm_weight=1.0
-      - label: transolver_fullstress_vonmisesloss_w1.0
+          - stress_weight=0.2
+      - label: transolver_fullstress_vonmisesloss_w0.5
         overrides:
           - target_mode="full_stress"
           - full_stress_loss_mode="components_plus_vm"
           - stress_weight=0.5
           - full_stress_vm_weight=0.5
+      - label: transolver_fullstress_vonmisesloss_w0.1
+        overrides:
+          - target_mode="full_stress"
+          - full_stress_loss_mode="components_plus_vm"
+          - stress_weight=0.1
+          - full_stress_vm_weight=0.1
 
 hydra:
   run:

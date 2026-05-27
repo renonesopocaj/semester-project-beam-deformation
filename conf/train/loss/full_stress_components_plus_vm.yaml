@@ -3,7 +3,7 @@
 # Requires the processed dataset to have been generated with preprocess.target_mode = "full_stress".
 loss_type: "mse"
 exp_mises: false
-stress_weight: 1.0
+stress_weight: 1.0 # Ignored if target_mode="von_mises", unless exp_mises: true
 # No-op when preprocess.target_mode == "von_mises". With target_mode == "full_stress" use one of:
 #   "components"          -> plain MSE/MAE/Huber on [acc(3), sig6(6)].
 #   "components_plus_vm"  -> as above plus a differentiable von Mises regularizer.
