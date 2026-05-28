@@ -56,23 +56,32 @@ def _denormalize_channels(x_norm, target_stats, channel_slice):
 
 def _physical_vm_from_data(data, exp_mises):
     """
-    Recover the physical (raw) per-node von Mises tensor from the ground-truth aux fields on a PyG Data.
+    Recover the per-node von Mises tensor from `y_von_mises` on a PyG Data, used by VonMisesStrategy
+    rollout code where both pred and gt share the same `exp_mises` gate.
 
-    `data.y_von_mises` stores the (possibly log-transformed when preprocess.mises_log=True) vm; the trainer
-    flag `exp_mises` mirrors that convention and lets us undo the log to obtain raw vm whenever requested.
+    Do NOT use this in FullStressStrategy: predicted vm there is always raw physical (derived from sig6),
+    so ground-truth vm must also be raw. Use `FullStressStrategy._gt_vm_physical(batch)` instead.
 
     Args:
         data: torch_geometric.data.Data or Batch
-            Carries `y_von_mises` (N, 1) aux field saved by the preprocessor.
+            Carries `y_von_mises` (N, 1) aux field saved by the preprocessor, or `y_sig6_t` (N, 6) as
+            a fallback.
         exp_mises: bool
-            True when the prediction (and thus the saved aux) is in log space; we then exponentiate to
-            recover physical vm.
+            When True, exponentiates `y_von_mises` to recover physical vm (requires mises_log=True on the
+            dataset side). When False, returns `y_von_mises` as-is (log space if mises_log=True, raw otherwise).
     return: torch.Tensor
-        Physical-space vm tensor of shape (N, 1).
+        vm tensor of shape (N, 1).
     """
-    if exp_mises:
-        return torch.exp(data.y_von_mises)
-    return data.y_von_mises
+    if hasattr(data, "y_von_mises"):
+        if exp_mises:
+            return torch.exp(data.y_von_mises)
+        return data.y_von_mises
+    if hasattr(data, "y_sig6_t"):
+        return compute_von_mises_from_sig6(data.y_sig6_t).unsqueeze(1)
+    raise AttributeError(
+        "Cannot recover physical von Mises: batch has neither 'y_von_mises' nor 'y_sig6_t'. "
+        "Re-preprocess the dataset or ensure the noised dataloader preserves aux stress fields."
+    )
 
 
 class TargetStrategy(ABC):
@@ -355,16 +364,33 @@ class FullStressStrategy(TargetStrategy):
     def stress_slice(self):
         return slice(3, 9)
 
+    @staticmethod
+    def _gt_vm_physical(batch):
+        """
+        Raw physical ground-truth von Mises for a FullStressStrategy batch, derived from `y_sig6_t`.
+
+        `y_sig6_t` is always stored as raw (un-logged) sig6 by the preprocessor, making this path
+        unambiguous regardless of `mises_log` or `exp_mises`. Predicted vm in full_stress mode is
+        also always raw (from `_compute_pred_vm_physical`), so both sides of any comparison are
+        consistently in physical space.
+
+        Args:
+            batch: torch_geometric.data.Batch
+                Batch carrying `y_sig6_t` (N, 6) raw stress components.
+        return: torch.Tensor
+            Raw physical vm of shape (N,).
+        """
+        return compute_von_mises_from_sig6(batch.y_sig6_t).reshape(-1)
+
     def compute_total_loss(self, pred, target, target_stats, loss_fn, batch):
         """
         Either (a) plain weighted component losses, or (b) plus a differentiable von Mises regularizer
-        derived from `pred[:, 3:9]` and compared against the physical ground-truth vm (from `batch.y_von_mises`,
-        respecting the `exp_mises` log convention).
+        derived from `pred[:, 3:9]` and compared against the physical ground-truth vm from `y_sig6_t`.
         """
         if self.full_stress_loss_mode == "components":
             return full_stress_components_loss(pred, target, loss_fn, self.stress_weight)
         if self.full_stress_loss_mode == "components_plus_vm":
-            target_vm_physical = _physical_vm_from_data(batch, self.exp_mises).reshape(-1)
+            target_vm_physical = self._gt_vm_physical(batch)
             return full_stress_components_plus_vm_loss(pred, target, target_stats, loss_fn, self.stress_weight,
                                                        target_vm_physical, self.full_stress_vm_weight)
         raise ValueError(f"Unknown full_stress_loss_mode '{self.full_stress_loss_mode}'.")
@@ -398,7 +424,7 @@ class FullStressStrategy(TargetStrategy):
         target_sig6 = target[:, 3:9].contiguous()
 
         pred_vm_physical = self._compute_pred_vm_physical(pred, target_stats)
-        target_vm_physical = _physical_vm_from_data(batch, self.exp_mises).reshape(-1)
+        target_vm_physical = self._gt_vm_physical(batch)
 
         metrics = {
             f"{prefix}/overall_relative_mae": compute_mean_relative_mae(pred, target),
@@ -441,7 +467,7 @@ class FullStressStrategy(TargetStrategy):
         pred_sig6 = pred[:, 3:9].contiguous()
         target_sig6 = target[:, 3:9].contiguous()
         pred_vm_physical = self._compute_pred_vm_physical(pred, target_stats)
-        target_vm_physical = _physical_vm_from_data(batch, self.exp_mises).reshape(-1)
+        target_vm_physical = self._gt_vm_physical(batch)
         s_a, c_a = relative_mae_sum_and_count(pred_acc, target_acc)
         sa_a, ca_a = absolute_mae_sum_and_count(pred_acc, target_acc)
         s_s, c_s = relative_mae_sum_and_count(pred_vm_physical, target_vm_physical)

@@ -7,7 +7,7 @@ Only thing from ground truth graph, i.e. that's not predicted, is the node force
 
 import torch
 from torch_geometric.data import Data
-from src.gnn.preprocessing.build_features import make_scripted_feature_builders
+from src.gnn.preprocessing.build_features import make_scripted_feature_builders, compute_von_mises_from_sig6
 from src.gnn.training.online_edge_augmentation import OnlineRandomEdgeAugmenter, fold_online_seed, num_graphs_in_pyg_batch
 
 def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, device, skip_first_num,
@@ -116,10 +116,14 @@ def do_rollout(model, test_loader, node_stats, edge_stats, target_stats, dt, dev
             rollout_fields = target_strategy.rollout_fields_from_pred_denorm(pred_denorm)
             von_mises_t_pred = rollout_fields["vm"]
             sig6_t_pred = rollout_fields["sig6"]
-            # Ground-truth aux fields are always saved by the preprocessor, so the rollout-time conversion
-            # uses the same convention as the (legacy) vm path: exp() when exp_mises is True.
-            von_mises_true = torch.exp(graph_ground_truth.y_von_mises) if exp_mises else graph_ground_truth.y_von_mises
             sig6_true = getattr(graph_ground_truth, "y_sig6_t")
+            # In full_stress mode pred vm is always raw physical (derived from sig6), so ground-truth vm
+            # must also come from sig6 for a consistent comparison, bypassing y_von_mises / exp_mises.
+            # In von_mises mode pred and gt both go through the same exp_mises gate, so y_von_mises is fine.
+            if target_strategy.target_mode == "full_stress":
+                von_mises_true = compute_von_mises_from_sig6(sig6_true)
+            else:
+                von_mises_true = torch.exp(graph_ground_truth.y_von_mises) if exp_mises else graph_ground_truth.y_von_mises
             x_true = graph_ground_truth.x_next
             v_true = graph_ground_truth.v_next
             # Input features (previous time step t) to obtain next step t+1

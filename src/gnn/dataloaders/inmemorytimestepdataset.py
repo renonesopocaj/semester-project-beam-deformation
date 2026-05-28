@@ -272,20 +272,26 @@ class _NoisedMixin:
         # FIXME: hardcoded target handling
         new_y[:, :3] += acc_correction * self.target_acc_norm_scale
 
-        return Data(x=new_x, edge_attr=new_edge_attr, # input node and edge features
-                    y=new_y, # target
-                    # Other features helpers for rollout or others
-                    edge_index=data.edge_index,
-                    x_element_connectivity=data.x_element_connectivity,
-                    y_acc_t=data.y_acc_t, # kept the same because it should be non-noised ground truth
-                    x_pos_tm1_prev=x_pos_tm1_prev,
-                    x_pos_t=x_noised,
-                    x_vel_t=v_noised,
-                    rest_pos=data.rest_pos,
-                    node_force=data.node_force,
-                    boundary_left_tri_index=data.boundary_left_tri_index,
-                    boundary_right_tri_index=data.boundary_right_tri_index,
-                    t=data.t)
+        out = Data(x=new_x, edge_attr=new_edge_attr, # input node and edge features
+                   y=new_y, # target
+                   # Other features helpers for rollout or others
+                   edge_index=data.edge_index,
+                   x_element_connectivity=data.x_element_connectivity,
+                   y_acc_t=data.y_acc_t, # kept the same because it should be non-noised ground truth
+                   x_pos_tm1_prev=x_pos_tm1_prev,
+                   x_pos_t=x_noised,
+                   x_vel_t=v_noised,
+                   rest_pos=data.rest_pos,
+                   node_force=data.node_force,
+                   boundary_left_tri_index=data.boundary_left_tri_index,
+                   boundary_right_tri_index=data.boundary_right_tri_index,
+                   t=data.t)
+        # Carry over auxiliary stress fields so full_stress mode can access y_von_mises
+        # (required by FullStressStrategy.compute_total_loss with components_plus_vm).
+        for _aux_key in ("y_von_mises", "y_sig6_t", "von_mises_log"):
+            if hasattr(data, _aux_key):
+                setattr(out, _aux_key, getattr(data, _aux_key))
+        return out
 
     ##################################################################################################################
     #                                   HELPERS COMPILED NORMALIZATION

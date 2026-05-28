@@ -128,6 +128,11 @@ class LitModule(L.LightningModule):
         self.scheduler = scheduler
         self.loss_fn = loss_factory(loss_type)
         self.exp_mises = train_cfg.exp_mises
+        if not preprocess_cfg.mises_log and train_cfg.exp_mises:
+            raise ValueError(
+                "exp_mises=True requires mises_log=True: cannot exponentiate a von Mises "
+                "value that was not log-transformed during preprocessing."
+            )
         self.stress_weight = train_cfg.stress_weight
         # The target strategy encapsulates everything that differs between vm and full_stress training.
         self.target_mode = getattr(preprocess_cfg, "target_mode")
