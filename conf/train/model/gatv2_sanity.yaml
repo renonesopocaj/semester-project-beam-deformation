@@ -1,12 +1,12 @@
 model_name: "gatv2"
-hidden_dim: 64
+hidden_dim: 16
 num_layers: 2
 heads: 2
 dropout_attn: 0.0
 negative_slope: 0.2
 add_self_loops: true
 share_weights: false
-residual: false
+residual: true # per-layer residual skip connection in processor
 layer_norm_encoder: true
 layer_norm_processor: true
 layer_norm_decoder: false

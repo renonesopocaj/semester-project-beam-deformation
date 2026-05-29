@@ -1,0 +1,19 @@
+model_name: "gatv2"
+hidden_dim: 192
+negative_slope: 0.2
+# Processor
+num_layers: 15
+layer_norm_processor: true
+heads: 8
+dropout_attn: 0.0
+add_self_loops: true
+share_weights: true
+residual: true # per-layer residual skip connection in processor
+# ENcoder
+layer_norm_encoder: true
+num_layers_encoder: 2
+dropout_encoder: 0.05
+# Decoder/Head
+layer_norm_decoder: false
+num_layers_heads: 2
+dropout_head: 0.05
