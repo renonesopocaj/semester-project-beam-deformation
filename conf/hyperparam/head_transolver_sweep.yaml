@@ -30,35 +30,35 @@ sweeps:
       - model=transolver_5L_HD256_AH30_S32_R1
       - computational.torch_compile=False
     options:
-      - label: transolver_vonmises
+      - label: fullstress_vonmisesloss_w0.5
+        overrides:
+          - data=full_stress
+          - target_mode="full_stress"
+          - loss.full_stress_loss_mode="components_plus_vm"
+          - loss.stress_weight=0.5
+          - loss.full_stress_vm_weight=0.5
+      - label: fullstress_vonmisesloss_w0.25
+        overrides:
+          - data=full_stress
+          - target_mode="full_stress"
+          - loss.full_stress_loss_mode="components_plus_vm"
+          - loss.stress_weight=0.25
+          - loss.full_stress_vm_weight=0.25
+      - label: vonmises
         overrides:
           - target_mode="von_mises"
-      - label: transolver_fullstress_w1.0
+      - label: fullstress_w1.0
         overrides:
           - data=full_stress
           - target_mode="full_stress"
-          - full_stress_loss_mode="components"
-          - stress_weight=1.0
-      - label: transolver_fullstress_w0.5
+          - loss.full_stress_loss_mode="components"
+          - loss.stress_weight=1.0
+      - label: fullstress_w0.5
         overrides:
           - data=full_stress
           - target_mode="full_stress"
-          - full_stress_loss_mode="components"
-          - stress_weight=0.5
-      - label: transolver_fullstress_vonmisesloss_w0.5
-        overrides:
-          - data=full_stress
-          - target_mode="full_stress"
-          - full_stress_loss_mode="components_plus_vm"
-          - stress_weight=0.5
-          - full_stress_vm_weight=0.5
-      - label: transolver_fullstress_vonmisesloss_w0.25
-        overrides:
-          - data=full_stress
-          - target_mode="full_stress"
-          - full_stress_loss_mode="components_plus_vm"
-          - stress_weight=0.25
-          - full_stress_vm_weight=0.25
+          - loss.full_stress_loss_mode="components"
+          - loss.stress_weight=0.5
 
 hydra:
   run:

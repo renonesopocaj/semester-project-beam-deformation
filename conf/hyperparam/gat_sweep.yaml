@@ -26,6 +26,7 @@ sweeps:
   - name: mgn
     fixed_overrides:
       - noise=noise_per_epoch_noprev
+      - computational.torch_compile=False
     options:
       - label: gatv2_HD256_L8_H8
         overrides:
