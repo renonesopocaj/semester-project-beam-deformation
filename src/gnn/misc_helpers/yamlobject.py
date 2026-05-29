@@ -393,3 +393,34 @@ def train_cfg_yaml_for_wandb(cfg):
         Multi-line YAML string for wandb.summary.
     """
     return OmegaConf.to_yaml(OmegaConf.create(cfg_for_wandb(cfg)), resolve=True)
+
+
+def assert_target_mode_consistent(cfg, preprocess_dict, preprocess_config_path):
+    """
+    Raises ValueError when the train config declares a target_mode that does not match the
+    target_mode baked into the processed dataset.  The training pipeline reads target_mode
+    exclusively from preprocess_cfg (the on-disk dataset config), so a mismatched train-side
+    override would be silently ignored, causing every sweep trial to train identically on the
+    wrong mode.
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Resolved Hydra train config (may have a top-level target_mode key).
+        preprocess_dict: dict
+            Preprocess config loaded from the dataset's config.yaml.
+        preprocess_config_path: str or Path
+            Path displayed in the error message for easier debugging.
+    """
+    cfg_target_mode = OmegaConf.select(cfg, "target_mode")
+    if cfg_target_mode is None:
+        return
+    dataset_target_mode = preprocess_dict.get("target_mode", "von_mises")
+    if str(cfg_target_mode) != str(dataset_target_mode):
+        raise ValueError(
+            f"train config has target_mode='{cfg_target_mode}' but the dataset at "
+            f"'{preprocess_config_path}' was preprocessed with "
+            f"target_mode='{dataset_target_mode}'. "
+            f"Point data.dataset_dir (or use data=full_stress / data=slurm_full_stress) at the "
+            f"matching processed dataset. Full-stress datasets are stored under a directory "
+            f"whose name ends with '_fs' (e.g. z_isotr_centr_nonlin_fs)."
+        )

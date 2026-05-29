@@ -1,5 +1,12 @@
-# Hyperparameter study driver: ClofNet baseline (single option); extend `options` to sweep extras.
+# Hyperparameter study: MGN output-head (von Mises vs full-stress target) sweep.
 # Training composes `conf/train/{train_compose_config}.yaml`.
+#
+# IMPORTANT — dataset requirements:
+#   - von Mises options use the default data config (z_isotr_centr_nonlin/medium).
+#   - full_stress options switch to `data=full_stress` (z_isotr_centr_nonlin_fs/medium).
+#     That dataset must be preprocessed first:
+#       python -m src.gnn.preprocess features=nonlin target_mode=full_stress
+#   - On SLURM replace `data=full_stress` with `data=slurm_full_stress` in each full_stress option.
 
 train_compose_config: train_sweep_defaults
 study_name: hp_opt_mgn_heads_${now:%Y-%m-%d_%H-%M-%S}
@@ -27,22 +34,26 @@ sweeps:
           - target_mode="von_mises"
       - label: mgn_fullstress_w1.0
         overrides:
+          - data=full_stress
           - target_mode="full_stress"
           - full_stress_loss_mode="components"
           - stress_weight=1.0
       - label: mgn_fullstress_w0.5
         overrides:
+          - data=full_stress
           - target_mode="full_stress"
           - full_stress_loss_mode="components"
           - stress_weight=0.5
       - label: mgn_fullstress_vonmisesloss_w1.0
         overrides:
+          - data=full_stress
           - target_mode="full_stress"
           - full_stress_loss_mode="components_plus_vm"
           - stress_weight=1.0
           - full_stress_vm_weight=1.0
-      - label: mgn_fullstress_vonmisesloss_w1.0
+      - label: mgn_fullstress_vonmisesloss_w0.5
         overrides:
+          - data=full_stress
           - target_mode="full_stress"
           - full_stress_loss_mode="components_plus_vm"
           - stress_weight=0.5

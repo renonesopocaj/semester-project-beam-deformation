@@ -1,0 +1,10 @@
+# Cluster config — full-stress processed dataset.
+# Preprocess using target_mode: "full_stress" to create this directory.
+# save_dir / z_isotr_centr_nonlin_fs / dataset_size (see preprocess create_dir_name for naming).
+dataset_dir: "/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+train_dir: ${data.dataset_dir}/train
+val_dir: ${data.dataset_dir}/val
+test_dir: ${data.dataset_dir}/test
+stats_path: ${data.dataset_dir}/train/stats/stats.json
+preprocess_config_path: ${data.dataset_dir}/config.yaml
+extra_info_dir: ${data.dataset_dir}/extra_info
