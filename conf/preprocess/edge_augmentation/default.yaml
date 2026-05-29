@@ -1,0 +1,8 @@
+# Edge topology augmentation (offline). Ratios in [0, 1].
+# k_hop: non-negative int adds edges for pairs within that hop distance on the mesh, or "fully connected" for a
+# complete graph (incompatible with random_offline > 0 and add_wall_edges).
+k_hop: 0
+random_offline: 0.0
+add_wall_edges: null # null | "all" | "pseudo_random"
+wall_border_percentage: 0.0
+wall_internal_percentage: 0.0

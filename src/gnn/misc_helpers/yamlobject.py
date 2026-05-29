@@ -130,30 +130,16 @@ class PreprocessYaml:
         self.enable_displacement_node = flattened_cfg["enable_displacement_node"]
         self.enable_force_node = flattened_cfg["enable_force_node"]
         self.enable_rest_pos_node = flattened_cfg["enable_rest_pos_node"]
-
-        edge_aug = _extract_nested(cfg, "edge_augmentation")
-        if edge_aug is None:
-            self.edge_aug_k_hop = 0
-            self.edge_aug_random_offline = 0.0
+        self.edge_aug_k_hop = int(flattened_cfg["k_hop"])
+        self.edge_aug_random_offline = float(flattened_cfg["random_offline"])
+        self.edge_aug_add_wall_edges = flattened_cfg["add_wall_edges"]
+        if self.edge_aug_add_wall_edges is None or self.edge_aug_add_wall_edges == "null":
             self.edge_aug_add_wall_edges = None
-            self.edge_aug_wall_border_percentage = 0.0
-            self.edge_aug_wall_internal_percentage = 0.0
         else:
-            if isinstance(edge_aug, DictConfig):
-                edge_aug = OmegaConf.to_container(edge_aug, resolve=True)
-            kh = edge_aug.get("k_hop", 0)
-            if isinstance(kh, str):
-                self.edge_aug_k_hop = kh
-            else:
-                self.edge_aug_k_hop = int(kh)
-            self.edge_aug_random_offline = float(edge_aug.get("random_offline", 0.0))
-            raw_wall = edge_aug.get("add_wall_edges", None)
-            if raw_wall is None or raw_wall == "null":
-                self.edge_aug_add_wall_edges = None
-            else:
-                self.edge_aug_add_wall_edges = str(raw_wall)
-            self.edge_aug_wall_border_percentage = float(edge_aug.get("wall_border_percentage", 0.0))
-            self.edge_aug_wall_internal_percentage = float(edge_aug.get("wall_internal_percentage", 0.0))
+            self.edge_aug_add_wall_edges = str(self.edge_aug_add_wall_edges)
+
+        self.edge_aug_wall_border_percentage = float(flattened_cfg["wall_border_percentage"])
+        self.edge_aug_wall_internal_percentage = float(flattened_cfg["wall_internal_percentage"])
         validate_edge_augmentation_config(self.edge_aug_k_hop, self.edge_aug_random_offline,
                                           self.edge_aug_add_wall_edges, self.edge_aug_wall_border_percentage,
                                           self.edge_aug_wall_internal_percentage)

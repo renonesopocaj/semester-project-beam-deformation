@@ -46,20 +46,11 @@ def create_dir_name(cfg_obj):
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else ''
     # miseslog_str = '_log' if cfg_obj.mises_log else ''
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
-    # enable_absolute_pos_str = '_abs' if cfg_obj.enable_absolute_pos else '_noabs'
-    # enable_past_pos_displ_str = '_xtm1' if cfg_obj.enable_past_history else '_noxtm1'
-    # enable_node_norms_str = '_normnode' if cfg_obj.enable_node_norms else '_nonormnode'
-    # enable_edge_velocity_str = '_edgevel' if cfg_obj.enable_edge_velocity else '_noedgevel'
-    # enable_force_edge_str = '_edgeforce' if cfg_obj.enable_force_edge else '_noedgeforce'
-    # enable_stretch_edge_str = '_stretch' if cfg_obj.enable_stretch_edge else '_nostretch'
-    # enable_rotation_angle_str = '_rot' if cfg_obj.enable_rotation_angle else '_norot'
     time_discr_str = "_centr" if cfg_obj.time_discretization_method == "second_order_central" else "_newmark"
     # Append "_fs" marker only when the supervised target is the full stress tensor; this lets the
     # two flavours of the processed dataset coexist on disk under the same dataset root.
     target_mode_str = "_fs" if getattr(cfg_obj, "target_mode") == "full_stress" else ""
-    # processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{miseslog_str}{enable_absolute_pos_str}"
-    #                       f"{enable_past_pos_displ_str}{enable_node_norms_str}{enable_edge_velocity_str}"
-    #                       f"{enable_force_edge_str}{enable_stretch_edge_str}{enable_rotation_angle_str}")
+
     processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}{target_mode_str}"
     return processed_dir_name
 
