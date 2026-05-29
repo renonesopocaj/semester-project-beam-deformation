@@ -130,6 +130,7 @@ class PreprocessYaml:
         self.enable_displacement_node = flattened_cfg["enable_displacement_node"]
         self.enable_force_node = flattened_cfg["enable_force_node"]
         self.enable_rest_pos_node = flattened_cfg["enable_rest_pos_node"]
+        # Connectivity
         self.edge_aug_k_hop = int(flattened_cfg["k_hop"])
         self.edge_aug_random_offline = float(flattened_cfg["random_offline"])
         self.edge_aug_add_wall_edges = flattened_cfg["add_wall_edges"]
@@ -137,7 +138,7 @@ class PreprocessYaml:
             self.edge_aug_add_wall_edges = None
         else:
             self.edge_aug_add_wall_edges = str(self.edge_aug_add_wall_edges)
-
+        self.edge_aug_name = flattened_cfg["edge_aug_name"]
         self.edge_aug_wall_border_percentage = float(flattened_cfg["wall_border_percentage"])
         self.edge_aug_wall_internal_percentage = float(flattened_cfg["wall_internal_percentage"])
         validate_edge_augmentation_config(self.edge_aug_k_hop, self.edge_aug_random_offline,

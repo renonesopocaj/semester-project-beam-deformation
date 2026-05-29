@@ -43,6 +43,7 @@ def load_selected_trajectories(extra_info_dir):
 
 def create_dir_name(cfg_obj):
     name_feat_str = f"_{cfg_obj.name_features}"
+    connectivity_str = f"_{cfg_obj.edge_aug_name}" if cfg_obj.edge_aug_name != "" else ""
     isotropic_str = '_isotr' if cfg_obj.isotropic_normalizer else ''
     # miseslog_str = '_log' if cfg_obj.mises_log else ''
     normalizer_str = 'z' if cfg_obj.normalizer_method == 'z' else 'rob'
@@ -50,8 +51,8 @@ def create_dir_name(cfg_obj):
     # Append "_fs" marker only when the supervised target is the full stress tensor; this lets the
     # two flavours of the processed dataset coexist on disk under the same dataset root.
     target_mode_str = "_fs" if getattr(cfg_obj, "target_mode") == "full_stress" else ""
-
-    processed_dir_name = f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}{target_mode_str}"
+    processed_dir_name = (f"{normalizer_str}{isotropic_str}{time_discr_str}{name_feat_str}{target_mode_str}"
+                          f"{connectivity_str}")
     return processed_dir_name
 
 def selected_indices_for_split(selected_trajs, split):
