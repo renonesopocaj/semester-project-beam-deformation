@@ -9,6 +9,7 @@ defaults:
 device: cpu
 dt: 0.08
 seed: 42
+low_memory: false # if true, stream the most memory-heavy preprocessing work per trajectory
 time_discretization_method: "second_order_central" # "newmark" | "second_order_central"
 # Supervised target layout:
 #   "von_mises"   -> y = [acc(3), vm(1)] of shape (N, 4)  (current default)

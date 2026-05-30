@@ -83,6 +83,7 @@ class PreprocessYaml:
         self.device = flattened_cfg["device"]
         self.dt = flattened_cfg["dt"]
         self.seed = flattened_cfg["seed"]
+        self.low_memory = bool(flattened_cfg.get("low_memory", False))
         self.raw_data_dir = flattened_cfg["raw_data_dir"]
         self.base_dir = flattened_cfg["base_dir"]
         self.save_dir = flattened_cfg["save_dir"]

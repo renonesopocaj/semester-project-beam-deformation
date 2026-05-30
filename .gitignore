@@ -49,3 +49,4 @@ old_out_slurm
 wandb
 sweeps
 hyperparam_outputs/
+*.md
