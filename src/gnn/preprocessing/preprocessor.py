@@ -628,7 +628,8 @@ class TrainPreprocessor(Preprocessor):
 
     def _normalize_assign_features_train(self, show_progress):
         # Normalize and assign features
-        pbar = tqdm(range(len(self.out_graphs)), total=len(self.out_graphs), desc="Normalizing trajectories", disable=not show_progress)
+        pbar = tqdm(range(len(self.out_graphs)), total=len(self.out_graphs), desc="Normalizing trajectories",
+                    disable=not show_progress)
         # for t in range(len(self.out_graphs)):
         for t in pbar:
             _valued_node_features = self.normalizer.normalize(self.valued_node_features[t], self.node_stats)
