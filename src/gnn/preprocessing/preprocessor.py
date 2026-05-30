@@ -229,10 +229,23 @@ class Preprocessor(ABC):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
          self.traj_idx_list, self.targets) = ([], [], [], [], [], [])
 
-    def _save_preprocessed(self, traj_idx, out_graphs, save_dir):
+    def _save_preprocessed(self, traj_idx, out_graphs, save_dir, show_progress):
+        """
+        Args:
+            traj_idx: list[int]
+                trajectory index for each graph in out_graphs.
+            out_graphs: list[Data]
+                processed graphs to group and save by trajectory.
+            save_dir: Path or str
+                output split directory.
+            show_progress: bool
+                if true, render a save progress bar for this call.
+            return: None
+                Saves one graph_<traj>.pt file per trajectory.
+        """
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
-        for traj in tqdm(set(traj_idx), desc="Saving trajectories"):
+        for traj in tqdm(sorted(set(traj_idx)), desc="Saving trajectories", disable=not show_progress):
             # print(f"Saving trajectory: {traj}")
             graphs = [graph for idx, graph in zip(traj_idx, out_graphs) if idx == traj]
             # print(f"\tLength: {len(graphs)} timesteps")
@@ -287,9 +300,9 @@ class Preprocessor(ABC):
         self._compute_stats_train(cfg, split_idx_edge, split_idx_node)  # if val doesn't do anything
         self._save_stats_train(self.node_stats, self.edge_stats, self.target_stats, save_dir)  # if val nothing
         self._save_auxiliary_train_artifacts(save_dir)
-        self._normalize_assign_features_train()
+        self._normalize_assign_features_train(True)
         # Save all processed data (in all cases)
-        self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
+        self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir, True)
 
     def _process_trajectory_file(self, cfg, idx_file, filename):
         """
@@ -402,7 +415,7 @@ class Preprocessor(ABC):
         raise NotImplementedError("_save_stats")
 
     @abstractmethod
-    def _normalize_assign_features_train(self):
+    def _normalize_assign_features_train(self, show_progress):
         raise NotImplementedError("normalize_assign_features")
 
     @abstractmethod
@@ -475,8 +488,8 @@ class TrainPreprocessor(Preprocessor):
         pbar = tqdm(enumerate(filenames), total=len(filenames), desc="Saving normalized train trajectories")
         for idx_file, filename in pbar:
             self._process_trajectory_file(cfg, idx_file, filename)
-            self._normalize_assign_features_train()
-            self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
+            self._normalize_assign_features_train(False)
+            self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir, False)
             self._clear_working_buffers()
 
     def _compute_streamed_stats(self, cfg, node_accumulator, edge_accumulator, target_accumulator, split_idx_edge, split_idx_node):
@@ -613,9 +626,9 @@ class TrainPreprocessor(Preprocessor):
                                         boundary_right_tri_index=boundary_right_triangles))
         self.targets.append(make_target_tensor(_a, _von_mises, _sig6, self.target_mode))
 
-    def _normalize_assign_features_train(self):
+    def _normalize_assign_features_train(self, show_progress):
         # Normalize and assign features
-        pbar = tqdm(range(len(self.out_graphs)), total=len(self.out_graphs), desc="Normalizing trajectories")
+        pbar = tqdm(range(len(self.out_graphs)), total=len(self.out_graphs), desc="Normalizing trajectories", disable=not show_progress)
         # for t in range(len(self.out_graphs)):
         for t in pbar:
             _valued_node_features = self.normalizer.normalize(self.valued_node_features[t], self.node_stats)
@@ -665,7 +678,7 @@ class ValPreprocessor(Preprocessor):
             split_idx_node, split_idx_edge = self._process_trajectory_file(cfg, idx_file, filename)
             self.split_idx_node = split_idx_node
             self.split_idx_edge = split_idx_edge
-            self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir)
+            self._save_preprocessed(self.traj_idx_list, self.out_graphs, save_dir, False)
             self._clear_working_buffers()
 
     def _compute_stats_train(self, cfg, split_idx_edge, split_idx_node):
@@ -674,7 +687,7 @@ class ValPreprocessor(Preprocessor):
     def _save_stats_train(self, node_stats, edge_stats, target_stats, save_dir):
         pass
 
-    def _normalize_assign_features_train(self):
+    def _normalize_assign_features_train(self, show_progress):
         pass
 
     def _load_stats(self, cfg):
