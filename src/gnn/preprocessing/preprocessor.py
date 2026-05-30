@@ -202,6 +202,7 @@ class Preprocessor(ABC):
     _build_node_features_scripted: Any
     _build_edge_features_scripted: Any
     collect_output_graphs: bool
+    collect_feature_buffers: bool
 
     def __init__(self, cfg, selected_indices, selected_limit):
         (self.out_graphs, self.categorical_node_features, self.valued_node_features, self.edge_features,
@@ -217,6 +218,7 @@ class Preprocessor(ABC):
         self._build_node_features_scripted = None
         self._build_edge_features_scripted = None
         self.collect_output_graphs = True
+        self.collect_feature_buffers = True
 
     def _clear_working_buffers(self):
         """
@@ -373,10 +375,11 @@ class Preprocessor(ABC):
             # can derive vm from sig6 or apply the optional vm regularizer when desired.
             _sig6 = extract_sig6_from_sig9(graph.y_sig_t)
 
-            # accumulate all graphs to out_graphs for stats computation
-            self.categorical_node_features.append(boundary_condition)
-            self.valued_node_features.append(_node_attr.clone())
-            self.edge_features.append(_edge_attr.clone())
+            # accumulate raw features only for train stats and train normalization
+            if self.collect_feature_buffers:
+                self.categorical_node_features.append(boundary_condition)
+                self.valued_node_features.append(_node_attr.clone())
+                self.edge_features.append(_edge_attr.clone())
             # Appends and creates PyG data object for both val and train
             # For val the features are normalized via the train stats before appending, for train I have yet
             # to compute the stats
@@ -637,6 +640,7 @@ class ValPreprocessor(Preprocessor):
     def __init__(self, cfg, save_dir_train, selected_indices, selected_limit):
         super().__init__(cfg, selected_indices, selected_limit)
         self.save_dir_train = save_dir_train
+        self.collect_feature_buffers = False
 
     def _preprocess_data_low_memory(self, cfg, graphs_dir, save_dir):
         """

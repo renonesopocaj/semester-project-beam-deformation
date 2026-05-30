@@ -135,6 +135,28 @@ def create_preprocessor(split, cfg, save_dir_train, selected_indices, selected_l
     else:
         raise NotImplementedError(f"{split} not implemented")
 
+
+def enforce_low_memory_for_large_edge_augmentation(cfg, cfg_obj):
+    """
+    Enable low-memory preprocessing for edge augmentation settings that otherwise accumulate too much data.
+
+    Args:
+        cfg: omegaconf.DictConfig
+            Hydra-composed preprocessing configuration.
+        cfg_obj: PreprocessYaml
+            parsed preprocessing configuration.
+        return: None
+            Updates cfg and cfg_obj in place when low-memory preprocessing is required.
+    """
+    if cfg_obj.low_memory:
+        return
+    if cfg_obj.edge_aug_k_hop >= 3:
+        print("\tEnabling low_memory=true because k_hop >= 3 stores large augmented edge features.")
+        with open_dict(cfg):
+            cfg.low_memory = True
+        cfg_obj.low_memory = True
+
+
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="preprocess")
 def main(cfg):
     """
@@ -143,8 +165,9 @@ def main(cfg):
             Hydra-composed configuration. Run with --multirun to sweep over multiple values,
             e.g.: python -m src.gnn.preprocess --multirun split=train,val,test
     """
-    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
     cfg_obj = PreprocessYaml(cfg)
+    enforce_low_memory_for_large_edge_augmentation(cfg, cfg_obj)
+    print("\n" + "=" * 80 + "\n\n" + OmegaConf.to_yaml(cfg, resolve=True) + "\n" + "=" * 80 + "\n\n")
     print(f"Preprocessing {cfg_obj.dataset_size} dataset\n" + "=" * 60)
     print(f"\tSave dir of config.yaml = {cfg_obj.save_dir}")
     save_dir = Path(cfg_obj.save_dir)
