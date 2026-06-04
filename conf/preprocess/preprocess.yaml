@@ -15,7 +15,7 @@ time_discretization_method: "second_order_central" # "newmark" | "second_order_c
 #   "von_mises"   -> y = [acc(3), vm(1)] of shape (N, 4)  (current default)
 #   "full_stress" -> y = [acc(3), sig6(6)] of shape (N, 9), with sig6 = [sxx, syy, szz, sxy, sxz, syz]
 # Aux per-Data attributes (y_sig6_t, y_von_mises, von_mises_log) are always saved.
-target_mode: "von_mises"
+target_mode: "full_stress"
 
 hydra:
   run:
