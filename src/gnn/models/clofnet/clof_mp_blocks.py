@@ -352,6 +352,239 @@ class MultiHeadMPBlock(nn.Module):
         return h_new, a_new, v_new, x_new, u_tm1_new, f_new, agg
 
 
+class RecurrentMultiHeadMPBlock(nn.Module):
+    """
+    Multi-head ClofNet block with branch-wise recurrent edge messages.
+
+                            ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
+                            mᵢⱼᵃ,⁽ˡ⁺¹⁾ = φₘᵃ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵃ,ˡ)
+                            mᵢⱼᵛ,⁽ˡ⁺¹⁾ = φₘᵛ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵛ,ˡ)   [only when include_v_branch]
+                            mᵢⱼˣ,⁽ˡ⁺¹⁾ = φₘˣ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˣ,ˡ)
+                            mᵢⱼᵘᵗᵐ¹,⁽ˡ⁺¹⁾ = φₘᵘᵗᵐ¹(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵘᵗᵐ¹,ˡ)
+                                                        [only when include_u_tm1]
+                            mᵢⱼᶠ,⁽ˡ⁺¹⁾ = φₘᶠ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᶠ,ˡ)   [only when include_force]
+
+    The node update, vectorization heads, and acceleration gates match MultiHeadMPBlock.
+    """
+
+    coords_weight: float
+    skip_connection: bool
+    attention: bool
+    tanh: bool
+    clamp: bool
+    include_u_tm1: bool
+    include_v_branch: bool
+    include_force: bool
+
+    def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
+                 coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
+                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
+        """
+        Args:
+            in_node_mlp_dim: int
+                Node update input width.
+            output_node_dim: int
+                Node update output width.
+            hidden_dim: int
+                Hidden state and recurrent message width.
+            in_mij_mlp_dim: int
+                Branch message input width, including the previous branch message.
+            act_fn_factory: callable
+                Zero-argument activation factory.
+            recurrent: bool
+                Whether to add the h skip inside the node update before the residual LayerNorm.
+            coords_weight: float
+                Scale applied to equivariant vector deltas.
+            attention: bool
+                Whether to apply branch-wise scalar attention to messages.
+            tanh: bool
+                Whether vectorization MLPs end with tanh.
+            clamp: bool
+                Whether to clamp per-edge vector deltas before aggregation.
+            vel_mlp_dim_out: int
+                Output width for equivariant gate MLPs.
+            include_u_tm1: bool
+                Whether to build the recurrent u(t-1) branch.
+            include_v_branch: bool
+                Whether to build the recurrent velocity branch.
+            include_force: bool
+                Whether to build the recurrent force branch.
+            n_layers_node_mlp: int
+                Number of Linear layers in the node update MLP.
+            n_layers_gate_mlp: int
+                Number of Linear layers in gate MLPs.
+            n_layers_message_mlp: int
+                Number of Linear layers in branch message MLPs.
+            mlp_layer_norm: bool
+                Whether helper MLPs insert LayerNorm after hidden Linear layers.
+        """
+        super().__init__()
+        self.coords_weight = coords_weight
+        self.skip_connection = recurrent
+        self.attention = attention
+        self.tanh = tanh
+        self.clamp = clamp
+        self.include_u_tm1 = include_u_tm1
+        self.include_v_branch = include_v_branch
+        self.include_force = include_force
+        self.node_h_mp_mlp = make_mlp(n_layers_node_mlp, in_node_mlp_dim, hidden_dim, output_node_dim,
+                                      act_fn_factory, False, mlp_layer_norm)
+        self.vectorization_mlp_a = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+        self.vectorization_mlp_x = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+        if self.tanh:
+            self.coords_range = nn.Parameter(torch.ones(1)) * 3
+        if self.attention:
+            self.att_mlp_a = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+            self.att_mlp_x = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+        self.message_mij_mlp_a = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim,
+                                          act_fn_factory, True, mlp_layer_norm)
+        self.message_mij_mlp_x = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim,
+                                          act_fn_factory, True, mlp_layer_norm)
+        self.phi_vel_x = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out,
+                                  act_fn_factory, False, mlp_layer_norm)
+        self.layer_norm_h = nn.LayerNorm(hidden_dim)
+        if self.include_v_branch:
+            self.vectorization_mlp_v = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            if self.attention:
+                self.att_mlp_v = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+            self.message_mij_mlp_v = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim,
+                                              act_fn_factory, True, mlp_layer_norm)
+            self.phi_vel_v = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out,
+                                      act_fn_factory, False, mlp_layer_norm)
+        if self.include_u_tm1:
+            self.message_mij_mlp_u_tm1 = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim,
+                                                  act_fn_factory, True, mlp_layer_norm)
+            if self.attention:
+                self.att_mlp_u_tm1 = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+            self.vectorization_mlp_u_tm1 = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            self.phi_vel_u_tm1 = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out,
+                                          act_fn_factory, False, mlp_layer_norm)
+        if self.include_force:
+            self.vectorization_mlp_f = make_vec_mlp(hidden_dim, act_fn_factory, tanh, mlp_layer_norm)
+            if self.attention:
+                self.att_mlp_f = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+            self.message_mij_mlp_f = make_mlp(n_layers_message_mlp, in_mij_mlp_dim, hidden_dim, hidden_dim,
+                                              act_fn_factory, True, mlp_layer_norm)
+            self.phi_vel_f = make_mlp(n_layers_gate_mlp, output_node_dim, hidden_dim, vel_mlp_dim_out,
+                                      act_fn_factory, False, mlp_layer_norm)
+
+    def _message_branch(self, mlp, h_row, h_col, radial, fuse_embed, m_prev, att_mlp):
+        """
+        Compute one recurrent branch message from node states, invariant edge state, and previous message.
+
+        Args:
+            mlp: nn.Module
+                Branch message MLP.
+            h_row: torch.Tensor [E, H]
+            h_col: torch.Tensor [E, H]
+            radial: torch.Tensor [E, 1]
+            fuse_embed: torch.Tensor [E, F]
+            m_prev: torch.Tensor [E, H]
+            att_mlp: nn.Module or None
+                Branch attention module when attention is enabled.
+        return: torch.Tensor [E, H]
+        """
+        m = mlp(torch.cat([h_row, h_col, radial, fuse_embed, m_prev], dim=1))
+        if self.attention:
+            m = m * att_mlp(m)
+        return m
+
+    def _vectorize_delta(self, vec_mlp, m_ij, coord_diff_e3, coord_cross_e3, coord_vertical_e3, edge_index, field):
+        """
+        Vectorize edge messages in the local frame and mean-aggregate them into a node field delta.
+
+        Args:
+            vec_mlp: nn.Module
+            m_ij: torch.Tensor [E, H]
+            coord_diff_e3, coord_cross_e3, coord_vertical_e3: torch.Tensor [E, 3]
+            edge_index: tuple
+                (row, col) directed edges.
+            field: torch.Tensor [N, 3]
+        return: torch.Tensor [N, 3]
+        """
+        row = edge_index[0]
+        coeff = vec_mlp(m_ij)
+        vec_e3 = (coord_diff_e3 * coeff[:, 0:1] + coord_cross_e3 * coeff[:, 1:2]
+                  + coord_vertical_e3 * coeff[:, 2:3])
+        if self.clamp:
+            vec_e3 = torch.clamp(vec_e3, min=-100000, max=100000)
+        return unsorted_segment_mean(vec_e3, row, num_segments=field.size(0)) * self.coords_weight
+
+    def forward(self, h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed,
+                message_state, a, v, x, u_tm1, f):
+        """
+        One recurrent multi-head block.
+
+        Args:
+            h: torch.Tensor [N, H]
+            edge_index: tuple
+                (row, col) directed edges.
+            coord_diff_e3, coord_cross_e3, coord_vertical_e3: torch.Tensor [E, 3]
+            radial: torch.Tensor [E, 1]
+            fuse_embed: torch.Tensor [E, F]
+            message_state: dict
+                Previous branch messages keyed by a, x, and enabled optional branch names.
+            a, v, x: torch.Tensor [N, 3]
+            u_tm1: torch.Tensor [N, 3]
+            f: torch.Tensor [N, 3]
+        return: (h_new, a_new, v_new, x_new, u_tm1_new, f_new, next_message_state, m_sum_per_node)
+        """
+        row, col = edge_index
+        residue = h
+        h_row, h_col = h[row], h[col]
+        m_a = self._message_branch(self.message_mij_mlp_a, h_row, h_col, radial, fuse_embed,
+                                   message_state["a"], self.att_mlp_a if self.attention else None)
+        m_x = self._message_branch(self.message_mij_mlp_x, h_row, h_col, radial, fuse_embed,
+                                   message_state["x"], self.att_mlp_x if self.attention else None)
+        m_sum = m_a + m_x
+        next_message_state = {"a": m_a, "x": m_x}
+        if self.include_v_branch:
+            m_v = self._message_branch(self.message_mij_mlp_v, h_row, h_col, radial, fuse_embed,
+                                       message_state["v"], self.att_mlp_v if self.attention else None)
+            m_sum = m_sum + m_v
+            next_message_state["v"] = m_v
+        if self.include_u_tm1:
+            m_u_tm1 = self._message_branch(self.message_mij_mlp_u_tm1, h_row, h_col, radial, fuse_embed,
+                                           message_state["u_tm1"], self.att_mlp_u_tm1 if self.attention else None)
+            m_sum = m_sum + m_u_tm1
+            next_message_state["u_tm1"] = m_u_tm1
+        if self.include_force:
+            m_f = self._message_branch(self.message_mij_mlp_f, h_row, h_col, radial, fuse_embed,
+                                       message_state["f"], self.att_mlp_f if self.attention else None)
+            m_sum = m_sum + m_f
+            next_message_state["f"] = m_f
+        agg = unsorted_segment_sum(m_sum, row, num_segments=h.size(0))
+        in_node = torch.cat([h, agg], dim=1)
+        h_upd = self.node_h_mp_mlp(in_node)
+        if self.skip_connection:
+            h_upd = h + h_upd
+        h_new = self.layer_norm_h(residue + h_upd)
+        x_new = x + self._vectorize_delta(self.vectorization_mlp_x, m_x, coord_diff_e3, coord_cross_e3,
+                                          coord_vertical_e3, edge_index, x)
+        a_mid = a + self._vectorize_delta(self.vectorization_mlp_a, m_a, coord_diff_e3, coord_cross_e3,
+                                          coord_vertical_e3, edge_index, a)
+        a_new = a_mid + self.phi_vel_x(h_new) * x_new
+        if self.include_v_branch:
+            v_new = v + self._vectorize_delta(self.vectorization_mlp_v, m_v, coord_diff_e3, coord_cross_e3,
+                                              coord_vertical_e3, edge_index, v)
+            a_new = a_new + self.phi_vel_v(h_new) * v_new
+        else:
+            v_new = v
+        if self.include_u_tm1:
+            u_tm1_new = u_tm1 + self._vectorize_delta(self.vectorization_mlp_u_tm1, m_u_tm1, coord_diff_e3,
+                                                      coord_cross_e3, coord_vertical_e3, edge_index, u_tm1)
+            a_new = a_new + self.phi_vel_u_tm1(h_new) * u_tm1_new
+        else:
+            u_tm1_new = u_tm1
+        if self.include_force:
+            f_new = f + self._vectorize_delta(self.vectorization_mlp_f, m_f, coord_diff_e3, coord_cross_e3,
+                                              coord_vertical_e3, edge_index, f)
+            a_new = a_new + self.phi_vel_f(h_new) * f_new
+        else:
+            f_new = f
+        return h_new, a_new, v_new, x_new, u_tm1_new, f_new, next_message_state, agg
+
+
 class SingleVectorizeMPBlock(nn.Module):
     """
     Variant 3: single message m_ij; three vectorization heads from the same m; phi_vel gates on a.

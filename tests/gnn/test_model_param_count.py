@@ -58,7 +58,9 @@ TRAIN_CONFIG_NAME = "train_sanity_sweep"
 # MODEL_CONFIG_NAME = "gatv2_HD128_L11_H18"
 # MODEL_CONFIG_NAME = "gatv2_HD128_L15_H10"
 # MODEL_CONFIG_NAME = "gatv2_HD128_L15_H20_share"
-MODEL_CONFIG_NAME = "gatv2_HD192_L15_H8_share"
+# MODEL_CONFIG_NAME = "gatv2_HD192_L15_H8_share"
+# MODEL_CONFIG_NAME = "transolver_7L_HD312_AH15_S32_R4"
+MODEL_CONFIG_NAME = "mgn_H256_L10"
 TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------

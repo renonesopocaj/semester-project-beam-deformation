@@ -1,7 +1,7 @@
 """
 clofnet.py
 
-ClofNet variants for predicting acceleration (equivariant) and von Mises stress (scalar) from PyG batches.
+ClofNet variants for predicting acceleration (equivariant) and stress targets from PyG batches.
 Base class handles scalarization of stacked R^3 node/edge features using split_idx_node / split_idx_edge,
 a fixed EquiFrame from input positions, fused edge embeddings, and a stress head.
 Common notation
@@ -24,7 +24,7 @@ from src.gnn.models.clofnet.clof_helpers import (split_edge_features, split_node
 from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_sum
 from src.gnn.models.clofnet.clof_mp_blocks import (DirectAccelerationMPBlock, MultiHeadMPBlock,
                                                    RecurrentMessageInitializer, RecurrentMPBlock,
-                                                   SingleVectorizeMPBlock)
+                                                   RecurrentMultiHeadMPBlock, SingleVectorizeMPBlock)
 
 
 class ClofNetBase(nn.Module, ABC):
@@ -45,6 +45,7 @@ class ClofNetBase(nn.Module, ABC):
     rescalarize_per_layer: bool
     include_v_branch: bool
     include_force: bool
+    stress_out_dim: int
     m_ij_init: str
     eps_mode: str
     n_layers_gate_mlp: int
@@ -56,7 +57,7 @@ class ClofNetBase(nn.Module, ABC):
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
-                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
                  m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
                  mlp_layer_norm):
         super().__init__()
@@ -80,6 +81,9 @@ class ClofNetBase(nn.Module, ABC):
         self.rescalarize_per_layer = rescalarize_per_layer
         self.include_v_branch = include_v_branch
         self.include_force = include_force
+        self.stress_out_dim = int(stress_out_dim)
+        if self.stress_out_dim not in {1, 6}:
+            raise ValueError("stress_out_dim must be 1 (von_mises) or 6 (full_stress), got %s" % self.stress_out_dim)
         self.m_ij_init = m_ij_init
         self.eps_mode = eps_mode
         self.n_layers_gate_mlp = n_layers_gate_mlp
@@ -97,7 +101,8 @@ class ClofNetBase(nn.Module, ABC):
         self.embedding_node_mlp = nn.Linear(in_dim_node_embed, self.hidden_dim)
         self.fuse_mlp_embed = make_mlp(2, self.fuse_in_dim, fuse_hid_dim, fuse_hid_dim, act_fn_factory, True, mlp_layer_norm)
         stress_in_dim = 2 * self.hidden_dim + (3 if use_neighbor_diff_norms else 0)
-        self.stress_mlp = make_mlp(2, stress_in_dim, self.hidden_dim, 1, act_fn_factory, False, mlp_layer_norm)
+        self.stress_mlp = make_mlp(2, stress_in_dim, self.hidden_dim, self.stress_out_dim, act_fn_factory, False,
+                                   mlp_layer_norm)
         self.mp_blocks = self._build_mp_blocks()
         model_parameters = filter(lambda p: p.requires_grad, self.parameters())
         params = sum([np.prod(p.size()) for p in model_parameters])
@@ -198,7 +203,7 @@ class ClofNetBase(nn.Module, ABC):
             x_l: torch.Tensor [N, 3]
             edge_index_tuple: tuple
                 (row, col) directed edges; row is the destination node.
-        return: torch.Tensor [N, 1]
+        return: torch.Tensor [N, stress_out_dim]
         """
         if self.use_neighbor_diff_norms:
             row, col = edge_index_tuple
@@ -228,7 +233,7 @@ class ClofNetBase(nn.Module, ABC):
 
     def forward(self, batch):
         """
-        Predict normalized acceleration (first 3) and stress (last 1) for each node.
+        Predict normalized acceleration (first 3) and stress channels for each node.
 
         Args:
             batch: torch_geometric.data.Data or Batch
@@ -236,7 +241,7 @@ class ClofNetBase(nn.Module, ABC):
                 x_pos_tm1_prev, num_graphs, and optionally ptr.
                 When include_force is True, must also provide node_force [N, 3].
         return: torch.Tensor
-            Predictions [N, 4] = concat(acceleration, stress_scalar).
+            Predictions [N, 3 + stress_out_dim] = concat(acceleration, stress channels).
         """
         x_full = batch.x
         edge_attr = batch.edge_attr
@@ -326,14 +331,14 @@ class ClofNetRecurrent(ClofNetBase):
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
-                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
                  m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
                  mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
-                         include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
+                         include_v_branch, include_force, stress_out_dim, m_ij_init, eps_mode, n_layers_gate_mlp,
                          n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
         if self.m_ij_init not in _VALID_M_IJ_INIT:
             raise ValueError("m_ij_init must be one of %s, got '%s'" % (sorted(_VALID_M_IJ_INIT), self.m_ij_init))
@@ -404,14 +409,14 @@ class ClofNetSeparateMessages(ClofNetBase):
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
-                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
                  m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
                  mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
-                         include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
+                         include_v_branch, include_force, stress_out_dim, m_ij_init, eps_mode, n_layers_gate_mlp,
                          n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
@@ -433,6 +438,135 @@ class ClofNetSeparateMessages(ClofNetBase):
                                               edge_scalars, frame_l, edge_index_tuple, f0)
             h, a, v, x, u_tm1, f, m_agg_last = block(h, edge_index_tuple, a_ij, b_ij, c_ij, radial_l,
                                                       fuse_embed, a, v, x, u_tm1, f)
+        return h, a, v, x, m_agg_last
+
+
+class ClofNetRecurrentSeparateMessages(ClofNetBase):
+    """
+    Separate multi-head messages with recurrent branch state.
+
+                            ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
+                            mᵢⱼᵃ,⁽ˡ⁺¹⁾ = φₘᵃ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵃ,ˡ)
+                            mᵢⱼᵛ,⁽ˡ⁺¹⁾ = φₘᵛ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵛ,ˡ)   [only when include_v_branch]
+                            mᵢⱼˣ,⁽ˡ⁺¹⁾ = φₘˣ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˣ,ˡ)
+                            mᵢⱼᵘᵗᵐ¹,⁽ˡ⁺¹⁾ = φₘᵘᵗᵐ¹(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵘᵗᵐ¹,ˡ)
+                                                        [only when include_u_tm1]
+                            mᵢⱼᶠ,⁽ˡ⁺¹⁾ = φₘᶠ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᶠ,ˡ)   [only when include_force]
+
+    The remaining h, v, x, u(t-1), force, and acceleration equations match ClofNetSeparateMessages.
+    When rescalarize_per_layer is True, frame F_ij^l, radial r_ij^l, and s_ij^l are recomputed from x^l
+    and a^l before each block; otherwise the initial frame F_ij^0 and radial r_ij^0 are reused.
+    """
+
+    message_initializers: nn.ModuleDict
+
+    def _build_mp_blocks(self):
+        in_mij = 2 * self.hidden_dim + 1 + self.in_dim_edge_mlp + self.hidden_dim
+        blocks = []
+        for _ in range(self.n_layers):
+            blocks.append(RecurrentMultiHeadMPBlock(in_node_mlp_dim=2 * self.hidden_dim,
+                                                    output_node_dim=self.hidden_dim,
+                                                    hidden_dim=self.hidden_dim, in_mij_mlp_dim=in_mij,
+                                                    act_fn_factory=self.act_fn_factory,
+                                                    recurrent=self.recurrent,
+                                                    coords_weight=self.coords_weight,
+                                                    attention=self.attention_enable, tanh=self.tanh,
+                                                    clamp=self.clamp_enable,
+                                                    vel_mlp_dim_out=self.vel_mlp_dim_out,
+                                                    include_u_tm1=self.include_u_tm1,
+                                                    include_v_branch=self.include_v_branch,
+                                                    include_force=self.include_force,
+                                                    n_layers_node_mlp=self.n_layers_node_mlp,
+                                                    n_layers_gate_mlp=self.n_layers_gate_mlp,
+                                                    n_layers_message_mlp=self.n_layers_message_mlp,
+                                                    mlp_layer_norm=self.mlp_layer_norm))
+        return nn.ModuleList(blocks)
+
+    def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
+                 coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
+                 split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
+                 m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
+                 mlp_layer_norm):
+        super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
+                         coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
+                         vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
+                         use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
+                         include_v_branch, include_force, stress_out_dim, m_ij_init, eps_mode, n_layers_gate_mlp,
+                         n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
+        if self.m_ij_init not in _VALID_M_IJ_INIT:
+            raise ValueError("m_ij_init must be one of %s, got '%s'" % (sorted(_VALID_M_IJ_INIT), self.m_ij_init))
+        initializers = {}
+        for branch_name in self._message_branch_names():
+            initializers[branch_name] = RecurrentMessageInitializer(
+                hidden_dim=self.hidden_dim,
+                fuse_hid_dim=self.in_dim_edge_mlp,
+                m_ij_init=self.m_ij_init,
+                n_layers_message_mlp=self.n_layers_message_mlp,
+                act_fn_factory=self.act_fn_factory,
+                mlp_layer_norm=self.mlp_layer_norm,
+            )
+        self.message_initializers = nn.ModuleDict(initializers)
+
+    def _message_branch_names(self):
+        """
+        Enumerate active recurrent multi-head message branches.
+
+        return: list[str]
+            Branch keys used in message_initializers and block message_state dictionaries.
+        """
+        branch_names = ["a", "x"]
+        if self.include_v_branch:
+            branch_names.append("v")
+        if self.include_u_tm1:
+            branch_names.append("u_tm1")
+        if self.include_force:
+            branch_names.append("f")
+        return branch_names
+
+    def _initialize_message_state(self, h0, edge_index_tuple, radial, fuse_embed_0):
+        """
+        Initialize every active recurrent branch message before the first MP layer.
+
+        Args:
+            h0: torch.Tensor [N, H]
+            edge_index_tuple: tuple
+                (row, col) directed edges.
+            radial: torch.Tensor [E, 1]
+            fuse_embed_0: torch.Tensor [E, fuse_hid_dim]
+        return: dict[str, torch.Tensor]
+            Initial branch messages keyed by active branch name.
+        """
+        message_state = {}
+        for branch_name in self._message_branch_names():
+            message_state[branch_name] = self.message_initializers[branch_name](h0, edge_index_tuple, radial,
+                                                                                fuse_embed_0)
+        return message_state
+
+    def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
+                     edge_index_tuple, x_pos_centered, u_tm1_0, f0):
+        h = h0; a = a0; v = v0; x = x0
+        u_tm1 = u_tm1_0 if u_tm1_0 is not None else torch.zeros_like(x0)
+        f = f0 if f0 is not None else torch.zeros_like(x0)
+        fuse_embed_0 = self._fuse_embed(self._safe_a_for_fuse(a0), node_vec_chunks, edge_vec_chunks,
+                                        edge_scalars, frame_e33, edge_index_tuple, f0)
+        message_state = self._initialize_message_state(h0, edge_index_tuple, radial, fuse_embed_0)
+        if not self.rescalarize_per_layer:
+            _, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x_pos_centered, self.enable_norm_diff,
+                                                   False, self.eps_mode)
+            radial_l = radial
+            frame_l = frame_e33
+        m_agg_last = torch.zeros(h.shape[0], self.hidden_dim, device=h.device, dtype=h.dtype)
+        for block in self.mp_blocks:
+            if self.rescalarize_per_layer:
+                radial_l, a_ij, b_ij, c_ij = coord2localframe(edge_index_tuple, x, self.enable_norm_diff,
+                                                              False, self.eps_mode)
+                frame_l = frame_basis_from_edges(a_ij, b_ij, c_ij)
+            fuse_embed = self._fuse_embed(self._safe_a_for_fuse(a), node_vec_chunks, edge_vec_chunks,
+                                          edge_scalars, frame_l, edge_index_tuple, f0)
+            h, a, v, x, u_tm1, f, message_state, m_agg_last = block(
+                h, edge_index_tuple, a_ij, b_ij, c_ij, radial_l, fuse_embed, message_state, a, v, x, u_tm1, f
+            )
         return h, a, v, x, m_agg_last
 
 
@@ -476,14 +610,14 @@ class ClofNetExtraLayer(ClofNetBase):
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
-                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
                  m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
                  mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
-                         include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
+                         include_v_branch, include_force, stress_out_dim, m_ij_init, eps_mode, n_layers_gate_mlp,
                          n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,
@@ -541,14 +675,14 @@ class ClofNetDirectAcceleration(ClofNetBase):
     def __init__(self, in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                  coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable, vel_mlp_dim_out,
                  split_idx_node, split_idx_edge, node_channels, edge_channels, use_neighbor_diff_norms,
-                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force,
+                 frame_source, include_u_tm1, rescalarize_per_layer, include_v_branch, include_force, stress_out_dim,
                  m_ij_init, eps_mode, n_layers_gate_mlp, n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a,
                  mlp_layer_norm):
         super().__init__(in_dim_node_embed, in_dim_edge_scalars, hidden_dim, fuse_hid_dim, act_fn_factory, n_layers,
                          coords_weight, recurrent, enable_norm_diff, tanh, attention_enable, clamp_enable,
                          vel_mlp_dim_out, split_idx_node, split_idx_edge, node_channels, edge_channels,
                          use_neighbor_diff_norms, frame_source, include_u_tm1, rescalarize_per_layer,
-                         include_v_branch, include_force, m_ij_init, eps_mode, n_layers_gate_mlp,
+                         include_v_branch, include_force, stress_out_dim, m_ij_init, eps_mode, n_layers_gate_mlp,
                          n_layers_node_mlp, n_layers_message_mlp, normalize_delta_a, mlp_layer_norm)
 
     def _run_mp_loop(self, h0, a0, v0, x0, node_vec_chunks, edge_vec_chunks, edge_scalars, frame_e33, radial,

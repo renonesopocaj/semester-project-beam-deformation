@@ -145,16 +145,15 @@ def enforce_low_memory_for_large_edge_augmentation(cfg, cfg_obj):
             Hydra-composed preprocessing configuration.
         cfg_obj: PreprocessYaml
             parsed preprocessing configuration.
-        return: None
-            Updates cfg and cfg_obj in place when low-memory preprocessing is required.
     """
-    if cfg_obj.low_memory:
-        return
-    if cfg_obj.edge_aug_k_hop >= 3:
-        print("\tEnabling low_memory=true because k_hop >= 3 stores large augmented edge features.")
-        with open_dict(cfg):
-            cfg.low_memory = True
-        cfg_obj.low_memory = True
+    return
+    # if cfg_obj.low_memory:
+    #     return
+    # if cfg_obj.edge_aug_k_hop >= 3:
+    #     print("\tEnabling low_memory=true because k_hop >= 3 stores large augmented edge features.")
+    #     with open_dict(cfg):
+    #         cfg.low_memory = True
+    #     cfg_obj.low_memory = True
 
 
 @hydra.main(version_base=None, config_path="../../conf/preprocess", config_name="preprocess")

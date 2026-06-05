@@ -97,6 +97,7 @@ def _make_train_cfg_for_clofnet():
     train_cfg.n_layers_message_mlp = 1
     train_cfg.eps_mode = "none"
     train_cfg.normalize_delta_a = False
+    train_cfg.mlp_layer_norm = False
     return train_cfg
 
 
@@ -145,6 +146,7 @@ def test_feature_layout_coherence_through_preprocess_train_trainer_rollout(monke
     monkeypatch.setattr(train_module, "ClofNetDirectAcceleration", _DummyClofModel)
     monkeypatch.setattr(train_module, "ClofNetRecurrent", _DummyClofModel)
     monkeypatch.setattr(train_module, "ClofNetSeparateMessages", _DummyClofModel)
+    monkeypatch.setattr(train_module, "ClofNetRecurrentSeparateMessages", _DummyClofModel)
     monkeypatch.setattr(train_module, "ClofNetExtraLayer", _DummyClofModel)
 
     device = torch.device("cpu")
@@ -187,6 +189,7 @@ def test_feature_layout_coherence_through_preprocess_train_trainer_rollout(monke
         assert int(kwargs["edge_channels"]) == int(edge_channels)
         assert int(kwargs["in_dim_node_embed"]) == int(node_channels - split_idx_node_probe)
         assert int(kwargs["in_dim_edge_scalars"]) == int(edge_channels - split_idx_edge_probe)
+        assert int(kwargs["stress_out_dim"]) == int(stress_out_dim)
 
         edge_stats = Stats(
             mean=torch.zeros(edge_channels, dtype=torch.float32),
