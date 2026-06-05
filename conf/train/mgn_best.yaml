@@ -1,0 +1,38 @@
+# Root training config used only by `src/gnn/hyperparam_opt.py` (`config_name=train_default_hyperopt`).
+# Same shape as `train.yaml`: set every `defaults` entry and top-level field here; sweep overrides still apply on top.
+
+defaults:
+  - computational: slurm_1gpu_batch64
+  - model: mgn_H256_L15 # MGN with 12 messages, latent_dim 312, and dropout 0.05 in encoder+heads
+  - training: slurm # contains .total_epochs
+  - noise: noise_per_epoch_noprev
+  - loss: mae
+  - validation: default
+  - data: default
+  - lr_scheduler: plateau_long_mid
+  - residuals: default
+  - devices: one_gpu
+  - _self_
+
+initial_lr: 1e-3
+optimizer: adam
+target_mode: "full_stress" # von_mises, full_stress
+# Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
+# not already adjacent (undirected) on the current graph; merged with existing edge_index.
+random_online: 0.0
+# Various directory, i/o, ecc
+seed: 42
+base_dir: dataset # Used when hyperparam overrides reference ${base_dir} with this compose root.
+use_wandb: true
+wandb_init_timeout: 300
+# Computational
+protect_from_oom: True # disables cuda reduce overhead which causes oom errors
+
+hydra:
+  run:
+    dir: hydra/outputs/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false
