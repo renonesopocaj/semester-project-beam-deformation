@@ -31,7 +31,7 @@ from src.gnn.models.mag.mag import MAGNet
 from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
 from src.gnn.models.transolver.transolvernet import TransolverNet
 from src.gnn.models.clofnet.clofnet import (ClofNetDirectAcceleration, ClofNetExtraLayer, ClofNetRecurrent,
-                                            ClofNetSeparateMessages)
+                                            ClofNetRecurrentSeparateMessages, ClofNetSeparateMessages)
 from src.gnn.preprocessing.build_features import probe_feature_layout
 from src.gnn.misc_helpers.yamlobject import (PreprocessYaml, TrainYaml, assert_target_mode_consistent,
                                              cfg_for_wandb, train_cfg_yaml_for_wandb)
@@ -209,8 +209,7 @@ def maybe_compile_model(model, train_cfg, protect_from_oom):
 def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim):
     """
     Build the requested model with the correct stress head width. `stress_out_dim` is 1 for the legacy
-    von_mises target (single vm scalar) and 6 for the full_stress target (sig6 tensor). ClofNet is left
-    intentionally unchanged for this iteration.
+    von_mises target (single vm scalar) and 6 for the full_stress target (sig6 tensor).
     """
     if train_cfg.model_name == "MGN":
         # node_channels, edge_channels, encoder_latent_size, decoder_latent_size, processor_latent_size,
@@ -270,6 +269,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
             "rescalarize_per_layer": bool(train_cfg.rescalarize_per_layer),
             "include_v_branch": bool(train_cfg.include_v_branch),
             "include_force": bool(train_cfg.include_force),
+            "stress_out_dim": int(stress_out_dim),
             "m_ij_init": str(train_cfg.m_ij_init),
             "n_layers_gate_mlp": int(train_cfg.n_layers_gate_mlp),
             "n_layers_node_mlp": int(train_cfg.n_layers_node_mlp),
@@ -281,6 +281,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
         variant = str(train_cfg.clofnet_variant).lower()
         if variant == "recurrent":
             return ClofNetRecurrent(**common_kwargs)
+        if variant == "recurrent_separate":
+            return ClofNetRecurrentSeparateMessages(**common_kwargs)
         if variant == "separate":
             return ClofNetSeparateMessages(**common_kwargs)
         if variant == "extra_layer":

@@ -165,6 +165,7 @@ def test_invalid_m_ij_init_raises():
         rescalarize_per_layer=False,
         include_v_branch=False,
         include_force=False,
+        stress_out_dim=1,
         eps_mode="soft",
         n_layers_gate_mlp=1,
         n_layers_node_mlp=1,
