@@ -1,7 +1,7 @@
 model_name: "clofnet"
 clofnet_variant: "recurrent_separate" # recurrent | recurrent_separate | separate (MultiHeadMPBlock) | extra_layer (SingleVectorizeMPBlock) | direct (DirectAccelerationMPBlock)
-hidden_dim: 256
-n_layers: 15
+hidden_dim: 192
+n_layers: 11
 coords_weight: 1.0
 recurrent: true
 enable_norm_diff: true
@@ -9,7 +9,7 @@ tanh: false
 attention_enable: true
 clamp_enable: true
 out_coord_mlp_dim: 3
-embedding_edge_dim: 256
+embedding_edge_dim: 192
 clofnet_activation: "silu"
 leakyrelu_negative_slope: 0.2
 use_neighbor_diff_norms: false
