@@ -62,7 +62,10 @@ TRAIN_CONFIG_NAME = "train_sanity_sweep"
 # MODEL_CONFIG_NAME = "transolver_7L_HD312_AH15_S32_R4"
 # MODEL_CONFIG_NAME = "mgn_H256_L10"
 # MODEL_CONFIG_NAME = "clofnet_recurrent_sep_L15"
-MODEL_CONFIG_NAME = "mgn_H512_L4"
+# MODEL_CONFIG_NAME = "mgn_H512_L4"
+# MODEL_CONFIG_NAME = "gatv2_HD512_L4_H4"
+# MODEL_CONFIG_NAME = "gatv2_HD256_L4_H16"
+MODEL_CONFIG_NAME = "gatv2_HD312_L4_H12"
 TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------
