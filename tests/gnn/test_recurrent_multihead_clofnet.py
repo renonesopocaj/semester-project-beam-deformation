@@ -10,6 +10,7 @@ RecurrentMPBlock-style branch messages.
 
 import torch
 from torch import nn
+import pytest
 
 from src.gnn.models.clofnet.clof_mp_blocks import RecurrentMultiHeadMPBlock
 
@@ -24,7 +25,7 @@ def _silu_factory():
     return nn.SiLU()
 
 
-def _make_block(include_u_tm1, include_v_branch, include_force, attention):
+def _make_block_with_gate_dim(include_u_tm1, include_v_branch, include_force, attention, vel_mlp_dim_out):
     """
     Build a small recurrent multi-head block for shape and recurrence checks.
 
@@ -37,6 +38,8 @@ def _make_block(include_u_tm1, include_v_branch, include_force, attention):
             Whether to enable the force branch.
         attention: bool
             Whether to enable branch attention.
+        vel_mlp_dim_out: int
+            Output width for gates multiplied by 3D vector fields. Must be 1 or 3.
     return: RecurrentMultiHeadMPBlock
         Configured block with hidden width HIDDEN.
     """
@@ -51,7 +54,7 @@ def _make_block(include_u_tm1, include_v_branch, include_force, attention):
         attention=attention,
         tanh=False,
         clamp=False,
-        vel_mlp_dim_out=3,
+        vel_mlp_dim_out=vel_mlp_dim_out,
         include_u_tm1=include_u_tm1,
         include_v_branch=include_v_branch,
         include_force=include_force,
@@ -60,6 +63,25 @@ def _make_block(include_u_tm1, include_v_branch, include_force, attention):
         n_layers_message_mlp=2,
         mlp_layer_norm=False,
     )
+
+
+def _make_block(include_u_tm1, include_v_branch, include_force, attention):
+    """
+    Build a small recurrent multi-head block with componentwise vector gates.
+
+    Args:
+        include_u_tm1: bool
+            Whether to enable the u(t-1) branch.
+        include_v_branch: bool
+            Whether to enable the velocity branch.
+        include_force: bool
+            Whether to enable the force branch.
+        attention: bool
+            Whether to enable branch attention.
+    return: RecurrentMultiHeadMPBlock
+        Configured block with hidden width HIDDEN.
+    """
+    return _make_block_with_gate_dim(include_u_tm1, include_v_branch, include_force, attention, 3)
 
 
 def _inputs():
@@ -129,6 +151,16 @@ def test_recurrent_multihead_block_shapes_all_branches():
         assert torch.isfinite(next_state[branch_name]).all()
     for tensor in [h_new, a_new, v_new, x_new, u_tm1_new, f_new, m_agg]:
         assert torch.isfinite(tensor).all()
+
+
+def test_recurrent_multihead_block_rejects_non_broadcastable_gate_width():
+    """
+    Gate outputs must broadcast with [N, 3] vector fields before torch.compile tracing starts.
+    """
+    _make_block_with_gate_dim(False, True, False, False, 1)
+    _make_block_with_gate_dim(False, True, False, False, 3)
+    with pytest.raises(ValueError, match="must be 1 or 3"):
+        _make_block_with_gate_dim(False, True, False, False, 2)
 
 
 def test_recurrent_multihead_messages_depend_on_previous_messages():

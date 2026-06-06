@@ -16,6 +16,22 @@ from src.gnn.models.clofnet.clof_aggregators import unsorted_segment_mean, unsor
 from src.gnn.models.clofnet.clof_helpers import make_mlp, make_vec_mlp
 
 
+def _validate_gate_output_dim(vel_mlp_dim_out):
+    """
+    Validate the output width of gates multiplied by 3D vector fields.
+
+    Args:
+        vel_mlp_dim_out: int
+            Gate width. A value of 1 applies one scalar gate to every component; a value of 3 applies
+            one gate per vector component.
+    """
+    if int(vel_mlp_dim_out) not in {1, 3}:
+        raise ValueError(
+            "vel_mlp_dim_out must be 1 or 3 because CLOFNet gates multiply [N, 3] vector fields, got %s"
+            % vel_mlp_dim_out
+        )
+
+
 class RecurrentMessageInitializer(nn.Module):
     """
     Computes m_ij^0, the initial recurrent message before the first MP layer.
@@ -210,6 +226,7 @@ class MultiHeadMPBlock(nn.Module):
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
                  include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
+        _validate_gate_output_dim(vel_mlp_dim_out)
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
         self.attention = attention
@@ -419,6 +436,7 @@ class RecurrentMultiHeadMPBlock(nn.Module):
                 Whether helper MLPs insert LayerNorm after hidden Linear layers.
         """
         super().__init__()
+        _validate_gate_output_dim(vel_mlp_dim_out)
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
         self.attention = attention
@@ -622,6 +640,7 @@ class SingleVectorizeMPBlock(nn.Module):
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
                  include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
+        _validate_gate_output_dim(vel_mlp_dim_out)
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
         self.attention = attention
@@ -747,6 +766,7 @@ class DirectAccelerationMPBlock(nn.Module):
                  coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, n_layers_node_mlp,
                  n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
+        _validate_gate_output_dim(vel_mlp_dim_out)
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
         self.attention = attention
