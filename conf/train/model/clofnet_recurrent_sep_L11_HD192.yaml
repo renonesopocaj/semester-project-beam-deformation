@@ -12,7 +12,7 @@ out_coord_mlp_dim: 3
 embedding_edge_dim: 192
 clofnet_activation: "silu"
 leakyrelu_negative_slope: 0.2
-use_neighbor_diff_norms: false
+use_neighbor_diff_norms: true
 frame_source: "displacement" # "abs" | "displacement"
 include_u_tm1: true
 rescalarize_per_layer: false # recompute s_ij from a^l with fixed F_ij^0; true also rebuilds F_ij^l, r_ij^l from x^l
