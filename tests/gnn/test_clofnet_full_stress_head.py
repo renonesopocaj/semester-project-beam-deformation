@@ -64,6 +64,7 @@ def _make_direct_clofnet(stress_out_dim):
         include_force=False,
         stress_out_dim=stress_out_dim,
         m_ij_init="zero",
+        resnet_style=False,
         eps_mode="soft",
         n_layers_gate_mlp=1,
         n_layers_node_mlp=1,

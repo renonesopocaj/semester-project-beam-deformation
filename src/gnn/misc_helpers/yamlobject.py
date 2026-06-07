@@ -239,7 +239,7 @@ class TrainYaml:
         self.activation_checkpointing = flattened_cfg["activation_checkpointing"]
         self.foreach_optim = flattened_cfg["foreach_optim"]
         # Models
-        if self.model_name == "MGN":
+        if self.model_name in ("MGN", "MGN_no_edge"):
             self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
             self.layer_norm_enable_encoder = flattened_cfg["layer_norm_enable_encoder"]
             self.layer_norm_enable_processor = flattened_cfg["layer_norm_enable_processor"]
@@ -294,6 +294,7 @@ class TrainYaml:
             self.include_v_branch = flattened_cfg["include_v_branch"]
             self.include_force = flattened_cfg["include_force"]
             self.m_ij_init = flattened_cfg["m_ij_init"]
+            self.resnet_style = flattened_cfg["resnet_style"]
             self.n_layers_gate_mlp = flattened_cfg["n_layers_gate_mlp"]
             self.n_layers_node_mlp = flattened_cfg["n_layers_node_mlp"]
             self.n_layers_message_mlp = flattened_cfg["n_layers_message_mlp"]

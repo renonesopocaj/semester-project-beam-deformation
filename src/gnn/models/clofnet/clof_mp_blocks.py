@@ -109,27 +109,30 @@ class RecurrentMessageInitializer(nn.Module):
 
 class RecurrentMPBlock(nn.Module):
     """
-    Variant 6: recurrent edge messages m_ij^{l+1} = phi_m(h_i, h_j, r_ij, fused_edge, m_ij^l),
-    node update, then acceleration update from vectorized m.
+    Variant 6: recurrent edge messages update from phi_m(h_i, h_j, r_ij, fused_edge, m_ij^l),
+    optionally with ResNet-style addition of m_ij^l, then node and acceleration updates.
 
     RecurrentMPBlock message passing:
                             ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
                             mᵢⱼ⁽ˡ⁺¹⁾ = φₘ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˡ)
+                                or mᵢⱼˡ + φₘ(...) when resnet_style is True
                             hᵢ⁽ˡ⁺¹⁾ = LN(κ * hᵢˡ + φₕ(hᵢˡ, ∑ⱼ∈𝒩(i) mᵢⱼ⁽ˡ⁺¹⁾))
                             aᵢ⁽ˡ⁺¹⁾ = aᵢˡ + Δᵢ⁽ᵃ,θₐ⁾(m⁽ˡ⁺¹⁾)
     """
     coords_weight: float
     skip_connection: bool
+    resnet_style: bool
     attention: bool
     tanh: bool
     clamp: bool
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
-                 coords_weight, attention, tanh, clamp, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp,
-                 mlp_layer_norm):
+                 resnet_style, coords_weight, attention, tanh, clamp, n_layers_node_mlp, n_layers_gate_mlp,
+                 n_layers_message_mlp, mlp_layer_norm):
         super().__init__()
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
+        self.resnet_style = resnet_style
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
@@ -173,6 +176,8 @@ class RecurrentMPBlock(nn.Module):
         m_new = self.message_mij_mlp(in_feat)
         if self.attention:
             m_new = m_new * self.att_mlp(m_new)
+        if self.resnet_style:
+            m_new = m_prev + m_new
         agg = unsorted_segment_sum(m_new, row, num_segments=h.size(0))
         in_node = torch.cat([h, agg], dim=1)
         h_upd = self.node_h_mp_mlp(in_node)
@@ -375,6 +380,7 @@ class RecurrentMultiHeadMPBlock(nn.Module):
 
                             ẽᵢⱼˡ = ψ_fuse([eᵢⱼˢᶜᵃˡᵃʳ, sᵢⱼ(aˡ, Fᵢⱼ⁰)])
                             mᵢⱼᵃ,⁽ˡ⁺¹⁾ = φₘᵃ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵃ,ˡ)
+                                or mᵢⱼᵃ,ˡ + φₘᵃ(...) when resnet_style is True
                             mᵢⱼᵛ,⁽ˡ⁺¹⁾ = φₘᵛ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵛ,ˡ)   [only when include_v_branch]
                             mᵢⱼˣ,⁽ˡ⁺¹⁾ = φₘˣ(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼˣ,ˡ)
                             mᵢⱼᵘᵗᵐ¹,⁽ˡ⁺¹⁾ = φₘᵘᵗᵐ¹(hᵢˡ, hⱼˡ, rᵢⱼ, ẽᵢⱼˡ, mᵢⱼᵘᵗᵐ¹,ˡ)
@@ -386,6 +392,7 @@ class RecurrentMultiHeadMPBlock(nn.Module):
 
     coords_weight: float
     skip_connection: bool
+    resnet_style: bool
     attention: bool
     tanh: bool
     clamp: bool
@@ -394,8 +401,9 @@ class RecurrentMultiHeadMPBlock(nn.Module):
     include_force: bool
 
     def __init__(self, in_node_mlp_dim, output_node_dim, hidden_dim, in_mij_mlp_dim, act_fn_factory, recurrent,
-                 coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1, include_v_branch,
-                 include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp, mlp_layer_norm):
+                 resnet_style, coords_weight, attention, tanh, clamp, vel_mlp_dim_out, include_u_tm1,
+                 include_v_branch, include_force, n_layers_node_mlp, n_layers_gate_mlp, n_layers_message_mlp,
+                 mlp_layer_norm):
         """
         Args:
             in_node_mlp_dim: int
@@ -410,6 +418,8 @@ class RecurrentMultiHeadMPBlock(nn.Module):
                 Zero-argument activation factory.
             recurrent: bool
                 Whether to add the h skip inside the node update before the residual LayerNorm.
+            resnet_style: bool
+                Whether each recurrent branch stores m_prev + phi_m(...) instead of phi_m(...).
             coords_weight: float
                 Scale applied to equivariant vector deltas.
             attention: bool
@@ -439,6 +449,7 @@ class RecurrentMultiHeadMPBlock(nn.Module):
         _validate_gate_output_dim(vel_mlp_dim_out)
         self.coords_weight = coords_weight
         self.skip_connection = recurrent
+        self.resnet_style = resnet_style
         self.attention = attention
         self.tanh = tanh
         self.clamp = clamp
@@ -505,6 +516,8 @@ class RecurrentMultiHeadMPBlock(nn.Module):
         m = mlp(torch.cat([h_row, h_col, radial, fuse_embed, m_prev], dim=1))
         if self.attention:
             m = m * att_mlp(m)
+        if self.resnet_style:
+            m = m_prev + m
         return m
 
     def _vectorize_delta(self, vec_mlp, m_ij, coord_diff_e3, coord_cross_e3, coord_vertical_e3, edge_index, field):

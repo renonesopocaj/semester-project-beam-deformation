@@ -44,6 +44,34 @@ class Encoder(torch.nn.Module):
         return node_embedding, edge_embedding
 
 
+class NodeOnlyEncoder(torch.nn.Module):
+    """
+    Encoder for models that embed node features only and do not consume edge features.
+    """
+
+    def __init__(self, node_channels, latent_and_out_size, layer_norm_enable, num_layers_encoder, dropout):
+        super(NodeOnlyEncoder, self).__init__()
+        self.node_encoder = build_mlp_d(in_size=node_channels,
+                                        hidden_size=latent_and_out_size,
+                                        out_size=latent_and_out_size,
+                                        num_layers=num_layers_encoder,
+                                        layer_norm=layer_norm_enable,
+                                        use_sigmoid=False, use_softmax=False,
+                                        dropout=dropout)
+
+    def forward(self, node_features):
+        """
+        Embeds node features without reading edge features.
+
+        Args:
+            node_features: torch.Tensor
+                Node feature matrix with shape [N, C_n].
+            return: node_embedding
+                Node embedding tensor with shape [N, H].
+        """
+        return self.node_encoder(node_features)
+
+
 class GraphNetBlock(torch.nn.Module):
     """
     Graph network block for message passing.
@@ -106,6 +134,58 @@ class GraphNetBlock(torch.nn.Module):
         new_edge_embedding = edge_attr_ + edge_embedding
 
         return new_node_embedding, new_edge_embedding
+
+
+class NodeOnlyGraphNetBlock(torch.nn.Module):
+    """
+    Graph network block with recurrent messages that depend only on sender and receiver node embeddings.
+
+    The block implements:
+        m_ij^l = m_ij^{l-1} + phi_m(v_i^{l-1}, v_j^{l-1})
+        v_i^l = v_i^{l-1} + phi_v(sum_j m_ij^l)
+    where the sum aggregates incoming messages for each receiver node.
+    """
+
+    def __init__(self, latent_and_out_size, num_layers_graphnetblock, enable_layer_norm, dropout):
+        super(NodeOnlyGraphNetBlock, self).__init__()
+        self._latent_size = latent_and_out_size
+        self.message_net = build_mlp_d(in_size=2 * latent_and_out_size,
+                                       hidden_size=latent_and_out_size,
+                                       out_size=latent_and_out_size,
+                                       num_layers=num_layers_graphnetblock,
+                                       layer_norm=enable_layer_norm,
+                                       use_sigmoid=False, use_softmax=False,
+                                       dropout=dropout)
+        self.node_net = build_mlp_d(in_size=latent_and_out_size,
+                                    hidden_size=latent_and_out_size,
+                                    out_size=latent_and_out_size,
+                                    num_layers=num_layers_graphnetblock,
+                                    layer_norm=enable_layer_norm,
+                                    use_sigmoid=False, use_softmax=False,
+                                    dropout=dropout)
+
+    def forward(self, edge_index, node_embedding, message_embedding):
+        """
+        Updates recurrent edge messages and node embeddings without reading edge attributes.
+
+        Args:
+            edge_index: torch.Tensor
+                Edge index tensor with shape [2, E].
+            node_embedding: torch.Tensor
+                Node embedding tensor with shape [N, H].
+            message_embedding: torch.Tensor
+                Previous recurrent message tensor with shape [E, H].
+            return: (new_node_embedding, new_message_embedding)
+                Updated node embeddings [N, H] and recurrent messages [E, H].
+        """
+        senders, receivers = edge_index
+        num_nodes = node_embedding.shape[0]
+        message_delta = self.message_net(torch.hstack((node_embedding[senders], node_embedding[receivers])))
+        new_message_embedding = message_embedding + message_delta
+        aggregated_messages = scatter_add(new_message_embedding, receivers.long(), dim=0, dim_size=num_nodes)
+        node_delta = self.node_net(aggregated_messages)
+        new_node_embedding = node_embedding + node_delta
+        return new_node_embedding, new_message_embedding
 
 
 class Decoder(torch.nn.Module):
@@ -222,4 +302,92 @@ class MeshGraphNet(nn.Module):
                 node_embedding, edge_embedding = processor(edge_index, node_embedding, edge_embedding) # [N, H], [E, H]
         # Decode (prediction head)
         pred = self.decoder(node_embedding) # [N, 4]
+        return pred
+
+
+class MeshGraphNetNoEdge(nn.Module):
+    """
+    MeshGraphNet variant that uses graph topology but ignores input edge features.
+
+    The model keeps a recurrent hidden message per edge, initializes messages to zero for each forward pass, updates
+    messages from sender/receiver node embeddings only, aggregates incoming messages per receiver, and decodes node
+    embeddings to acceleration plus stress channels.
+    """
+
+    def __init__(self, node_channels, encoder_latent_size, encoder_decoder_latent_size, processor_latent_size,
+                 num_msgs, num_layers_graphnetblock, layer_norm_enable_encoder, layer_norm_enable_decoder,
+                 layer_norm_enable_processor, num_layers_heads, num_layers_encoder, dropout_encoder, dropout_head,
+                 dropout_processor, activation_checkpointing, stress_out_dim):
+        """
+        Args:
+            node_channels: int
+                Specifies the size of the input feature vector for the nodes.
+            encoder_latent_size: int
+                Defines the latent size in the encoder output.
+            encoder_decoder_latent_size: int
+                Latent size shared across encoder and processor message states.
+            processor_latent_size: int
+                Latent size used by the decoder input.
+            num_msgs: int
+                Number of message-passing iterations in the graph processor.
+            num_layers_graphnetblock: int
+                Number of layers in each processor MLP.
+            layer_norm_enable_encoder: bool
+                Controls whether layer normalization is used in the encoder.
+            layer_norm_enable_decoder: bool
+                Controls whether layer normalization is used in the decoder.
+            layer_norm_enable_processor: bool
+                Controls whether layer normalization is used in the processor.
+            num_layers_heads: int
+                Number of layers in the decoder head networks.
+            num_layers_encoder: int
+                Number of layers in the node encoder.
+            dropout_encoder: float
+                Dropout probability used in the node encoder.
+            dropout_head: float
+                Dropout probability used in the decoder heads.
+            dropout_processor: float
+                Dropout probability used in the processor MLPs.
+            activation_checkpointing: bool
+                Whether to checkpoint processor blocks during training.
+            stress_out_dim: int
+                Number of stress channels predicted by the stress decoder.
+            return: None
+                Initializes the no-edge MeshGraphNet variant.
+        """
+        super(MeshGraphNetNoEdge, self).__init__()
+        self.encoder = NodeOnlyEncoder(node_channels=node_channels, latent_and_out_size=encoder_latent_size,
+                                       layer_norm_enable=layer_norm_enable_encoder,
+                                       num_layers_encoder=num_layers_encoder, dropout=dropout_encoder)
+        self.processer_list = nn.ModuleList([NodeOnlyGraphNetBlock(
+            latent_and_out_size=encoder_decoder_latent_size,
+            num_layers_graphnetblock=num_layers_graphnetblock,
+            enable_layer_norm=layer_norm_enable_processor,
+            dropout=dropout_processor) for _ in range(num_msgs)])
+        self.decoder = Decoder(in_and_latent_size=processor_latent_size, enable_layer_norm=layer_norm_enable_decoder,
+                               num_layers_heads=num_layers_heads, dropout=dropout_head,
+                               stress_out_dim=stress_out_dim)
+        self.activation_checkpointing = activation_checkpointing
+        self.message_dim = encoder_decoder_latent_size
+
+    def forward(self, ingraph):
+        """
+        Args:
+            ingraph: Data
+                PyG graph with x [N, C_n] and edge_index [2, E]. edge_attr may be absent and is ignored if present.
+            return: pred
+                Prediction tensor with shape [N, 3 + stress_out_dim].
+        """
+        node_features = ingraph.x
+        edge_index = ingraph.edge_index
+        node_embedding = self.encoder(node_features)
+        message_embedding = node_embedding.new_zeros((int(edge_index.shape[1]), int(self.message_dim)))
+        for processor in self.processer_list:
+            if self.training and self.activation_checkpointing:
+                node_embedding, message_embedding = checkpoint_utils.checkpoint(processor, edge_index,
+                                                                                node_embedding, message_embedding,
+                                                                                use_reentrant=False)
+            else:
+                node_embedding, message_embedding = processor(edge_index, node_embedding, message_embedding)
+        pred = self.decoder(node_embedding)
         return pred

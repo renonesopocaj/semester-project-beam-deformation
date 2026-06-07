@@ -92,6 +92,7 @@ def _make_train_cfg_for_clofnet():
     train_cfg.include_v_branch = True
     train_cfg.include_force = True
     train_cfg.m_ij_init = "ones"
+    train_cfg.resnet_style = False
     train_cfg.n_layers_gate_mlp = 1
     train_cfg.n_layers_node_mlp = 1
     train_cfg.n_layers_message_mlp = 1

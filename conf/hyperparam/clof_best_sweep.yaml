@@ -1,0 +1,99 @@
+# Hyperparameter study driver: ClofNet baseline (single option); extend `options` to sweep extras.
+# Training composes `conf/train/{train_compose_config}.yaml`.
+
+train_compose_config: train_sweep_defaults
+study_name: hp_opt_clofnetbest_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: hyperparam_outputs/${study_name}
+optimization_metric: overall_abs_mae
+pareto_x_metric:
+  - final_test/acc_all_rel_mae
+  - final_test/acc_all_abs_mae
+pareto_y_metric:
+  - final_test/stress_rel_mae
+  - final_test/stress_abs_mae
+wandb_project: beam_deformation
+wandb_offline: true
+base_dir: /scratch/izar/senoner/dataset
+
+sweeps:
+
+  - name: clofnet_best
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - noise.noise_scale_train=0.0005
+      - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+      - computational.batch_size=32
+      - loss.loss_type="mse"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+    options:
+      - label: clofnet_recurrent_sep_L8_HD128
+        overrides:
+          - model=clofnet_recurrent_sep_L8_HD128
+      - label: clofnet_recurrent_sep_L8_HD192
+        overrides:
+          - model=clofnet_recurrent_sep_L8_HD192
+
+  - name: clofnet_best_loss
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - noise.noise_scale_train=0.0005
+      - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+      - computational.batch_size=32
+      - loss.loss_type="mse"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+    options:
+      - label: clof_best_mae
+        overrides:
+          - loss.loss_type="mae"
+      - label: clof_best_huber
+        overrides:
+          - loss.loss_type="huber"
+
+  - name: clofnet_best_residual
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - noise.noise_scale_train=0.0005
+      - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+      - computational.batch_size=32
+      - loss.loss_type="mse"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+    options:
+      - label: clofnet_best_residual
+        overrides:
+          - residuals=all
+          - residuals.curvature_loss_weight=10
+          - residuals.volume_loss_weight=100000
+
+  - name: clofnet_best_conn
+    fixed_overrides:
+      - noise=noise_per_epoch_noprev
+      - noise.noise_scale_train=0.0005
+      - computational.batch_size=32
+      - loss.loss_type="mse"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+    options:
+      - label: random_3
+        overrides:
+          - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs_random3/medium"
+
+hydra:
+  run:
+    dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
