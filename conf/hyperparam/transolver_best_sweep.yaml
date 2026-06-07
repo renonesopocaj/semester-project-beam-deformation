@@ -47,10 +47,10 @@ sweeps:
       - loss.full_stress_vm_weight=0.5
       - target_mode="full_stress"
     options:
-      - label: clof_mae
+      - label: transolver_mae
         overrides:
           - loss.loss_type="mae"
-      - label: clof_huber
+      - label: transolver_huber
         overrides:
           - loss.loss_type="huber"
 
