@@ -3,7 +3,7 @@
 
 defaults:
   - computational: slurm_1gpu_batch16
-  - model: clofnet_recurrent_sep_L11_HD192
+  - model: clofnet_recurrent_sep_L8_HD256
   - training: slurm # contains .total_epochs
   - noise: noise_per_epoch_noprev
   - loss: mae

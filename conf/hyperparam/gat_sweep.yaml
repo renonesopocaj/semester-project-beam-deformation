@@ -28,28 +28,36 @@ sweeps:
       - noise=noise_per_epoch_noprev
       - computational.torch_compile=False
       - computational.batch_size=16
+      - noise.noise_scale_train=0.0005
+      - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+      - loss.loss_type="mse"
     options:
       - label: gatv2_HD256_L8_H8
         overrides:
           - model=gatv2_HD256_L8_H8 
-      - label: gatv2_HD192_L8_H8
-        overrides:
-          - model=gatv2_HD192_L8_H8 
-      - label: gatv2_HD192_L8_H11
-        overrides:
-          - model=gatv2_HD192_L8_H11
+#      - label: gatv2_HD192_L8_H8
+#        overrides:
+#          - model=gatv2_HD192_L8_H8
+#      - label: gatv2_HD192_L8_H11
+#        overrides:
+#          - model=gatv2_HD192_L8_H11
       - label: gatv2_HD128_L11_H18
         overrides:
           - model=gatv2_HD128_L11_H18 
-      - label: gatv2_HD128_L15_H10
-        overrides:
-          - model=gatv2_HD128_L15_H10 
+#      - label: gatv2_HD128_L15_H10
+#        overrides:
+#          - model=gatv2_HD128_L15_H10
       - label: gatv2_HD128_L15_H20_share
         overrides:
-          - model=gatv2_HD128_L15_H20_share 
-      - label: gatv2_HD192_L15_H8_share
-        overrides:
-          - model=gatv2_HD192_L15_H8_share
+          - model=gatv2_HD128_L15_H20_share
+#      - label: gatv2_HD192_L15_H8_share
+#        overrides:
+#          - model=gatv2_HD192_L15_H8_share
 
 hydra:
   run:

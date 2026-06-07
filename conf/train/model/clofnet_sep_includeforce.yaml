@@ -19,6 +19,7 @@ rescalarize_per_layer: true # rebuild F_ij^l, r_ij^l, s_ij^l every layer (Single
 include_v_branch: true # disable v branch in Single/MultiHead when false
 include_force: true # add force as separate equivariant channel (Single/MultiHead only)
 m_ij_init: "edge_encoder"  # recurrent only: zero | gaussian | edge_encoder | context | context_stochastic
+resnet_style: false  # recurrent only: add previous recurrent message to phi_m output
 n_layers_gate_mlp: 2 # number of linear layers in gate MLPs (phi_vel, phi_pos, ...)
 n_layers_node_mlp: 2 # number of linear layers in node update MLP
 n_layers_message_mlp: 3 # number of linear layers in message MLPs (phi_m)

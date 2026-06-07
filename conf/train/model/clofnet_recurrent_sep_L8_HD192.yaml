@@ -1,0 +1,28 @@
+model_name: "clofnet"
+clofnet_variant: "recurrent_separate" # recurrent | recurrent_separate | separate (MultiHeadMPBlock) | extra_layer (SingleVectorizeMPBlock) | direct (DirectAccelerationMPBlock)
+hidden_dim: 192
+n_layers: 8
+coords_weight: 1.0
+recurrent: true
+enable_norm_diff: true
+tanh: false
+attention_enable: true
+clamp_enable: true
+out_coord_mlp_dim: 3
+embedding_edge_dim: 192
+clofnet_activation: "silu"
+leakyrelu_negative_slope: 0.2
+use_neighbor_diff_norms: false
+frame_source: "displacement" # "abs" | "displacement"
+include_u_tm1: true
+rescalarize_per_layer: true # recompute s_ij from a^l with fixed F_ij^0; true also rebuilds F_ij^l, r_ij^l from x^l
+include_v_branch: true # enable the recurrent velocity message branch
+include_force: false # add force as a recurrent equivariant channel
+m_ij_init: "context_stochastic"  # recurrent branches: zero | gaussian | edge_encoder | context | context_stochastic
+resnet_style: false  # recurrent only: add previous recurrent message to phi_m output
+n_layers_gate_mlp: 2 # number of linear layers in gate MLPs (phi_vel, phi_pos, ...)
+n_layers_node_mlp: 2 # number of linear layers in node update MLP
+n_layers_message_mlp: 2 # number of linear layers in message MLPs (phi_m) NOTE: it must be 1 or 3
+eps_mode: "soft" # coord2localframe EPS: "soft" (1e-5) | "hard" (1.0)
+normalize_delta_a: true # isotropic per-node scaling of a before _fuse_embed to prevent inf/inf NaN
+mlp_layer_norm: true  # LayerNorm after each hidden Linear in MLPs

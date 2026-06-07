@@ -28,7 +28,7 @@ from src.gnn.models.gunet.gunet import GUNet
 from src.gnn.models.gatv2.gatv2 import GATv2Net
 from src.gnn.models.gatmgn.gatmgn import GatMGNNet
 from src.gnn.models.mag.mag import MAGNet
-from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet
+from src.gnn.models.meshgraphnet.meshgraphnet import MeshGraphNet, MeshGraphNetNoEdge
 from src.gnn.models.transolver.transolvernet import TransolverNet
 from src.gnn.models.clofnet.clofnet import (ClofNetDirectAcceleration, ClofNetExtraLayer, ClofNetRecurrent,
                                             ClofNetRecurrentSeparateMessages, ClofNetSeparateMessages)
@@ -228,6 +228,24 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
                             activation_checkpointing=train_cfg.activation_checkpointing,
                             stress_out_dim=stress_out_dim)
 
+    elif train_cfg.model_name == "MGN_no_edge":
+        return MeshGraphNetNoEdge(node_channels=preprocess_cfg.node_channels,
+                                  encoder_latent_size=train_cfg.hidden_processor_dim,
+                                  encoder_decoder_latent_size=train_cfg.hidden_processor_dim,
+                                  processor_latent_size=train_cfg.hidden_processor_dim,
+                                  num_msgs=train_cfg.num_messages,
+                                  num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
+                                  layer_norm_enable_encoder=train_cfg.layer_norm_enable_encoder,
+                                  layer_norm_enable_decoder=train_cfg.layer_norm_enable_decoder,
+                                  layer_norm_enable_processor=train_cfg.layer_norm_enable_processor,
+                                  num_layers_heads=train_cfg.num_layers_heads,
+                                  num_layers_encoder=train_cfg.num_layers_encoder,
+                                  dropout_encoder=train_cfg.dropout_encoder,
+                                  dropout_head=train_cfg.dropout_head,
+                                  dropout_processor=train_cfg.dropout_processor,
+                                  activation_checkpointing=train_cfg.activation_checkpointing,
+                                  stress_out_dim=stress_out_dim)
+
     elif train_cfg.model_name == "clofnet":
         _, _, split_idx_node, split_idx_edge = probe_feature_layout(preprocess_cfg, device)
         act_name = str(train_cfg.clofnet_activation).lower()
@@ -271,6 +289,7 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
             "include_force": bool(train_cfg.include_force),
             "stress_out_dim": int(stress_out_dim),
             "m_ij_init": str(train_cfg.m_ij_init),
+            "resnet_style": bool(train_cfg.resnet_style),
             "n_layers_gate_mlp": int(train_cfg.n_layers_gate_mlp),
             "n_layers_node_mlp": int(train_cfg.n_layers_node_mlp),
             "n_layers_message_mlp": int(train_cfg.n_layers_message_mlp),

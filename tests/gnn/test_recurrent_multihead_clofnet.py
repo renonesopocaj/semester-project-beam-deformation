@@ -8,10 +8,11 @@ Tests the recurrent multi-head CLOFNet block that combines MultiHeadMPBlock fiel
 RecurrentMPBlock-style branch messages.
 """
 
+import pytest
 import torch
 from torch import nn
 
-from src.gnn.models.clofnet.clof_mp_blocks import RecurrentMultiHeadMPBlock
+from src.gnn.models.clofnet.clof_mp_blocks import RecurrentMPBlock, RecurrentMultiHeadMPBlock
 
 
 HIDDEN = 8
@@ -24,9 +25,107 @@ def _silu_factory():
     return nn.SiLU()
 
 
-def _make_block(include_u_tm1, include_v_branch, include_force, attention):
+class _ConstantMessageMLP(nn.Module):
+    """
+    Test double for message MLPs that emits a constant update with the requested hidden width.
+    """
+
+    value: float
+    hidden_dim: int
+
+    def __init__(self, value, hidden_dim):
+        super().__init__()
+        self.value = value
+        self.hidden_dim = hidden_dim
+
+    def forward(self, features):
+        """
+        Args:
+            features: torch.Tensor [E, F]
+                Message input features; only E, device, and dtype define the output.
+        return: torch.Tensor [E, hidden_dim]
+            Constant message update.
+        """
+        return torch.full((features.shape[0], self.hidden_dim), self.value, device=features.device,
+                          dtype=features.dtype)
+
+
+def _make_recurrent_block(resnet_style):
+    """
+    Build a small single-message recurrent block for residual-message checks.
+
+    Args:
+        resnet_style: bool
+            Whether the block should add m_prev to the message MLP output.
+    return: RecurrentMPBlock
+        Configured block with hidden width HIDDEN.
+    """
+    return RecurrentMPBlock(
+        in_node_mlp_dim=2 * HIDDEN,
+        output_node_dim=HIDDEN,
+        hidden_dim=HIDDEN,
+        in_mij_mlp_dim=2 * HIDDEN + 1 + FUSE_HID + HIDDEN,
+        act_fn_factory=_silu_factory,
+        recurrent=True,
+        resnet_style=resnet_style,
+        coords_weight=1.0,
+        attention=False,
+        tanh=False,
+        clamp=False,
+        n_layers_node_mlp=2,
+        n_layers_gate_mlp=2,
+        n_layers_message_mlp=2,
+        mlp_layer_norm=False,
+    )
+
+
+def _make_block_with_gate_dim(include_u_tm1, include_v_branch, include_force, attention, vel_mlp_dim_out,
+                              resnet_style):
     """
     Build a small recurrent multi-head block for shape and recurrence checks.
+
+    Args:
+        include_u_tm1: bool
+            Whether to enable the u(t-1) branch.
+        include_v_branch: bool
+            Whether to enable the velocity branch.
+        include_force: bool
+            Whether to enable the force branch.
+        attention: bool
+            Whether to enable branch attention.
+        vel_mlp_dim_out: int
+            Output width for gates multiplied by 3D vector fields. Must be 1 or 3.
+        resnet_style: bool
+            Whether the block should add previous branch messages to the message MLP outputs.
+    return: RecurrentMultiHeadMPBlock
+        Configured block with hidden width HIDDEN.
+    """
+    return RecurrentMultiHeadMPBlock(
+        in_node_mlp_dim=2 * HIDDEN,
+        output_node_dim=HIDDEN,
+        hidden_dim=HIDDEN,
+        in_mij_mlp_dim=2 * HIDDEN + 1 + FUSE_HID + HIDDEN,
+        act_fn_factory=_silu_factory,
+        recurrent=True,
+        resnet_style=resnet_style,
+        coords_weight=1.0,
+        attention=attention,
+        tanh=False,
+        clamp=False,
+        vel_mlp_dim_out=vel_mlp_dim_out,
+        include_u_tm1=include_u_tm1,
+        include_v_branch=include_v_branch,
+        include_force=include_force,
+        n_layers_node_mlp=2,
+        n_layers_gate_mlp=2,
+        n_layers_message_mlp=2,
+        mlp_layer_norm=False,
+    )
+
+
+def _make_block(include_u_tm1, include_v_branch, include_force, attention):
+    """
+    Build a small recurrent multi-head block with componentwise vector gates.
 
     Args:
         include_u_tm1: bool
@@ -40,26 +139,7 @@ def _make_block(include_u_tm1, include_v_branch, include_force, attention):
     return: RecurrentMultiHeadMPBlock
         Configured block with hidden width HIDDEN.
     """
-    return RecurrentMultiHeadMPBlock(
-        in_node_mlp_dim=2 * HIDDEN,
-        output_node_dim=HIDDEN,
-        hidden_dim=HIDDEN,
-        in_mij_mlp_dim=2 * HIDDEN + 1 + FUSE_HID + HIDDEN,
-        act_fn_factory=_silu_factory,
-        recurrent=True,
-        coords_weight=1.0,
-        attention=attention,
-        tanh=False,
-        clamp=False,
-        vel_mlp_dim_out=3,
-        include_u_tm1=include_u_tm1,
-        include_v_branch=include_v_branch,
-        include_force=include_force,
-        n_layers_node_mlp=2,
-        n_layers_gate_mlp=2,
-        n_layers_message_mlp=2,
-        mlp_layer_norm=False,
-    )
+    return _make_block_with_gate_dim(include_u_tm1, include_v_branch, include_force, attention, 3, False)
 
 
 def _inputs():
@@ -131,6 +211,16 @@ def test_recurrent_multihead_block_shapes_all_branches():
         assert torch.isfinite(tensor).all()
 
 
+def test_recurrent_multihead_block_rejects_non_broadcastable_gate_width():
+    """
+    Gate outputs must broadcast with [N, 3] vector fields before torch.compile tracing starts.
+    """
+    _make_block_with_gate_dim(False, True, False, False, 1, False)
+    _make_block_with_gate_dim(False, True, False, False, 3, False)
+    with pytest.raises(ValueError, match="must be 1 or 3"):
+        _make_block_with_gate_dim(False, True, False, False, 2, False)
+
+
 def test_recurrent_multihead_messages_depend_on_previous_messages():
     """
     The next message changes when only the previous recurrent message state changes.
@@ -152,3 +242,47 @@ def test_recurrent_multihead_messages_depend_on_previous_messages():
     assert not torch.allclose(next_zero["a"], next_one["a"])
     assert not torch.allclose(next_zero["x"], next_one["x"])
     assert not torch.allclose(next_zero["v"], next_one["v"])
+
+
+def test_recurrent_block_resnet_style_adds_previous_message():
+    """
+    resnet_style controls whether a single recurrent message stores phi_m(...) or m_prev + phi_m(...).
+    """
+    h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, a, _, _, _, _ = _inputs()
+    m_prev = torch.full((NUM_EDGES, HIDDEN), 3.0)
+    plain_block = _make_recurrent_block(False)
+    resnet_block = _make_recurrent_block(True)
+    plain_block.message_mij_mlp = _ConstantMessageMLP(2.0, HIDDEN)
+    resnet_block.message_mij_mlp = _ConstantMessageMLP(2.0, HIDDEN)
+    with torch.no_grad():
+        plain_out = plain_block(h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial,
+                                fuse_embed, m_prev, a)
+        resnet_out = resnet_block(h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial,
+                                  fuse_embed, m_prev, a)
+    assert torch.allclose(plain_out[2], torch.full_like(m_prev, 2.0))
+    assert torch.allclose(resnet_out[2], torch.full_like(m_prev, 5.0))
+
+
+def test_recurrent_multihead_resnet_style_adds_previous_branch_messages():
+    """
+    resnet_style applies independently to each recurrent multi-head branch.
+    """
+    h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial, fuse_embed, a, v, x, u_tm1, f = _inputs()
+    branch_names = ["a", "x", "v"]
+    state = _message_state(branch_names, 3.0)
+    plain_block = _make_block_with_gate_dim(False, True, False, False, 3, False)
+    resnet_block = _make_block_with_gate_dim(False, True, False, False, 3, True)
+    for block in [plain_block, resnet_block]:
+        block.message_mij_mlp_a = _ConstantMessageMLP(2.0, HIDDEN)
+        block.message_mij_mlp_x = _ConstantMessageMLP(2.0, HIDDEN)
+        block.message_mij_mlp_v = _ConstantMessageMLP(2.0, HIDDEN)
+    with torch.no_grad():
+        plain_out = plain_block(h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial,
+                                fuse_embed, state, a, v, x, u_tm1, f)
+        resnet_out = resnet_block(h, edge_index, coord_diff_e3, coord_cross_e3, coord_vertical_e3, radial,
+                                  fuse_embed, state, a, v, x, u_tm1, f)
+    plain_next = plain_out[6]
+    resnet_next = resnet_out[6]
+    for branch_name in branch_names:
+        assert torch.allclose(plain_next[branch_name], torch.full_like(state[branch_name], 2.0))
+        assert torch.allclose(resnet_next[branch_name], torch.full_like(state[branch_name], 5.0))
