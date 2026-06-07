@@ -15,7 +15,7 @@ leakyrelu_negative_slope: 0.2
 use_neighbor_diff_norms: true
 frame_source: "displacement" # "abs" | "displacement"
 include_u_tm1: true
-rescalarize_per_layer: false # recompute s_ij from a^l with fixed F_ij^0; true also rebuilds F_ij^l, r_ij^l from x^l
+rescalarize_per_layer: true # recompute s_ij from a^l with fixed F_ij^0; true also rebuilds F_ij^l, r_ij^l from x^l
 include_v_branch: true # enable the recurrent velocity message branch
 include_force: false # add force as a recurrent equivariant channel
 m_ij_init: "context_stochastic"  # recurrent branches: zero | gaussian | edge_encoder | context | context_stochastic

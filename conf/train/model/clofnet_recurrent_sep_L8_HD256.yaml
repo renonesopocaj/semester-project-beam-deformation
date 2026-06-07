@@ -8,7 +8,7 @@ enable_norm_diff: true
 tanh: false
 attention_enable: true
 clamp_enable: true
-out_coord_mlp_dim: 2
+out_coord_mlp_dim: 3
 embedding_edge_dim: 256
 clofnet_activation: "silu"
 leakyrelu_negative_slope: 0.2
