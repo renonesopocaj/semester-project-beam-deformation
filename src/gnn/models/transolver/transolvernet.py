@@ -117,3 +117,24 @@ class TransolverNet(nn.Module):
         else:
             pred = self.model(g, u, None)
         return pred.reshape(batch_size * self.num_nodes, self.out_dim)
+
+    def set_attention_capture(self, enabled):
+        """
+        Toggle caching of the internal Physics-Attention tensors on the wrapped backbone.
+
+        Args:
+            enabled: bool
+                If True, the next forward pass stores detached attention tensors for every block.
+        return: None
+            Mutates the wrapped Transolver backbone in place.
+        """
+        self.model.set_attention_capture(bool(enabled))
+
+    def get_last_attention_states(self):
+        """
+        Return per-block attention caches from the most recent forward pass.
+
+        return: list[dict]
+            One cache dict per Transolver block.
+        """
+        return self.model.get_last_attention_states()

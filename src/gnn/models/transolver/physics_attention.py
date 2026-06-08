@@ -23,6 +23,38 @@ class AbstractPhysicsAttention(ABC):
     on slice tokens; to_out is a linear (plus dropout) merging heads back to dim.
     """
 
+    def clear_last_attention_state(self):
+        """
+        Reset the cached attention tensors captured during the previous forward pass.
+
+        return: None
+            No-op when the concrete module does not expose a capture cache.
+        """
+        if hasattr(self, "last_attention_state"):
+            self.last_attention_state = None
+
+    def _store_last_attention_state(self, slice_weights, slice_norm, attn):
+        """
+        Cache the tensors needed to recover effective node-to-node interactions.
+
+        Args:
+            slice_weights: torch.Tensor
+                Slice routing weights with shape (B, H, N, G).
+            slice_norm: torch.Tensor
+                Slice masses with shape (B, H, G).
+            attn: torch.Tensor
+                Slice-token attention with shape (B, H, G, G).
+        return: None
+            Stores detached tensors only when capture_attention is enabled.
+        """
+        if not bool(getattr(self, "capture_attention", False)):
+            return
+        self.last_attention_state = {
+            "slice_weights": slice_weights.detach(),
+            "slice_norm": slice_norm.detach(),
+            "slice_attention": attn.detach(),
+        }
+
     def slice_to_out(self, x_mid, fx_mid, slice_weights):
         """
         Form slice tokens, attend over M slices, deslice to per-node features.
@@ -68,6 +100,7 @@ class AbstractPhysicsAttention(ABC):
         attn = self.softmax(dots)
         # Regularize attention weights during training.
         attn = self.dropout(attn)
+        self._store_last_attention_state(slice_weights, slice_norm, attn)
         # Mix value vectors by attention weights -> updated slice tokens z' (paper z').
         out_slice_token = torch.matmul(attn, v_slice_token)  # B H G D
 
@@ -134,6 +167,8 @@ class PhysicsAttentionIrregularMesh(nn.Module, AbstractPhysicsAttention):
         self.dropout = nn.Dropout(dropout)
         # Learnable temperature for slice logits; sharper/softer assignment over G slices.
         self.temperature = nn.Parameter(torch.ones([1, heads, 1, 1]) * 0.5)
+        self.capture_attention = False
+        self.last_attention_state = None
         # Point-wise linear map from node dim -> head features for stream used in slice routing / x_mid (paper Project on mesh).
         self.in_project_x = nn.Linear(dim, inner_dim)
         # Separate linear for features pooled into slice tokens (paper weighted x in numerator of z_j).

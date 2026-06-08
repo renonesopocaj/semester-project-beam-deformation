@@ -1,0 +1,39 @@
+checkpoint:
+  source: local
+  wandb_run_path: jacoposenoner/beam_deformation/3s0wop2x
+  checkpoint_file: checkpoints/best.ckpt
+  train_config_file: train.yaml
+  preprocess_config_file: preprocess.yaml
+  local_checkpoint_path: /Users/jacoposenoner/PycharmProjects/SemesterProj/cluster_checkpoints/transolver_best/best.ckpt
+  local_train_config_path: /Users/jacoposenoner/PycharmProjects/SemesterProj/cluster_checkpoints/transolver_best/train.yaml
+  local_preprocess_config_path: /Users/jacoposenoner/PycharmProjects/SemesterProj/cluster_checkpoints/transolver_best/preprocess.yaml
+  download_dir: outputs/attention_transolver_visualization/downloads
+
+dataset_path: /Users/jacoposenoner/PycharmProjects/SemesterProj/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs
+split: val
+trajectory_idx: [34]
+reference_node_indices: [0, 99, 224, 112]
+# attention_block_index: one of the following:
+#   - integer (negative supported, e.g. -1 = last block) for a single block
+#   - "all" for separate GIFs for each block
+#   - "avg" to average attention across all blocks into a single GIF
+# attention_head_index: null (average all heads) or the string "all" (one GIF per head)
+# When attention_block_index="avg" and attention_head_index="all":
+#   → H GIFs (one per head), each showing average attention across all blocks for that head
+# When attention_block_index="avg" and attention_head_index=null:
+#   → 1 GIF with averaged scores over all heads and all blocks
+attention_block_index: "avg" # -1 | "all" | "avg"
+attention_head_index: null # null | "all"
+max_timesteps: null
+fps: 6
+device: auto
+output_root: outputs/attention_transolver_visualization
+
+hydra:
+  run:
+    dir: hydra/outputs/attention_transolver_visualization/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/attention_transolver_visualization/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    chdir: false
