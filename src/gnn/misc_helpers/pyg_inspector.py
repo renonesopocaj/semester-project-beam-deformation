@@ -3,19 +3,21 @@ import torch
 class PyGInspector:
     def __init__(self, max_repr_chars, float_precision):
         """
+        Initializes the inspector
+
         Args:
             max_repr_chars: int
                 Maximum length of repr() printed for non-tensor objects
             float_precision: int
                 Number of decimals for float summaries
-        return: None
-            Initializes the inspector
         """
         self.max_repr_chars = int(max_repr_chars)
         self.float_precision = int(float_precision)
 
     def describe_data(self, data, max_keys, max_values, show_tensor_stats):
         """
+        Prints a readable summary of graph attributes and their types
+
         Args:
             data: object
                 torch_geometric.data.Data (or similar) instance
@@ -25,8 +27,6 @@ class PyGInspector:
                 Maximum number of values to print for tensors/containers
             show_tensor_stats: bool
                 If True, prints min/max/mean for floating tensors (can be costly)
-        return: None
-            Prints a readable summary of graph attributes and their types
         """
         keys = self._keys_list(data)
         print(f"type(data) = {type(data)}")
@@ -44,6 +44,8 @@ class PyGInspector:
 
     def describe_batch(self, batch, max_keys, max_values, show_tensor_stats, graphs_to_sample, per_graph_max_keys, per_graph_max_values):
         """
+        Prints summary of a Batch and optionally a few example graphs inside it
+
         Args:
             batch: object
                 torch_geometric.data.Batch instance
@@ -59,8 +61,6 @@ class PyGInspector:
                 Max keys to print per sampled graph
             per_graph_max_values: int
                 Max values to print per sampled graph tensor/containers
-        return: None
-            Prints summary of a Batch and optionally a few example graphs inside it
         """
         print("=== Batch summary ===")
         self.describe_data(batch, max_keys, max_values, show_tensor_stats)

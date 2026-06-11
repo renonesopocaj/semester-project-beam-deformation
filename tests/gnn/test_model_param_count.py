@@ -71,6 +71,7 @@ TRAIN_CONFIG_NAME = "train_sanity_sweep"
 # MODEL_CONFIG_NAME = "clofnet_recurrrent_sep_L8_HD128"
 # MODEL_CONFIG_NAME = "clofnet_recurrrent_sep_L8_HD128"
 # MODEL_CONFIG_NAME = "mgn_noedge_H256_L15"
+MODEL_CONFIG_NAME = "gatv2_HD128_L15_H20_share"
 TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------

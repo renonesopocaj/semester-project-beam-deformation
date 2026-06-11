@@ -37,8 +37,8 @@ def r2_linear_fit_x_to_y(x, y):
             Independent variable (e.g. distance, curvature).
         y: np.ndarray
             Dependent variable (e.g. absolute error).
-        return: float
-            In-sample R^2 of the linear fit, or nan if undefined.
+    return: float
+        In-sample R^2 of the linear fit, or nan if undefined.
     """
     x = np.asarray(x, dtype=np.float64).ravel()
     y = np.asarray(y, dtype=np.float64).ravel()
@@ -61,8 +61,8 @@ def format_r2_text(r2_value):
     Args:
         r2_value: float
             R^2 or nan.
-        return: str
-            Short string for plot annotation.
+    return: str
+        Short string for plot annotation.
     """
     if r2_value != r2_value:
         return r"$R^2$ = n/a"

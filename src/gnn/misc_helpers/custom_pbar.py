@@ -15,8 +15,6 @@ class ShortMetricProgressBar(TQDMProgressBar):
                 Line offset for tqdm display.
             leave: bool
                 Whether to keep finished bars visible.
-            return: None
-                Initializes the custom progress bar.
         """
         super().__init__(refresh_rate=refresh_rate, process_position=process_position, leave=leave)
         self.metric_name_map = {
@@ -32,8 +30,8 @@ class ShortMetricProgressBar(TQDMProgressBar):
                 Active Lightning trainer.
             pl_module: lightning.pytorch.LightningModule
                 Active Lightning module.
-            return: dict
-                Progress-bar metrics with shortened display names.
+        return: dict
+            Progress-bar metrics with shortened display names.
         """
         items = super().get_metrics(trainer, pl_module)
 
