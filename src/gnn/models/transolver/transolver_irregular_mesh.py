@@ -317,6 +317,39 @@ class Model(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
+    def set_attention_capture(self, enabled):
+        """
+        Enable or disable caching of per-layer Physics-Attention tensors for inspection.
+
+        Args:
+            enabled: bool
+                If True, each block caches detached slice-routing tensors during forward.
+        return: None
+            Mutates the contained attention modules in place.
+        """
+        for block in self.blocks:
+            block.Attn.capture_attention = bool(enabled)
+            if not bool(enabled):
+                block.Attn.clear_last_attention_state()
+
+    def get_last_attention_states(self):
+        """
+        Return the cached attention tensors from the most recent forward pass.
+
+        return: list[dict]
+            One dict per Transolver block with keys slice_weights, slice_norm, and slice_attention.
+        """
+        states = []
+        for block_idx, block in enumerate(self.blocks):
+            state = block.Attn.last_attention_state
+            if state is None:
+                raise RuntimeError(
+                    "Attention cache is empty for Transolver block %d. "
+                    "Enable attention capture before the forward pass." % block_idx
+                )
+            states.append(state)
+        return states
+
     def get_grid(self, x, batchsize=1):
         """
         Build unified position features: Euclidean distances from nodes to ref grid.
@@ -377,6 +410,8 @@ class Model(nn.Module):
             4) If T is not None: add time_fc(sin_timestep_embedding(T)) broadcast to N.
             5) Sequentially apply each Transolver_block.
         """
+        for block in self.blocks:
+            block.Attn.clear_last_attention_state()
         if self.unified_pos:
             # Overwrite x with distance features so preprocess sees geometry via ref grid (not raw g alone).
             x = self.get_grid(x, x.shape[0])

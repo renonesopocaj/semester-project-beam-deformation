@@ -23,8 +23,8 @@ def relative_mae_sum_and_count(pred, target):
             Predictions (same shape as target).
         target: torch.Tensor
             Targets (same shape as pred).
-        return: (torch.Tensor, torch.Tensor)
-            Scalar sum of |pred-target|/max(|target|,1e-12), and scalar count = numel for weighting.
+    return: (torch.Tensor, torch.Tensor)
+        Scalar sum of |pred-target|/max(|target|,1e-12), and scalar count = numel for weighting.
     """
     rel = compute_relative_mae(pred, target)
     n = rel.numel()
@@ -44,8 +44,8 @@ def absolute_mae_sum_and_count(pred, target):
             Predictions (same shape as target).
         target: torch.Tensor
             Targets (same shape as pred).
-        return: (torch.Tensor, torch.Tensor)
-            Scalar sum of |pred-target|, and scalar count = numel for weighting.
+    return: (torch.Tensor, torch.Tensor)
+        Scalar sum of |pred-target|, and scalar count = numel for weighting.
     """
     abs_err = torch.abs(pred - target)
     n = abs_err.numel()
@@ -57,8 +57,8 @@ def to_numpy(value):
     Args:
         value: object
             Tensor-like or array-like object.
-        return: np.ndarray
-            Detached numpy array.
+    return: np.ndarray
+        Detached numpy array.
     """
     if hasattr(value, "detach"):
         value = value.detach()
