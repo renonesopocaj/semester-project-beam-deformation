@@ -352,6 +352,8 @@ def create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_d
         return GatMGNNet(
             node_channels=preprocess_cfg.node_channels, edge_channels=preprocess_cfg.edge_channels,
             hidden_dim=train_cfg.hidden_dim, num_layers=train_cfg.num_layers,
+            mgn_per_gat=train_cfg.mgn_per_gat, start_with_gat=train_cfg.start_with_gat,
+            end_with_gat=train_cfg.end_with_gat,
             num_layers_graphnetblock=train_cfg.num_layers_graphnetblock,
             heads=train_cfg.heads, dropout_attn=train_cfg.dropout_attn,
             negative_slope=train_cfg.negative_slope, add_self_loops=train_cfg.add_self_loops,

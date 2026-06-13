@@ -47,6 +47,58 @@ def _resolve_offline_flag(raw_value):
     return True
 
 
+def _suggest_from_search_space(trial, param_name, spec):
+    """
+    Sample one parameter value from an Optuna trial according to its distribution spec.
+
+    Supported distributions:
+    - uniform: suggest_float over [low, high].
+    - log_uniform: suggest_float over [low, high] with log=True.
+    - log_uniform_with_zero: with probability zero_probability samples 0.0, otherwise
+      samples from log_uniform [low, high]. Uses two Optuna parameters internally so the
+      TPE sampler can learn the zero/non-zero boundary independently of the value.
+    - categorical: suggest_categorical over the provided values list.
+
+    Args:
+        trial: optuna.Trial
+            Active Optuna trial.
+        param_name: str
+            Name used both as the Optuna parameter key and in the Hydra override.
+        spec: dict
+            Distribution specification from the search_space YAML node.
+    return: object
+        Sampled value (float, bool, or element of values list).
+    """
+    dist = spec["distribution"]
+    if dist == "uniform":
+        return trial.suggest_float(param_name, spec["low"], spec["high"])
+    if dist == "log_uniform":
+        return trial.suggest_float(param_name, spec["low"], spec["high"], log=True)
+    if dist == "log_uniform_with_zero":
+        selector = trial.suggest_float(f"{param_name}__zero_selector", 0.0, 1.0)
+        if selector < spec["zero_probability"]:
+            return 0.0
+        return trial.suggest_float(f"{param_name}__value", spec["low"], spec["high"], log=True)
+    if dist == "categorical":
+        return trial.suggest_categorical(param_name, spec["values"])
+    raise ValueError(f"Unknown distribution '{dist}' for search_space param '{param_name}'.")
+
+
+def _format_override_value(value):
+    """
+    Serialize a sampled value for a Hydra override string.
+
+    Args:
+        value: object
+            Sampled value (bool, float, int, or str).
+    return: str
+        String representation safe for use after '=' in a Hydra override.
+    """
+    if isinstance(value, bool):
+        return str(value).lower()
+    return repr(value)
+
+
 def format_swept_value_label(option_overrides):
     """
     Args:
@@ -115,29 +167,48 @@ class SweepOption:
 
 class Sweep:
     """
-    Wrapper object for a sweep in the sense of iterable of hyperparameters
+    Wrapper object for a sweep in the sense of iterable of hyperparameters.
+
+    Supports two exclusive modes:
+    - options mode: a finite list of SweepOption; uses GridSampler (existing behaviour).
+    - search_space mode: a dict of parameter distribution specs; uses TPESampler with n_trials.
+    Exactly one of options or search_space must be non-None.
     """
 
     name: str
     fixed_overrides: list
     options: list
+    search_space: dict
+    n_trials: int
 
-    def __init__(self, name, fixed_overrides, options):
+    def __init__(self, name, fixed_overrides, options, search_space, n_trials):
         """
         Args:
             name: str
                 Sweep identifier.
             fixed_overrides: iterable
                 Overrides applied to every trial of this sweep.
-            options: iterable of SweepOption
-                Mutually exclusive choices (grid).
+            options: iterable of SweepOption or None
+                Mutually exclusive choices for grid mode; None when search_space mode is used.
+            search_space: dict or None
+                Parameter distribution specs keyed by param name; None when options mode is used.
+            n_trials: int or None
+                Number of TPE trials; required and used only in search_space mode.
         """
+        if (options is None) == (search_space is None):
+            raise ValueError(
+                f"Sweep '{name}': exactly one of 'options' or 'search_space' must be set."
+            )
         self.name = name
         self.fixed_overrides = [str(x) for x in fixed_overrides]
-        sweep_options = []
-        for option in options:
-            sweep_options.append(option)
-        self.options = sweep_options
+        if options is not None:
+            self.options = list(options)
+            self.search_space = None
+            self.n_trials = None
+        else:
+            self.options = []
+            self.search_space = dict(search_space)
+            self.n_trials = int(n_trials)
 
 
 class SweepRunner:
@@ -201,15 +272,28 @@ class SweepRunner:
         for sweep_raw in OmegaConf.to_container(sweep_nodes, resolve=True):
             sweep_name = sweep_raw["name"]
             fixed_ov = sweep_raw.get("fixed_overrides", [])
-            option_objs = []
-            for opt_raw in sweep_raw["options"]:
-                label = opt_raw["label"]
-                ov_list = opt_raw["overrides"]
-                desc_cell = ""
-                if "description" in opt_raw and opt_raw["description"] is not None:
-                    desc_cell = str(opt_raw["description"])
-                option_objs.append(SweepOption(label=label, overrides=ov_list, description=desc_cell))
-            assembled.append(Sweep(name=sweep_name, fixed_overrides=fixed_ov, options=option_objs))
+            search_space_raw = sweep_raw.get("search_space")
+            if search_space_raw is not None:
+                # search_space mode: TPE-based continuous/categorical sampling
+                assembled.append(Sweep(
+                    name=sweep_name, fixed_overrides=fixed_ov,
+                    options=None, search_space=search_space_raw,
+                    n_trials=int(sweep_raw["n_trials"]),
+                ))
+            else:
+                # options mode (existing): grid over explicit labeled overrides
+                option_objs = []
+                for opt_raw in sweep_raw["options"]:
+                    label = opt_raw["label"]
+                    ov_list = opt_raw["overrides"]
+                    desc_cell = ""
+                    if "description" in opt_raw and opt_raw["description"] is not None:
+                        desc_cell = str(opt_raw["description"])
+                    option_objs.append(SweepOption(label=label, overrides=ov_list, description=desc_cell))
+                assembled.append(Sweep(
+                    name=sweep_name, fixed_overrides=fixed_ov,
+                    options=option_objs, search_space=None, n_trials=None,
+                ))
         self.sweeps_list = assembled
 
     def compose_and_run_training(self, override_list):
@@ -305,14 +389,98 @@ class SweepRunner:
 
         return optuna_objective
 
+    def _objective_for_search_space_sweep(self, sweep_entity):
+        """
+        Args:
+            sweep_entity: Sweep
+                Sweep with search_space mode active.
+        return: callable
+            Optuna objective function using TPE sampling.
+        """
+        sweep_ref = sweep_entity
+        study_name_plain = str(OmegaConf.select(self.parent_cfg, "study_name"))
+
+        def optuna_objective(trial):
+            sampled_overrides = []
+            sampled_values = {}
+            for param_name, spec in sweep_ref.search_space.items():
+                value = _suggest_from_search_space(trial, param_name, spec)
+                sampled_values[param_name] = value
+                sampled_overrides.append(f"++{param_name}={_format_override_value(value)}")
+            merged = list(self.best_so_far_overrides) + list(sweep_ref.fixed_overrides) + sampled_overrides
+            run_slug = "%s__%s__trial%d" % (study_name_plain, sweep_ref.name, trial.number)
+            merged.append("++wandb_run_name=%s" % run_slug)
+            merged.append("++wandb_group=%s" % study_name_plain)
+            merged.append("++wandb_project=%s" % self._wandb_project)
+            off_lit = _resolve_offline_flag(self._wandb_offline_raw)
+            merged.append("++wandb_offline=%s" % str(off_lit).lower())
+            merged.append("++val_monitor_metric=%s" % self.val_monitor_metric_override)
+            trial.set_user_attr("sampled_overrides", sampled_overrides)
+            trial.set_user_attr("chosen_option_overrides", sampled_overrides)
+            score_val_mae, metrics_plain, wb_id = self.compose_and_run_training(merged)
+            raw_final = metrics_plain.get(self.final_optimization_metric_key)
+            if raw_final is not None and math.isfinite(float(raw_final)):
+                opt_score = float(raw_final)
+            else:
+                opt_score = score_val_mae
+            record = {"study_name": study_name_plain,
+                      "sweep_name": sweep_ref.name,
+                      "option_label": "trial_%d" % trial.number,
+                      "swept_value_label": str(sampled_values),
+                      "swept_overrides": sampled_overrides,
+                      "full_overrides": merged,
+                      "best_val_mae": opt_score,
+                      "final_metrics": metrics_plain,
+                      "wandb_run_id": wb_id}
+            self.trial_records.append(record)
+            pi = 0
+            while pi < len(self.pareto_pairs):
+                px_key, py_key = self.pareto_pairs[pi]
+                trial.set_user_attr("pareto_x_%d" % pi, metrics_plain.get(px_key))
+                trial.set_user_attr("pareto_y_%d" % pi, metrics_plain.get(py_key))
+                pi = pi + 1
+            return opt_score
+
+        return optuna_objective
+
+    def _run_search_space_sweep(self, sweep_entity):
+        """
+        Runs a TPE-based Bayesian optimisation sweep over the declared search_space.
+        Updates self.best_so_far_overrides with the best trial's sampled overrides.
+
+        Args:
+            sweep_entity: Sweep
+                Sweep with search_space mode active and n_trials set.
+        """
+        sampler_obj = optuna.samplers.TPESampler()
+        study_obj = optuna.create_study(direction="minimize", sampler=sampler_obj)
+        fun = self._objective_for_search_space_sweep(sweep_entity)
+        study_obj.optimize(fun, n_trials=sweep_entity.n_trials)
+        x_labels = ["trial_%d" % t.number for t in study_obj.trials]
+        y_vals = [float(t.value) for t in study_obj.trials if t.value is not None]
+        x_labels = x_labels[:len(y_vals)]
+        sweep_plot_path = save_sweep_performance_plot(
+            sweep_entity.name, x_labels, y_vals,
+            self.final_optimization_metric_key, self.output_dir,
+        )
+        self.per_sweep_plot_records[sweep_entity.name] = str(sweep_plot_path)
+        print("Saved sweep performance plot to %s" % sweep_plot_path)
+        best_trial = study_obj.best_trial
+        for ov in best_trial.user_attrs["sampled_overrides"]:
+            self.best_so_far_overrides.append(ov)
+
     def run_one_sweep(self, sweep_entity):
         """
-        Updates self.best_so_far_overrides with the winning option's overrides.
+        Dispatches to grid (options) or TPE (search_space) sweep runner, then updates
+        self.best_so_far_overrides with the winning configuration's overrides.
 
         Args:
             sweep_entity: Sweep
                 One sweep stage.
         """
+        if sweep_entity.search_space is not None:
+            self._run_search_space_sweep(sweep_entity)
+            return
         # create optuna objects for sweeping
         grid_map = {"option_idx": list(range(len(sweep_entity.options)))}
         sampler_obj = optuna.samplers.GridSampler(grid_map)

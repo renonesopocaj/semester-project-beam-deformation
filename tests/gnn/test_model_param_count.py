@@ -70,8 +70,9 @@ TRAIN_CONFIG_NAME = "train_sanity_sweep"
 # MODEL_CONFIG_NAME = "clofnet_recurrent_sep_L8HD192"
 # MODEL_CONFIG_NAME = "clofnet_recurrrent_sep_L8_HD128"
 # MODEL_CONFIG_NAME = "clofnet_recurrrent_sep_L8_HD128"
-# MODEL_CONFIG_NAME = "mgn_noedge_H256_L15"
-MODEL_CONFIG_NAME = "gatv2_HD128_L15_H20_share"
+# # MODEL_CONFIG_NAME = "mgn_noedge_H256_L15"
+# MODEL_CONFIG_NAME = "gatv2_HD256_L8_H8"
+MODEL_CONFIG_NAME = "gatmgn_HD256_L8_H8_i4"
 TARGET_MODE = "von_mises"
 
 # ------------------------------------------------------------------------
@@ -135,6 +136,11 @@ def test_model_param_count():
     stress_out_dim = 6 if target_mode == "full_stress" else 1
     model = create_model(train_cfg, preprocess_cfg, device, graph_template, stress_out_dim)
     total_params = sum(p.numel() for p in model.parameters())
+
+    if train_cfg.model_name == "gatmgn":
+        seq = model.processor._sequence
+        print(f"\nGatMGN layer sequence ({len(seq)} total layers): {' -> '.join(seq)}")
+        print(f"  MGN blocks: {seq.count('mgn')}, GAT layers: {seq.count('gat')}")
 
     print(f"\nModel config '{MODEL_CONFIG_NAME}': {total_params:,} parameters")
     assert total_params > 0, f"Model built from config '{MODEL_CONFIG_NAME}' has zero parameters."

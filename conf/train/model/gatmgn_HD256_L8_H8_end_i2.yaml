@@ -1,0 +1,21 @@
+model_name: "gatmgn"
+hidden_dim: 256
+num_layers: 8
+mgn_per_gat: 2        # MGN blocks between each GAT layer
+start_with_gat: false # sequence starts with MGN
+end_with_gat: true    # sequence ends with GAT (matches original behaviour)
+num_layers_graphnetblock: 2
+heads: 8
+dropout_attn: 0.0
+negative_slope: 0.2
+add_self_loops: true
+share_weights: false
+residual: true          # per-layer residual skip connection after each GATv2Conv step
+layer_norm_encoder: true
+layer_norm_processor: true
+layer_norm_decoder: false
+num_layers_encoder: 2
+num_layers_heads: 2
+dropout_encoder: 0.05
+dropout_head: 0.05
+dropout_processor: 0.0

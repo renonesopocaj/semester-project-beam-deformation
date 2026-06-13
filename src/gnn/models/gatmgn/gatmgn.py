@@ -3,10 +3,10 @@ gatmgn.py
 
 GatMGNNet model: encoder - processor (interleaved MGN and GATv2 message-passing layers) - decoder.
 
-The processor alternates one MGN GraphNetBlock (which updates both node and edge embeddings via
-scatter-add aggregation) with one GATv2Conv layer (which updates only node embeddings using the
-latest edge embedding as attention-conditioning edge_attr). This gives the model both the
-edge-state tracking of MeshGraphNet and the dynamic attention of GATv2.
+The processor places mgn_per_gat consecutive MGN GraphNetBlocks (which update both node and edge
+embeddings via scatter-add aggregation) before each GATv2Conv layer (which updates only node
+embeddings using the latest edge embedding as attention-conditioning edge_attr). The sequence
+boundaries are controlled by start_with_gat and end_with_gat flags.
 """
 
 import torch
@@ -15,32 +15,70 @@ from torch_geometric.nn.conv import GATv2Conv
 from src.gnn.models.meshgraphnet.meshgraphnet import Encoder, GraphNetBlock, Decoder
 
 
+def _build_layer_sequence(num_layers: int, mgn_per_gat: int, start_with_gat: bool, end_with_gat: bool) -> list[str]:
+    """
+    Build the ordered list of layer types for the processor.
+
+    Args:
+        num_layers: int
+            Total number of MGN blocks.
+        mgn_per_gat: int
+            Number of consecutive MGN blocks before each GAT layer.
+        start_with_gat: bool
+            If True, prepend a GAT layer before the first MGN block.
+        end_with_gat: bool
+            If True, ensure the sequence ends with a GAT layer; if False, strip the
+            trailing GAT if the natural sequence ends with one.
+    return: list[str]
+        Ordered list of 'mgn' and 'gat' strings defining the processor's layer sequence.
+    """
+    sequence: list[str] = []
+    if start_with_gat:
+        sequence.append('gat')
+    for i in range(num_layers):
+        sequence.append('mgn')
+        if (i + 1) % mgn_per_gat == 0:
+            sequence.append('gat')
+    last_is_gat = sequence[-1] == 'gat'
+    if end_with_gat and not last_is_gat:
+        sequence.append('gat')
+    elif not end_with_gat and last_is_gat:
+        sequence.pop()
+    return sequence
+
+
 class GatMGNProcessor(nn.Module):
     """
     Processor that interleaves MGN GraphNetBlock and GATv2Conv layers.
 
-    Each step i consists of:
-    1. GraphNetBlock: updates node_embedding and edge_embedding via scatter-add aggregation.
-    2. GATv2Conv: updates node_embedding using the freshly updated edge_embedding as edge_attr.
-       An optional residual skip and LayerNorm are applied after the GATv2Conv output.
+    The layer order is defined by _build_layer_sequence: mgn_per_gat consecutive MGN blocks
+    are followed by one GATv2Conv, repeated across the full depth. The sequence start and end
+    can be pinned to a specific layer type via start_with_gat and end_with_gat. An optional
+    residual skip and LayerNorm are applied after each GATv2Conv output.
     """
 
     hidden_dim: int
-    num_layers: int
+    _sequence: list[str]
     mgn_blocks: nn.ModuleList
     gat_convs: nn.ModuleList
     gat_layer_norms: nn.ModuleList
     residual_skip: bool
 
-    def __init__(self, hidden_dim, num_layers, num_layers_graphnetblock, heads, dropout_attn,
-                 negative_slope, add_self_loops, share_weights, residual_skip, layer_norm_enable,
-                 dropout_processor):
+    def __init__(self, hidden_dim, num_layers, mgn_per_gat, start_with_gat, end_with_gat,
+                 num_layers_graphnetblock, heads, dropout_attn, negative_slope, add_self_loops,
+                 share_weights, residual_skip, layer_norm_enable, dropout_processor):
         """
         Args:
             hidden_dim: int
                 Latent dimension H shared by all layers.
             num_layers: int
-                Number of (GraphNetBlock, GATv2Conv) interleaved pairs.
+                Total number of MGN GraphNetBlock layers.
+            mgn_per_gat: int
+                Number of consecutive MGN blocks between each GATv2Conv layer.
+            start_with_gat: bool
+                If True, the sequence begins with a GATv2Conv before the first MGN block.
+            end_with_gat: bool
+                If True, the sequence ends with a GATv2Conv; if False, any trailing GAT is removed.
             num_layers_graphnetblock: int
                 Number of MLP layers inside each GraphNetBlock.
             heads: int
@@ -56,14 +94,16 @@ class GatMGNProcessor(nn.Module):
             residual_skip: bool
                 If True, adds node_embedding + GATv2Conv(node_embedding) per GATv2 step.
             layer_norm_enable: bool
-                If True, applies LayerNorm after each GATv2Conv step.
+                If True, applies LayerNorm after each GATv2Conv step and inside GraphNetBlock.
             dropout_processor: float
                 Dropout inside each GraphNetBlock MLP.
         """
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
         self.residual_skip = residual_skip
+        self._sequence = _build_layer_sequence(num_layers, mgn_per_gat, start_with_gat, end_with_gat)
+        n_mgn = self._sequence.count('mgn')
+        n_gat = self._sequence.count('gat')
         # MGN blocks: edge MLP input is [h_i, h_j, e_ij] = [3H], node MLP input is [agg, h_i] = [2H]
         self.mgn_blocks = nn.ModuleList([
             GraphNetBlock(
@@ -74,7 +114,7 @@ class GatMGNProcessor(nn.Module):
                 enable_layer_norm=layer_norm_enable,
                 dropout=dropout_processor,
             )
-            for _ in range(num_layers)
+            for _ in range(n_mgn)
         ])
         # GATv2Conv layers: concat=False so output stays at hidden_dim
         self.gat_convs = nn.ModuleList([
@@ -89,12 +129,12 @@ class GatMGNProcessor(nn.Module):
                 edge_dim=hidden_dim,
                 share_weights=share_weights,
             )
-            for _ in range(num_layers)
+            for _ in range(n_gat)
         ])
         if layer_norm_enable:
-            self.gat_layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(num_layers)])
+            self.gat_layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(n_gat)])
         else:
-            self.gat_layer_norms = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
+            self.gat_layer_norms = nn.ModuleList([nn.Identity() for _ in range(n_gat)])
 
     def forward(self, node_embedding, edge_index, edge_embedding):
         """
@@ -108,14 +148,18 @@ class GatMGNProcessor(nn.Module):
         return: (node_embedding, edge_embedding)
             Updated tensors of shape [N, H] and [E, H].
         """
-        for mgn_block, gat_conv, gat_norm in zip(self.mgn_blocks, self.gat_convs, self.gat_layer_norms):
-            # MGN step: update both node and edge embeddings
-            node_embedding, edge_embedding = mgn_block(edge_index, node_embedding, edge_embedding)
-            # GATv2 step: update only node embedding, conditioned on the freshly updated edge_embedding
-            gat_out = gat_conv(node_embedding, edge_index, edge_attr=edge_embedding)
-            if self.residual_skip:
-                gat_out = gat_out + node_embedding
-            node_embedding = gat_norm(gat_out)
+        mgn_idx = 0
+        gat_idx = 0
+        for layer_type in self._sequence:
+            if layer_type == 'mgn':
+                node_embedding, edge_embedding = self.mgn_blocks[mgn_idx](edge_index, node_embedding, edge_embedding)
+                mgn_idx += 1
+            else:
+                gat_out = self.gat_convs[gat_idx](node_embedding, edge_index, edge_attr=edge_embedding)
+                if self.residual_skip:
+                    gat_out = gat_out + node_embedding
+                node_embedding = self.gat_layer_norms[gat_idx](gat_out)
+                gat_idx += 1
         return node_embedding, edge_embedding
 
 
@@ -136,7 +180,8 @@ class GatMGNNet(nn.Module):
     processor: GatMGNProcessor
     decoder: nn.Module
 
-    def __init__(self, node_channels, edge_channels, hidden_dim, num_layers, num_layers_graphnetblock,
+    def __init__(self, node_channels, edge_channels, hidden_dim, num_layers, mgn_per_gat,
+                 start_with_gat, end_with_gat, num_layers_graphnetblock,
                  heads, dropout_attn, negative_slope, add_self_loops, share_weights, residual,
                  layer_norm_encoder, layer_norm_processor, layer_norm_decoder,
                  num_layers_encoder, num_layers_heads, dropout_encoder, dropout_head, dropout_processor,
@@ -150,7 +195,13 @@ class GatMGNNet(nn.Module):
             hidden_dim: int
                 Latent embedding dimension H used throughout encoder, processor, and decoder.
             num_layers: int
-                Number of interleaved (GraphNetBlock, GATv2Conv) pairs in the processor.
+                Total number of MGN GraphNetBlock layers in the processor.
+            mgn_per_gat: int
+                Number of consecutive MGN blocks between each GATv2Conv layer.
+            start_with_gat: bool
+                If True, the processor sequence begins with a GATv2Conv before the first MGN block.
+            end_with_gat: bool
+                If True, the processor sequence ends with a GATv2Conv; if False, any trailing GAT is removed.
             num_layers_graphnetblock: int
                 Number of MLP layers inside each GraphNetBlock.
             heads: int
@@ -194,6 +245,9 @@ class GatMGNNet(nn.Module):
         self.processor = GatMGNProcessor(
             hidden_dim=hidden_dim,
             num_layers=num_layers,
+            mgn_per_gat=mgn_per_gat,
+            start_with_gat=start_with_gat,
+            end_with_gat=end_with_gat,
             num_layers_graphnetblock=num_layers_graphnetblock,
             heads=heads,
             dropout_attn=dropout_attn,

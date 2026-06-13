@@ -238,6 +238,12 @@ class TrainYaml:
         self.protect_from_oom = flattened_cfg["protect_from_oom"]
         self.activation_checkpointing = flattened_cfg["activation_checkpointing"]
         self.foreach_optim = flattened_cfg["foreach_optim"]
+        if self.optimizer == "adamw":
+            self.adamw_weight_decay = float(flattened_cfg["adamw_weight_decay"])
+            self.adamw_beta1 = float(flattened_cfg["adamw_beta1"])
+            self.adamw_beta2 = float(flattened_cfg["adamw_beta2"])
+            self.adamw_eps = float(flattened_cfg["adamw_eps"])
+            self.adamw_amsgrad = bool(flattened_cfg["adamw_amsgrad"])
         # Models
         if self.model_name in ("MGN", "MGN_no_edge"):
             self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
@@ -331,6 +337,9 @@ class TrainYaml:
         elif self.model_name == "gatmgn":
             self.hidden_dim = flattened_cfg["hidden_dim"]
             self.num_layers = flattened_cfg["num_layers"]
+            self.mgn_per_gat = flattened_cfg["mgn_per_gat"]
+            self.start_with_gat = flattened_cfg["start_with_gat"]
+            self.end_with_gat = flattened_cfg["end_with_gat"]
             self.num_layers_graphnetblock = flattened_cfg["num_layers_graphnetblock"]
             self.heads = flattened_cfg["heads"]
             self.dropout_attn = flattened_cfg["dropout_attn"]
