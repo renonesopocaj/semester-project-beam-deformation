@@ -38,16 +38,16 @@ sweeps:
     options:
       - label: norm_z_isotr
         overrides:
-          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_all/medium"
+          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/medium"
       - label: norm_z_anisotr
         overrides:
-          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_centr_all/medium"
+          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_centr_nonlin/medium"
       - label: norm_rob_isotr
         overrides:
-          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/rob_isotr_centr_all/medium"
+          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/rob_isotr_centr_nonlin/medium"
       - label: norm_rob_anisotr
         overrides:
-          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/rob_centr_all/medium"
+          - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/rob_centr_nonlin/medium"
 hydra:
   run:
     dir: hydra/outputs/hyperparam/${now:%Y-%m-%d}/${now:%H-%M-%S}

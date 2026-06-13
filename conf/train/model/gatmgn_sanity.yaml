@@ -1,6 +1,9 @@
 model_name: "gatmgn"
 hidden_dim: 64
 num_layers: 2
+mgn_per_gat: 1        # MGN blocks between each GAT layer
+start_with_gat: false # sequence starts with MGN
+end_with_gat: true    # sequence ends with GAT (matches original behaviour)
 num_layers_graphnetblock: 2
 heads: 2
 dropout_attn: 0.0

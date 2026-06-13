@@ -16,6 +16,11 @@ defaults:
 
 initial_lr: 1e-3
 optimizer: adam
+adamw_weight_decay: 0.01   # AdamW weight decay; ignored when optimizer: adam
+adamw_beta1: 0.9           # AdamW beta1
+adamw_beta2: 0.999         # AdamW beta2
+adamw_eps: 1.0e-8          # AdamW epsilon
+adamw_amsgrad: false       # AdamW amsgrad
 target_mode: "von_mises" # von_mises, full_stress
 # Online random edge augmentation: per node adds round(ratio * N) new directed edges to nodes
 # not already adjacent (undirected) on the current graph; merged with existing edge_index.
