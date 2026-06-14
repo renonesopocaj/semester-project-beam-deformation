@@ -1,4 +1,4 @@
-name_features: "noabspos_yesedge"
+name_features: "equivariant"
 # noabspos_yesedge.yaml Idea: all edges on, all edge norms on, no stretch/rotation, no absolute position
 # Processing target von mises
 mises_log: true
