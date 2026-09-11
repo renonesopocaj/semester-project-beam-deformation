@@ -22,20 +22,22 @@ base_dir: dataset # NOTE: if it's on slurm it's "/scratch/izar/senoner/dataset" 
 
 sweeps:
   - name: adamw
-    n_trials: 30
+    n_trials: 20
     fixed_overrides:
-      - model=transolver_7L_HD312_AH15_S32_R4
+      - model=transolver_5L_HD256_AH30_S32_R1
+      - model.transolver_slice_num=64
       - optimizer=adamw
       - noise=noise_per_epoch_noprev
       - noise.noise_scale_train=0.0005
       - computational.batch_size=32
+      - computational.torch_compile=False
       - loss.loss_type="mae"
       - loss.exp_mises=false
       - loss.stress_weight=0.5
       - loss.full_stress_loss_mode="components_plus_vm"
       - loss.full_stress_vm_weight=0.5
       - target_mode="full_stress"
-      - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin/medium"
+      - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
     search_space:
       adamw_weight_decay:
         distribution: log_uniform_with_zero
@@ -48,7 +50,7 @@ sweeps:
         high: 0.95
       adamw_beta2:
         distribution: categorical
-        values: [0.98, 0.99, 0.995, 0.999]
+        values: [0.98, 0.99, 0.995] # , 0.999
       adamw_eps:
         distribution: categorical
         values: [1.0e-8, 1.0e-7, 1.0e-6]

@@ -27,10 +27,5 @@ conda activate semesterproject
 # mgn_message_mid w/ z_isotr_centr_log_abs_noxtm1_nonormnode_noedgevel_noedgeforce_nostretch_norot
 # mgn_deep w/ z_isotr_centr_log_abs_xtm1_normnode_edgevel_edgeforce_stretch_rot
 mkdir -p saved_models
-srun python -m src.gnn.train computational=in_memory_slurm_1gpu_littlebatch \
-  computational.torch_compile=True \
-  lr_scheduler=plateau_long \
-  training=slurm \
-  training.total_epochs=300 \
-  model=mgn_deep_midmsg \
-  data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_all/medium"
+srun python -m src.gnn.train -cn  \
+  data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs_all/large"

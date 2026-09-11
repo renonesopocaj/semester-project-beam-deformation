@@ -26,19 +26,30 @@ sweeps:
   - name: normalization
     fixed_overrides:
       - noise=noise_per_epoch_noprev
+      - computational.batch_size=32
+      - computational.torch_compile=False
+      - noise.noise_scale_train=0.0005
+      - loss.loss_type="mae"
+      - loss.exp_mises=false
+      - loss.stress_weight=0.5
+      - loss.full_stress_loss_mode="components_plus_vm"
+      - loss.full_stress_vm_weight=0.5
+      - target_mode="full_stress"
+      - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_centr_nonlin_fs/medium
+      - model=mgn_H256_L15
     options:
       - label: z_isotr
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_all/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium
       - label: robust_isotr
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_allgeoms/robust_isotr_centr_nonlin/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/rob_isotr_centr_nonlin_fs/medium
       - label: z_anisotr
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_allgeoms/z_anisotr_centr_nonlin/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/z_centr_nonlin_fs/medium
       - label: robust_anisotr
         overrides:
-          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_allgeoms/robust_anisotr_centr_nonlin/small
+          - data.dataset_dir=/scratch/izar/senoner/dataset/processed/biax_longer/rob_centr_nonlin_fs/medium
 
 hydra:
   run:

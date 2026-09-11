@@ -27,7 +27,7 @@ sweeps:
     fixed_overrides:
       - noise=noise_per_epoch_noprev
       - noise.noise_scale_train=0.0005
-      - data.dataset_dir="dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
+      - data.dataset_dir="/scratch/izar/senoner/dataset/processed/biax_longer/z_isotr_centr_nonlin_fs/medium"
       - computational.batch_size=32
       - loss.loss_type="mse"
       - loss.exp_mises=false
